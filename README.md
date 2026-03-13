@@ -1,2 +1,11 @@
-# customer-profile-kyc-service
-DDD/EDA customer capability (svc-cus-profile-kyc) owner:Customer and KYC Squad wave:4
+# fintechbankx-customer-profile-kyc-service
+
+## Ownership Metadata
+
+- Bounded context: customer
+- Service ID: svc-cus-profile-kyc
+- Application ID: app.cus.profile-kyc
+- Data owner pattern: db_cus_profile_kyc_prod
+- Event namespace: evt.cus.customer
+- Owning squad: Customer and KYC Squad
+- Wave: 4

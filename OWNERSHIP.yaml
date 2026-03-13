@@ -1,0 +1,7 @@
+bounded_context: "customer"
+service_id: "svc-cus-profile-kyc"
+application_id: "app.cus.profile-kyc"
+data_owner_pattern: "db_cus_profile_kyc_prod"
+event_namespace: "evt.cus.customer"
+owning_squad: "Customer and KYC Squad"
+wave: "4"
