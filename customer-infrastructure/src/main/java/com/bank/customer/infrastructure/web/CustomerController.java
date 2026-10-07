@@ -17,6 +17,10 @@ import java.util.Currency;
  * 
  * Implements Hexagonal Architecture - Adapter for HTTP requests
  * Functional Requirements: FR-001 through FR-004
+ *
+ * Credit reserve and release are called by other services (loan lifecycle)
+ * with a SERVICE-role client-credentials token and an x-idempotency-key, so a
+ * retried call never reserves twice.
  */
 @RestController
 @RequestMapping("/api/v1/customers")
@@ -42,7 +46,7 @@ public class CustomerController {
      * FR-002: Get customer by ID
      */
     @GetMapping("/{customerId}")
-    @PreAuthorize("hasAnyRole('CUSTOMER', 'BANKER', 'ADMIN') and (#customerId == authentication.name or hasRole('BANKER') or hasRole('ADMIN'))")
+    @PreAuthorize("hasAnyRole('CUSTOMER', 'BANKER', 'ADMIN', 'SERVICE') and (#customerId == authentication.name or hasAnyRole('BANKER', 'ADMIN', 'SERVICE'))")
     public ResponseEntity<CustomerResponse> getCustomer(@PathVariable String customerId) {
         CustomerResponse response = customerService.findCustomerById(customerId);
         return ResponseEntity.ok(response);
@@ -66,13 +70,14 @@ public class CustomerController {
      * FR-003: Reserve credit for customer
      */
     @PostMapping("/{customerId}/credit/reserve")
-    @PreAuthorize("hasAnyRole('BANKER', 'ADMIN')")
+    @PreAuthorize("hasAnyRole('BANKER', 'ADMIN', 'SERVICE')")
     public ResponseEntity<CustomerResponse> reserveCredit(
+            @RequestHeader(value = "x-idempotency-key", required = false) String idempotencyKey,
             @PathVariable String customerId,
             @RequestBody ReserveCreditRequest request) {
         
         Money amount = Money.of(request.amount(), Currency.getInstance(request.currency()));
-        CustomerResponse response = customerService.reserveCredit(customerId, amount);
+        CustomerResponse response = customerService.reserveCredit(customerId, amount, idempotencyKey);
         return ResponseEntity.ok(response);
     }
     
@@ -80,13 +85,14 @@ public class CustomerController {
      * FR-003: Release reserved credit
      */
     @PostMapping("/{customerId}/credit/release")
-    @PreAuthorize("hasAnyRole('BANKER', 'ADMIN')")
+    @PreAuthorize("hasAnyRole('BANKER', 'ADMIN', 'SERVICE')")
     public ResponseEntity<CustomerResponse> releaseCredit(
+            @RequestHeader(value = "x-idempotency-key", required = false) String idempotencyKey,
             @PathVariable String customerId,
             @RequestBody ReleaseCreditRequest request) {
         
         Money amount = Money.of(request.amount(), Currency.getInstance(request.currency()));
-        CustomerResponse response = customerService.releaseCredit(customerId, amount);
+        CustomerResponse response = customerService.releaseCredit(customerId, amount, idempotencyKey);
         return ResponseEntity.ok(response);
     }
     

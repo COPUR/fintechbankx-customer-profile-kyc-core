@@ -3,22 +3,35 @@ package com.bank.customer.application;
 import com.bank.customer.application.dto.CreateCustomerRequest;
 import com.bank.customer.application.dto.CreateCustomerRequestWithCreditScore;
 import com.bank.customer.application.dto.CustomerResponse;
+import com.bank.customer.domain.CreditMovement;
 import com.bank.customer.domain.Customer;
+import com.bank.customer.domain.CustomerCreditReservedEvent;
 import com.bank.customer.domain.CustomerRepository;
+import com.bank.customer.domain.port.out.CreditMovementJournal;
+import com.bank.customer.domain.port.out.CustomerEventPublisher;
 import com.bank.shared.kernel.domain.CustomerId;
 import com.bank.shared.kernel.domain.Money;
+import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
-import org.mockito.InjectMocks;
+import org.mockito.ArgumentCaptor;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 
 import java.math.BigDecimal;
+import java.time.Clock;
+import java.time.Instant;
+import java.time.ZoneOffset;
+import java.util.List;
 import java.util.Optional;
+import java.util.UUID;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyList;
+import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.doReturn;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.times;
@@ -31,8 +44,107 @@ class CustomerManagementServiceTest {
     @Mock
     private CustomerRepository customerRepository;
 
-    @InjectMocks
+    @Mock
+    private CustomerEventPublisher eventPublisher;
+
+    @Mock
+    private CreditMovementJournal creditMovements;
+
+    private static final Instant NOW = Instant.parse("2026-10-07T12:00:00Z");
+
     private CustomerManagementService service;
+
+    @BeforeEach
+    void setUp() {
+        service = new CustomerManagementService(customerRepository, eventPublisher, creditMovements,
+            Clock.fixed(NOW, ZoneOffset.UTC));
+    }
+
+    private Customer existingCustomer() {
+        Customer customer = Customer.create(CustomerId.of("CUST-IDEM"), "Ali", "Sample", "ali@example.com",
+            "+971500000001", Money.aed(new BigDecimal("5000.00")));
+        customer.clearDomainEvents();
+        return customer;
+    }
+
+    @Test
+    void reserveWithNewKeyAppliesPublishesAndRecordsTheMovement() {
+        Customer customer = existingCustomer();
+        when(customerRepository.findById(CustomerId.of("CUST-IDEM"))).thenReturn(Optional.of(customer));
+        when(creditMovements.find(CustomerId.of("CUST-IDEM"), "key-1")).thenReturn(Optional.empty());
+        when(customerRepository.save(any(Customer.class))).thenAnswer(invocation -> invocation.getArgument(0));
+
+        CustomerResponse response = service.reserveCredit("CUST-IDEM", Money.aed(new BigDecimal("1000.00")), "key-1");
+
+        assertThat(response.usedCredit()).isEqualByComparingTo("1000.00");
+        @SuppressWarnings("unchecked")
+        ArgumentCaptor<List<com.bank.shared.kernel.domain.DomainEvent>> events = ArgumentCaptor.forClass(List.class);
+        verify(eventPublisher).publish(eq(customer), events.capture());
+        assertThat(events.getValue()).singleElement().isInstanceOf(CustomerCreditReservedEvent.class);
+        ArgumentCaptor<CreditMovement> movement = ArgumentCaptor.forClass(CreditMovement.class);
+        verify(creditMovements).record(movement.capture());
+        assertThat(movement.getValue().type()).isEqualTo(CreditMovement.Type.RESERVE);
+        assertThat(movement.getValue().idempotencyKey()).isEqualTo("key-1");
+        assertThat(movement.getValue().occurredAt()).isEqualTo(NOW);
+        assertThat(customer.getDomainEvents()).isEmpty();
+    }
+
+    @Test
+    void retriedReserveWithSameKeyIsNotAppliedTwice() {
+        Customer customer = existingCustomer();
+        Money amount = Money.aed(new BigDecimal("1000.00"));
+        when(customerRepository.findById(CustomerId.of("CUST-IDEM"))).thenReturn(Optional.of(customer));
+        when(creditMovements.find(CustomerId.of("CUST-IDEM"), "key-1")).thenReturn(Optional.of(
+            new CreditMovement(UUID.randomUUID(), CustomerId.of("CUST-IDEM"), "key-1", CreditMovement.Type.RESERVE, amount, NOW)));
+
+        CustomerResponse response = service.reserveCredit("CUST-IDEM", amount, "key-1");
+
+        assertThat(response.usedCredit()).isEqualByComparingTo("0.00");
+        verify(customerRepository, never()).save(any(Customer.class));
+        verify(creditMovements, never()).record(any());
+        verifyNoInteractions(eventPublisher);
+    }
+
+    @Test
+    void keyReusedForADifferentMovementIsAConflict() {
+        Customer customer = existingCustomer();
+        when(customerRepository.findById(CustomerId.of("CUST-IDEM"))).thenReturn(Optional.of(customer));
+        when(creditMovements.find(CustomerId.of("CUST-IDEM"), "key-1")).thenReturn(Optional.of(
+            new CreditMovement(UUID.randomUUID(), CustomerId.of("CUST-IDEM"), "key-1", CreditMovement.Type.RESERVE,
+                Money.aed(new BigDecimal("1000.00")), NOW)));
+
+        assertThatThrownBy(() -> service.releaseCredit("CUST-IDEM", Money.aed(new BigDecimal("1000.00")), "key-1"))
+            .isInstanceOf(IdempotencyKeyConflictException.class);
+        verify(customerRepository, never()).save(any(Customer.class));
+    }
+
+    @Test
+    void creditMovementWithoutKeySkipsTheJournal() {
+        Customer customer = existingCustomer();
+        customer.reserveCredit(Money.aed(new BigDecimal("2000.00")));
+        customer.clearDomainEvents();
+        when(customerRepository.findById(CustomerId.of("CUST-IDEM"))).thenReturn(Optional.of(customer));
+        when(customerRepository.save(any(Customer.class))).thenAnswer(invocation -> invocation.getArgument(0));
+
+        CustomerResponse response = service.releaseCredit("CUST-IDEM", Money.aed(new BigDecimal("500.00")));
+
+        assertThat(response.usedCredit()).isEqualByComparingTo("1500.00");
+        verifyNoInteractions(creditMovements);
+        verify(eventPublisher).publish(eq(customer), anyList());
+    }
+
+    @Test
+    void responseToleratesLegacyCustomerWithoutContactDetailsOrTimestamps() {
+        Customer legacy = Customer.rehydrate(new com.bank.customer.domain.CustomerSnapshot(
+            CustomerId.of("7"), "Legacy", "Customer", null, null,
+            Money.aed(new BigDecimal("1000.00")), Money.aed(BigDecimal.ZERO), null, null, null, null, 0L));
+
+        CustomerResponse response = CustomerResponse.from(legacy);
+
+        assertThat(response.email()).isNull();
+        assertThat(response.createdAt()).isNull();
+        assertThat(response.availableCredit()).isEqualByComparingTo("1000.00");
+    }
 
     @Test
     void createCustomerShouldPersistAndReturnResponse() {

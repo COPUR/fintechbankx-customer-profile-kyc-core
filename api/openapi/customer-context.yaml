@@ -159,6 +159,11 @@ paths:
       tags: [CustomerManagement]
       summary: Reserve credit
       operationId: reserveCredit
+      description: |-
+        Called by other services (SERVICE realm role) and staff. Send
+        x-idempotency-key to make retries safe: a repeat with the same key and
+        amount returns the current position without moving credit again; the
+        same key with a different movement is a 409.
       security:
         - bearerAuth: []
           dpopAuth: []
@@ -167,6 +172,7 @@ paths:
         - $ref: '#/components/parameters/DPoP'
         - $ref: '#/components/parameters/InteractionId'
         - $ref: '#/components/parameters/CustomerId'
+        - $ref: '#/components/parameters/IdempotencyKey'
       requestBody:
         required: true
         content:
@@ -198,12 +204,29 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/ErrorResponse'
+        '409':
+          description: Idempotency key reused for a different credit movement, or a concurrent update
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '422':
+          description: Not enough available credit
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
 
   /api/v1/customers/{customerId}/credit/release:
     post:
       tags: [CustomerManagement]
       summary: Release reserved credit
       operationId: releaseCredit
+      description: |-
+        Called by other services (SERVICE realm role) and staff. Send
+        x-idempotency-key to make retries safe: a repeat with the same key and
+        amount returns the current position without moving credit again; the
+        same key with a different movement is a 409.
       security:
         - bearerAuth: []
           dpopAuth: []
@@ -212,6 +235,7 @@ paths:
         - $ref: '#/components/parameters/DPoP'
         - $ref: '#/components/parameters/InteractionId'
         - $ref: '#/components/parameters/CustomerId'
+        - $ref: '#/components/parameters/IdempotencyKey'
       requestBody:
         required: true
         content:
@@ -239,6 +263,12 @@ paths:
                 $ref: '#/components/schemas/ErrorResponse'
         '404':
           description: Customer not found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '409':
+          description: Idempotency key reused for a different credit movement, or a concurrent update
           content:
             application/json:
               schema:
@@ -282,6 +312,14 @@ components:
       required: true
       schema:
         type: string
+    IdempotencyKey:
+      name: x-idempotency-key
+      in: header
+      required: false
+      description: Caller-chosen key, unique per customer, that makes a credit movement safe to retry.
+      schema:
+        type: string
+        maxLength: 128
   schemas:
     CreateCustomerRequest:
       type: object
@@ -294,6 +332,8 @@ components:
         email:
           type: string
           format: email
+          nullable: true
+          description: Absent for customers migrated from the monolith, which never stored an e-mail address.
         phoneNumber:
           type: string
         initialCreditLimit:
@@ -327,7 +367,7 @@ components:
 
     CustomerResponse:
       type: object
-      required: [customerId, firstName, lastName, email, creditLimit, usedCredit, availableCredit, status, createdAt, lastModifiedAt]
+      required: [customerId, firstName, lastName, creditLimit, usedCredit, availableCredit, status, createdAt, lastModifiedAt]
       properties:
         customerId:
           type: string
@@ -338,6 +378,8 @@ components:
         email:
           type: string
           format: email
+          nullable: true
+          description: Absent for customers migrated from the monolith, which never stored an e-mail address.
         phoneNumber:
           type: string
           nullable: true

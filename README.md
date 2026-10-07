@@ -43,6 +43,21 @@ Bu repository, FinTechBankX DDD/EDA dönüşümünde **svc-cus-profile-kyc** ser
 - Feature branch kuralı: `codex/<kisa-aciklama>`.
 - Release yaklaşımı: PR + required status checks + tag tabanlı sürümleme.
 
+## Run, test and deploy
+
+| What | Command / path |
+|---|---|
+| Unit and integration tests | `./gradlew test` (integration tests need `TEST_DB_URL` or Docker) |
+| Run locally | `SPRING_DATASOURCE_PASSWORD=... ./gradlew :customer-bootstrap:bootRun` |
+| Database migrations | `customer-infrastructure/src/main/resources/db/migration` (schema `sc_cus_profile_kyc`) |
+| Container image | `docker build -t customer-profile-kyc-service .` |
+| Kubernetes | `deploy/helm/customer-profile-kyc-service` |
+| AWS infrastructure | `deploy/terraform` |
+| Data split from the monolith | [RUNBOOK-EXTRACT-cus-profile-kyc](docs/migration/RUNBOOK-EXTRACT-cus-profile-kyc.md) |
+| Deployment and Well-Architected mapping | [DEPLOYMENT_AND_WELL_ARCHITECTED](docs/architecture/DEPLOYMENT_AND_WELL_ARCHITECTED.md) |
+
+Module layout: `customer-domain` (aggregate, events, ports) ← `customer-application` (use cases) ← `customer-infrastructure` (JPA, outbox, web, security) ← `customer-bootstrap` (Spring Boot app).
+
 ## Dokümantasyon ve Referanslar
 - [Enterprise Architecture Hub](https://github.com/COPUR/fintechbankx-governance-architecture-enablement-enterprise-architecture)
 - [Secure Microservices Architecture](https://github.com/COPUR/fintechbankx-governance-architecture-enablement-enterprise-architecture/blob/main/docs/architecture/overview/SECURE_MICROSERVICES_ARCHITECTURE.md)

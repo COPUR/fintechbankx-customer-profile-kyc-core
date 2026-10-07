@@ -1,0 +1,45 @@
+// =================================================================
+// CUSTOMER BOOTSTRAP MODULE
+// =================================================================
+// Runnable Spring Boot service (svc-cus-profile-kyc). Wires the domain,
+// application and infrastructure modules; holds runtime configuration only.
+// =================================================================
+
+apply plugin: 'org.springframework.boot'
+
+description = 'Customer Bootstrap - deployable svc-cus-profile-kyc service'
+
+dependencies {
+    implementation project(':customer-infrastructure')
+    implementation project(':customer-application')
+    implementation project(':customer-domain')
+    implementation project(':shared:kernel')
+
+    implementation 'org.springframework.boot:spring-boot-starter-actuator'
+    implementation 'org.springframework.boot:spring-boot-starter-web'
+    implementation 'org.springframework.boot:spring-boot-starter-data-jpa'
+    implementation 'org.springframework.boot:spring-boot-starter-security'
+    implementation 'org.springframework.boot:spring-boot-starter-oauth2-resource-server'
+    implementation 'org.springframework.kafka:spring-kafka'
+    runtimeOnly 'io.micrometer:micrometer-registry-prometheus'
+    runtimeOnly 'org.postgresql:postgresql'
+    runtimeOnly 'org.flywaydb:flyway-database-postgresql'
+
+    testImplementation 'org.springframework.boot:spring-boot-starter-test'
+    testImplementation 'org.springframework.security:spring-security-test'
+    testImplementation 'org.testcontainers:junit-jupiter'
+    testImplementation 'org.testcontainers:postgresql'
+}
+
+springBoot {
+    mainClass = 'com.bank.customer.CustomerProfileKycApplication'
+    buildInfo()
+}
+
+bootJar {
+    archiveFileName = 'customer-profile-kyc-service.jar'
+}
+
+jar {
+    enabled = false
+}

@@ -39,7 +39,16 @@ for spec in "${specs[@]}"; do
   cp "$spec" "$cp_file"
 
   echo "[oasdiff] checking $spec"
-  if ! oasdiff breaking --fail-on ERR "$base_file" "$cp_file"; then
+  # A reviewed, line-by-line list of accepted breaking changes for this spec
+  # (<spec>.accepted-breaking.txt next to it). Each line is one oasdiff error;
+  # anything not listed still fails.
+  ignore_args=()
+  accepted="${spec%.yaml}.accepted-breaking.txt"
+  if [ -f "$accepted" ]; then
+    echo "[oasdiff] applying accepted breaking changes from $accepted"
+    ignore_args=(--err-ignore "$accepted")
+  fi
+  if ! oasdiff breaking --fail-on ERR "${ignore_args[@]}" "$base_file" "$cp_file"; then
     echo "[oasdiff] breaking change detected in $spec"
     fail=1
   fi

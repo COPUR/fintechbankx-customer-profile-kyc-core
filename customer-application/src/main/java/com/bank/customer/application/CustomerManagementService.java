@@ -3,12 +3,21 @@ package com.bank.customer.application;
 import com.bank.customer.application.dto.CreateCustomerRequest;
 import com.bank.customer.application.dto.CreateCustomerRequestWithCreditScore;
 import com.bank.customer.application.dto.CustomerResponse;
+import com.bank.customer.domain.CreditMovement;
 import com.bank.customer.domain.Customer;
 import com.bank.customer.domain.CustomerRepository;
+import com.bank.customer.domain.port.out.CreditMovementJournal;
+import com.bank.customer.domain.port.out.CustomerEventPublisher;
 import com.bank.shared.kernel.domain.CustomerId;
+import com.bank.shared.kernel.domain.DomainEvent;
 import com.bank.shared.kernel.domain.Money;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
+
+import java.time.Clock;
+import java.util.List;
+import java.util.Optional;
+import java.util.UUID;
 
 /**
  * Application Service for Customer Management
@@ -24,9 +33,18 @@ import org.springframework.transaction.annotation.Transactional;
 public class CustomerManagementService {
     
     private final CustomerRepository customerRepository;
+    private final CustomerEventPublisher eventPublisher;
+    private final CreditMovementJournal creditMovements;
+    private final Clock clock;
     
-    public CustomerManagementService(CustomerRepository customerRepository) {
+    public CustomerManagementService(CustomerRepository customerRepository,
+                                     CustomerEventPublisher eventPublisher,
+                                     CreditMovementJournal creditMovements,
+                                     Clock clock) {
         this.customerRepository = customerRepository;
+        this.eventPublisher = eventPublisher;
+        this.creditMovements = creditMovements;
+        this.clock = clock;
     }
     
     /**
@@ -52,7 +70,7 @@ public class CustomerManagementService {
         );
         
         // Save customer
-        Customer savedCustomer = customerRepository.save(customer);
+        Customer savedCustomer = saveAndPublish(customer);
         
         return CustomerResponse.from(savedCustomer);
     }
@@ -78,7 +96,7 @@ public class CustomerManagementService {
             .orElseThrow(() -> CustomerNotFoundException.withId(customerId));
         
         customer.updateCreditLimit(newCreditLimit);
-        Customer savedCustomer = customerRepository.save(customer);
+        Customer savedCustomer = saveAndPublish(customer);
         
         return CustomerResponse.from(savedCustomer);
     }
@@ -87,26 +105,56 @@ public class CustomerManagementService {
      * FR-003: Reserve credit for a customer
      */
     public CustomerResponse reserveCredit(String customerId, Money amount) {
-        CustomerId id = CustomerId.of(customerId);
-        Customer customer = customerRepository.findById(id)
-            .orElseThrow(() -> CustomerNotFoundException.withId(customerId));
-        
-        customer.reserveCredit(amount);
-        Customer savedCustomer = customerRepository.save(customer);
-        
-        return CustomerResponse.from(savedCustomer);
+        return reserveCredit(customerId, amount, null);
+    }
+    
+    /**
+     * FR-003: Reserve credit, applied once per idempotency key. A retry with
+     * the same key and amount returns the current state without reserving
+     * again; the same key with a different instruction is a conflict.
+     */
+    public CustomerResponse reserveCredit(String customerId, Money amount, String idempotencyKey) {
+        return moveCredit(customerId, CreditMovement.Type.RESERVE, amount, idempotencyKey);
     }
     
     /**
      * FR-003: Release reserved credit for a customer
      */
     public CustomerResponse releaseCredit(String customerId, Money amount) {
+        return releaseCredit(customerId, amount, null);
+    }
+    
+    /**
+     * FR-003: Release reserved credit, applied once per idempotency key.
+     */
+    public CustomerResponse releaseCredit(String customerId, Money amount, String idempotencyKey) {
+        return moveCredit(customerId, CreditMovement.Type.RELEASE, amount, idempotencyKey);
+    }
+    
+    private CustomerResponse moveCredit(String customerId, CreditMovement.Type type, Money amount, String idempotencyKey) {
         CustomerId id = CustomerId.of(customerId);
         Customer customer = customerRepository.findById(id)
             .orElseThrow(() -> CustomerNotFoundException.withId(customerId));
         
-        customer.releaseCredit(amount);
-        Customer savedCustomer = customerRepository.save(customer);
+        if (idempotencyKey != null) {
+            Optional<CreditMovement> previous = creditMovements.find(id, idempotencyKey);
+            if (previous.isPresent()) {
+                if (!previous.get().sameInstruction(type, amount)) {
+                    throw IdempotencyKeyConflictException.forKey(idempotencyKey);
+                }
+                return CustomerResponse.from(customer);
+            }
+        }
+        
+        if (type == CreditMovement.Type.RESERVE) {
+            customer.reserveCredit(amount);
+        } else {
+            customer.releaseCredit(amount);
+        }
+        Customer savedCustomer = saveAndPublish(customer);
+        if (idempotencyKey != null) {
+            creditMovements.record(new CreditMovement(UUID.randomUUID(), id, idempotencyKey, type, amount, clock.instant()));
+        }
         
         return CustomerResponse.from(savedCustomer);
     }
@@ -135,7 +183,7 @@ public class CustomerManagementService {
         );
         
         // Save customer
-        Customer savedCustomer = customerRepository.save(customer);
+        Customer savedCustomer = saveAndPublish(customer);
         
         return CustomerResponse.from(savedCustomer);
     }
@@ -161,7 +209,7 @@ public class CustomerManagementService {
             .orElseThrow(() -> CustomerNotFoundException.withId(customerId));
         
         customer.updateCreditScore(newCreditScore);
-        Customer savedCustomer = customerRepository.save(customer);
+        Customer savedCustomer = saveAndPublish(customer);
         
         return CustomerResponse.from(savedCustomer);
     }
@@ -186,8 +234,19 @@ public class CustomerManagementService {
             .orElseThrow(() -> CustomerNotFoundException.withId(customerId));
         
         customer.updateContactInformation(newEmail, newPhoneNumber);
-        Customer savedCustomer = customerRepository.save(customer);
+        Customer savedCustomer = saveAndPublish(customer);
         
         return CustomerResponse.from(savedCustomer);
+    }
+    
+    private Customer saveAndPublish(Customer customer) {
+        List<DomainEvent> events = List.copyOf(customer.getDomainEvents());
+        Customer saved = customerRepository.save(customer);
+        if (!events.isEmpty()) {
+            eventPublisher.publish(saved, events);
+        }
+        customer.clearDomainEvents();
+        saved.clearDomainEvents();
+        return saved;
     }
 }

@@ -35,8 +35,12 @@ public record CustomerResponse(
             "ACTIVE", // Default status
             customer.getCreditScore(),
             customer.getMonthlyIncome() != null ? customer.getMonthlyIncome().getAmount() : null,
-            customer.getCreatedAt().atZone(java.time.ZoneOffset.UTC).toInstant(),
-            customer.getUpdatedAt().atZone(java.time.ZoneOffset.UTC).toInstant()
+            toInstant(customer.getCreatedAt()),
+            toInstant(customer.getUpdatedAt())
         );
+    }
+
+    private static Instant toInstant(java.time.LocalDateTime time) {
+        return time == null ? null : time.atZone(java.time.ZoneOffset.UTC).toInstant();
     }
 }

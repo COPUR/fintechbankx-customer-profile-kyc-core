@@ -1,0 +1,13 @@
+# Accepted 2026-10-07 with the move to a standalone service: customers migrated from the monolith
+# have no e-mail address (public.customers never stored one), so email is optional and nullable.
+# The only consumer, svc-ln-loan-lifecycle, does not read it. Delete these lines after the merge.
+POST /api/v1/customers the response property 'email' became nullable for the status '201'
+POST /api/v1/customers the response property 'email' became optional for the status '201'
+GET /api/v1/customers/{customerId} the response property 'email' became nullable for the status '200'
+GET /api/v1/customers/{customerId} the response property 'email' became optional for the status '200'
+PUT /api/v1/customers/{customerId}/credit-limit the response property 'email' became nullable for the status '200'
+PUT /api/v1/customers/{customerId}/credit-limit the response property 'email' became optional for the status '200'
+POST /api/v1/customers/{customerId}/credit/reserve the response property 'email' became nullable for the status '200'
+POST /api/v1/customers/{customerId}/credit/reserve the response property 'email' became optional for the status '200'
+POST /api/v1/customers/{customerId}/credit/release the response property 'email' became nullable for the status '200'
+POST /api/v1/customers/{customerId}/credit/release the response property 'email' became optional for the status '200'

@@ -1,8 +1,8 @@
 // =================================================================
 // CUSTOMER INFRASTRUCTURE MODULE
 // =================================================================
-// Infrastructure implementations: repositories, external services, adapters
-// Implements ports defined in domain and application layers
+// Adapters: persistence over the service's own schema (sc_cus_profile_kyc),
+// transactional outbox to Kafka, HTTP API and security.
 // =================================================================
 
 apply plugin: 'jacoco'
@@ -16,36 +16,38 @@ dependencies {
     // Shared kernel (vendored)
     implementation project(':shared:kernel')
     
-    // Persistence
+    // Persistence: own schema sc_cus_profile_kyc, Flyway migrations in src/main/resources/db/migration
     implementation 'org.springframework.boot:spring-boot-starter-data-jpa'
     implementation 'org.postgresql:postgresql'
     implementation 'org.flywaydb:flyway-core'
     implementation 'org.flywaydb:flyway-database-postgresql'
     
-    // External Integrations
+    // Inbound HTTP and security
     implementation 'org.springframework.boot:spring-boot-starter-web'
-    implementation 'org.springframework.boot:spring-boot-starter-webflux'
-    implementation 'org.springframework.boot:spring-boot-starter-hateoas'
     implementation 'org.springframework.boot:spring-boot-starter-validation'
-    implementation 'org.springframework.security:spring-security-core'
-
-    // API Documentation
-    implementation libs.springdoc.openapi.starter.webmvc.ui
-    implementation libs.swagger.annotations
+    implementation 'org.springframework.boot:spring-boot-starter-security'
+    implementation 'org.springframework.boot:spring-boot-starter-oauth2-resource-server'
     
-    // Messaging
+    // Messaging (outbox relay) and metrics
     implementation 'org.springframework.kafka:spring-kafka'
+    implementation 'io.micrometer:micrometer-core'
     
     // Testing
     testImplementation 'org.springframework.boot:spring-boot-starter-test'
-    testImplementation 'org.testcontainers:junit-jupiter'
-    testImplementation 'org.testcontainers:postgresql'
-    testImplementation 'org.springframework.kafka:spring-kafka-test'
+    testImplementation 'org.springframework.security:spring-security-test'
 }
 
 jacoco {
     toolVersion = "0.8.14"
 }
+
+// JPA adapters and Spring configuration are covered by customer-bootstrap's
+// integration tests against Postgres; this module gates the unit-testable code.
+def customerInfrastructureCoverageIncludes = [
+    'com/bank/customer/infrastructure/outbox/**',
+    'com/bank/customer/infrastructure/persistence/CustomerPersistenceMapper*',
+    'com/bank/customer/infrastructure/web/**'
+]
 
 jacocoTestReport {
     dependsOn test
@@ -54,10 +56,20 @@ jacocoTestReport {
         html.required = true
         csv.required = false
     }
+    afterEvaluate {
+        classDirectories.setFrom(files(classDirectories.files.collect { dir ->
+            fileTree(dir: dir, include: customerInfrastructureCoverageIncludes)
+        }))
+    }
 }
 
 jacocoTestCoverageVerification {
     dependsOn jacocoTestReport
+    afterEvaluate {
+        classDirectories.setFrom(files(classDirectories.files.collect { dir ->
+            fileTree(dir: dir, include: customerInfrastructureCoverageIncludes)
+        }))
+    }
     violationRules {
         rule {
             limit {

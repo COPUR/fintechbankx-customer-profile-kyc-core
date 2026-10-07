@@ -74,6 +74,27 @@ public class Customer extends AggregateRoot<CustomerId> {
         return new Customer(customerId, firstName, lastName, email, phoneNumber, creditProfile);
     }
     
+    /**
+     * Rebuilds a customer from persisted state. Raises no events and skips the
+     * creation rules, which legacy rows (no email, no income) do not meet.
+     */
+    public static Customer rehydrate(CustomerSnapshot snapshot) {
+        Objects.requireNonNull(snapshot, "Snapshot cannot be null");
+        Customer customer = new Customer();
+        customer.customerId = Objects.requireNonNull(snapshot.customerId(), "Customer ID cannot be null");
+        customer.firstName = snapshot.firstName();
+        customer.lastName = snapshot.lastName();
+        customer.email = snapshot.email();
+        customer.phoneNumber = snapshot.phoneNumber();
+        customer.creditProfile = CreditProfile.create(snapshot.creditLimit(), snapshot.usedCredit());
+        customer.creditScore = snapshot.creditScore();
+        customer.monthlyIncome = snapshot.monthlyIncome();
+        customer.createdAt = snapshot.createdAt();
+        customer.updatedAt = snapshot.updatedAt();
+        customer.setVersion(snapshot.version());
+        return customer;
+    }
+
     public static Customer createWithCreditScore(CustomerId customerId, String firstName, String lastName,
                                                String email, String phoneNumber, Money monthlyIncome, Integer creditScore) {
         validateCustomerData(firstName, lastName, email);
@@ -124,6 +145,10 @@ public class Customer extends AggregateRoot<CustomerId> {
     }
     
     private Money calculateCreditLimit() {
+        if (monthlyIncome == null && creditProfile != null) {
+            // No income on file (migrated or created with a fixed limit): keep the assigned limit.
+            return creditProfile.getCreditLimit();
+        }
         if (monthlyIncome == null || creditScore == null) {
             return Money.zero(MIN_MONTHLY_INCOME.getCurrency());
         }
