@@ -1,0 +1,19 @@
+# Minimal version catalog for the standalone customer-profile-kyc build.
+# Versions taken from the enterprise-loan-management-system catalog at extraction time.
+
+[versions]
+mapstruct = "1.6.3"
+lombok = "1.18.42"
+opentelemetry = "1.33.0"
+archunit = "1.4.1"
+swagger-annotations = "2.2.44"
+springdoc-openapi = "2.3.0"
+
+[libraries]
+mapstruct = { group = "org.mapstruct", name = "mapstruct", version.ref = "mapstruct" }
+mapstruct-processor = { group = "org.mapstruct", name = "mapstruct-processor", version.ref = "mapstruct" }
+lombok = { group = "org.projectlombok", name = "lombok", version.ref = "lombok" }
+opentelemetry-api = { group = "io.opentelemetry", name = "opentelemetry-api", version.ref = "opentelemetry" }
+archunit-junit5 = { group = "com.tngtech.archunit", name = "archunit-junit5", version.ref = "archunit" }
+swagger-annotations = { group = "io.swagger.core.v3", name = "swagger-annotations", version.ref = "swagger-annotations" }
+springdoc-openapi-starter-webmvc-ui = { group = "org.springdoc", name = "springdoc-openapi-starter-webmvc-ui", version.ref = "springdoc-openapi" }

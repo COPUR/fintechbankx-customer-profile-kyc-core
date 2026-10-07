@@ -11,11 +11,7 @@ description = 'Customer Application - Application services and use case orchestr
 
 dependencies {
     // Domain Layer
-    api project(':customer-context:customer-domain')
-    
-    // Infrastructure
-    // Temporarily disable shared-infrastructure due to missing dependencies
-    // api project(':shared-infrastructure')
+    api project(':customer-domain')
     
     // Application Services
     implementation 'org.springframework.boot:spring-boot-starter'
