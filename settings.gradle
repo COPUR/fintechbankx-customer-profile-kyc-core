@@ -1,0 +1,6 @@
+rootProject.name = 'fintechbankx-customer-profile-kyc-service'
+
+include 'shared:kernel'
+include 'customer-domain'
+include 'customer-application'
+include 'customer-infrastructure'
