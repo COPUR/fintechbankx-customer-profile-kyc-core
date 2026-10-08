@@ -6,6 +6,8 @@ import com.bank.customer.domain.IdentityUserId;
 import com.bank.customer.domain.IdentityUserNotFoundException;
 import com.bank.customer.domain.port.out.IdentityDirectoryPort;
 import com.bank.shared.kernel.domain.CustomerId;
+import io.micrometer.core.instrument.Counter;
+import io.micrometer.core.instrument.MeterRegistry;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.core.ParameterizedTypeReference;
@@ -45,12 +47,15 @@ public class KeycloakIdentityDirectoryAdapter implements IdentityDirectoryPort {
     private final RestClient http;
     private final KeycloakAdminSettings settings;
     private final Clock clock;
+    private final MeterRegistry meters;
     private volatile AccessToken token;
 
-    public KeycloakIdentityDirectoryAdapter(RestClient http, KeycloakAdminSettings settings, Clock clock) {
+    public KeycloakIdentityDirectoryAdapter(RestClient http, KeycloakAdminSettings settings, Clock clock,
+                                            MeterRegistry meters) {
         this.http = http;
         this.settings = settings;
         this.clock = clock;
+        this.meters = meters;
     }
 
     @Override
@@ -100,11 +105,27 @@ public class KeycloakIdentityDirectoryAdapter implements IdentityDirectoryPort {
             // FGAP v2 (identity 8f9024b) scopes this client to users in group /customers:
             // a 403 means the user exists but is not a customer user, so it is "not found" here.
             int status = e.getStatusCode().value();
-            if (status == HttpStatus.NOT_FOUND.value() || status == HttpStatus.FORBIDDEN.value()) {
+            if (status == HttpStatus.FORBIDDEN.value()) {
+                countResponse(status);
+                // Never the user id. If every link answers 422 after enabling, check the FGAP permission first.
+                log.warn("Keycloak answered 403 reading an identity user; expected only for users outside /customers");
+                throw new IdentityUserNotFoundException();
+            }
+            if (status == HttpStatus.NOT_FOUND.value()) {
+                countResponse(status);
                 throw new IdentityUserNotFoundException();
             }
             throw e;
         }
+    }
+
+    /** identity.directory.responses{status}: reads answered 403 (outside /customers) or 404 (unknown user). */
+    private void countResponse(int status) {
+        Counter.builder("identity.directory.responses")
+            .description("Keycloak user reads that ended as not a customer user (403) or unknown user (404)")
+            .tag("status", Integer.toString(status))
+            .register(meters)
+            .increment();
     }
 
     @SuppressWarnings("unchecked")

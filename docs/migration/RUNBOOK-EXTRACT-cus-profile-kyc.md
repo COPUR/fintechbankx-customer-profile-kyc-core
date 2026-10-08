@@ -164,6 +164,7 @@ customer's held events. Record each replay or discard (event ids, cause, operato
 - [ ] `svc-ln-loan-lifecycle` calls with a client-credentials token (`SERVICE` role) instead of forwarding the end user's token
 - [ ] Keycloak: audience mapper for `svc-cus-profile-kyc` on each calling client (fintechbankx-platform-identity-iam-keycloak-ldap)
 - [ ] Keycloak: the service client `svc-cus-profile-kyc` holds the scoped FGAP v2 permission (view and manage users in group `/customers` only, identity repo 8f9024b), not realm-management `manage-users`; a user outside `/customers` answers 403, which the identity link reports as 422 `IDENTITY_USER_NOT_FOUND`
+- [ ] After enabling the identity link (`IDENTITY_ADMIN_ENABLED=true`): if every link returns 422, check the FGAP permission first; `identity_directory_responses_total{status="403"}` rising with every attempt and the warning "Keycloak answered 403 reading an identity user" in the log mean the client is not scoped to `/customers`
 - [ ] Namespace `customer` onboarded to the mesh (istio-injection) by the mesh-security squad
 - [ ] Monolith anti-corruption client behind a flag, with a freeze mode that refuses customer creation, profile edits and credit writes (enterprise-loan-management-system)
 - [ ] Reverse sync (service rows changed since step 5 back to `public.customers`) written and rehearsed, so step 5 can be rolled back without losing writes

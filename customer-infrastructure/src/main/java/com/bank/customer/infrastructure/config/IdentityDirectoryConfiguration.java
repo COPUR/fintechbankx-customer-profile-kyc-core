@@ -30,12 +30,13 @@ public class IdentityDirectoryConfiguration {
             @Value("${fintechbankx.identity.admin.client-id:}") String clientId,
             @Value("${fintechbankx.identity.admin.client-secret:}") String clientSecret,
             @Value("${fintechbankx.identity.admin.timeout:PT3S}") Duration timeout,
-            Clock clock) {
+            Clock clock,
+            io.micrometer.core.instrument.MeterRegistry meters) {
         KeycloakAdminSettings settings = new KeycloakAdminSettings(baseUrl, realm, clientId, clientSecret, timeout);
         SimpleClientHttpRequestFactory requests = new SimpleClientHttpRequestFactory();
         requests.setConnectTimeout(settings.timeout());
         requests.setReadTimeout(settings.timeout());
-        return new KeycloakIdentityDirectoryAdapter(RestClient.builder().requestFactory(requests).build(), settings, clock);
+        return new KeycloakIdentityDirectoryAdapter(RestClient.builder().requestFactory(requests).build(), settings, clock, meters);
     }
 
     @Bean
