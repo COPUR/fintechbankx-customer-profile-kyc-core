@@ -43,9 +43,27 @@ class CustomerContextOpenApiContractTest {
         paths.forEach((path, item) -> ((java.util.Map<String, Object>) item).forEach((method, operation) -> {
             List<java.util.Map<String, Object>> security = (List<java.util.Map<String, Object>>)
                 ((java.util.Map<String, Object>) operation).get("security");
-            assertThat(security).as("%s %s security", method, path).isNotEmpty()
-                .noneMatch(requirement -> requirement.containsKey("dpopAuth") && requirement.size() > 1);
+            assertThat(security).as("%s %s security: bearer only, no dpopAuth alternative", method, path)
+                .containsExactly(java.util.Map.of("bearerAuth", List.of()));
         }));
+        java.util.Map<String, Object> schemes = (java.util.Map<String, Object>) ((java.util.Map<String, Object>)
+            spec.get("components")).get("securitySchemes");
+        assertThat(schemes).containsOnlyKeys("bearerAuth");
+    }
+
+    /** Review 5456301261: a replay is recognised only when the whole movement matches. */
+    @Test
+    @SuppressWarnings("unchecked")
+    void reserveAndReleaseStateTheFullReplayKey() throws IOException {
+        java.util.Map<String, Object> spec = new org.yaml.snakeyaml.Yaml().load(loadSpec());
+        java.util.Map<String, Object> paths = (java.util.Map<String, Object>) spec.get("paths");
+        for (String path : List.of("/api/v1/customers/{customerId}/credit/reserve",
+                "/api/v1/customers/{customerId}/credit/release")) {
+            java.util.Map<String, Object> post = (java.util.Map<String, Object>)
+                ((java.util.Map<String, Object>) paths.get(path)).get("post");
+            assertThat(((String) post.get("description")).replaceAll("\\s+", " "))
+                .as(path).contains("same key, movement type, amount, currency and reference");
+        }
     }
 
     @Test
