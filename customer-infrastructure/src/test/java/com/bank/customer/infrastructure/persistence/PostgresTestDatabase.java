@@ -10,7 +10,7 @@ import org.testcontainers.containers.PostgreSQLContainer;
  * (a service container in required-gates.yml); locally either set TEST_DB_URL
  * or have Docker running for Testcontainers.
  */
-final class PostgresTestDatabase {
+public final class PostgresTestDatabase {
 
     private static PostgreSQLContainer<?> container;
 
@@ -22,7 +22,7 @@ final class PostgresTestDatabase {
      * locally, but fails when REQUIRE_TEST_DB=true (set in CI), so a missing
      * database can never turn the integration tests into a silent pass.
      */
-    static void assumeAvailable() {
+    public static void assumeAvailable() {
         boolean available = hasExternalDatabase() || DockerClientFactory.instance().isDockerAvailable();
         if (!available && "true".equalsIgnoreCase(System.getenv("REQUIRE_TEST_DB"))) {
             throw new IllegalStateException("REQUIRE_TEST_DB=true but neither TEST_DB_URL nor Docker is available");
@@ -35,7 +35,7 @@ final class PostgresTestDatabase {
         return url != null && !url.isBlank();
     }
 
-    static synchronized void register(DynamicPropertyRegistry registry) {
+    public static synchronized void register(DynamicPropertyRegistry registry) {
         String url = System.getenv("TEST_DB_URL");
         if (url != null && !url.isBlank()) {
             registry.add("spring.datasource.url", () -> url);
