@@ -79,8 +79,22 @@ public class SecurityConfiguration {
             : OAuth2TokenValidatorResult.failure(wrongAudience);
     }
 
+    /** Access-token claim with the end user's customer profile id (platform contract, "End-user and caller claims"). */
+    static final String CUSTOMER_ID_CLAIM = "customer_id";
+
+    /**
+     * Realm roles become authorities. The principal name is the customer_id
+     * claim when the token has one (end-user tokens, whose subject is the
+     * Keycloak user UUID), otherwise the subject (staff and service tokens),
+     * so the ownership rules can compare the path id with authentication.name.
+     */
     static Converter<Jwt, AbstractAuthenticationToken> keycloakRealmRoles() {
-        return jwt -> new JwtAuthenticationToken(jwt, realmRoles(jwt), jwt.getSubject());
+        return jwt -> new JwtAuthenticationToken(jwt, realmRoles(jwt), principalName(jwt));
+    }
+
+    static String principalName(Jwt jwt) {
+        String customerId = jwt.getClaimAsString(CUSTOMER_ID_CLAIM);
+        return customerId == null || customerId.isBlank() ? jwt.getSubject() : customerId;
     }
 
     @SuppressWarnings("unchecked")
