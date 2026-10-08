@@ -34,6 +34,9 @@ import java.util.Currency;
  * client is on the allowed list (ServiceCallerPolicy). Services never get the
  * full customer record: all three answer with the credit position only, and
  * personal data stays with staff and the customer.
+ * A customer reads only their own profile and credit: the path id must equal
+ * the token's customer_id claim (platform contract, "End-user and caller
+ * claims"; set by the identity link), never the subject.
  * Every credit movement needs an x-idempotency-key, so a retried call never
  * moves credit twice.
  */
@@ -77,7 +80,7 @@ public class CustomerController {
      * FR-002: Get customer by ID
      */
     @GetMapping("/{customerId}")
-    @PreAuthorize("hasAnyRole('BANKER', 'ADMIN') or (hasRole('CUSTOMER') and #customerId == authentication.name)")
+    @PreAuthorize("hasAnyRole('BANKER', 'ADMIN') or (hasRole('CUSTOMER') and #customerId == authentication.token.claims['customer_id'])")
     public ResponseEntity<CustomerResponse> getCustomer(@PathVariable String customerId) {
         CustomerResponse response = CustomerResponse.from(getCustomerProfile.getCustomerProfile(CustomerId.of(customerId)));
         return ResponseEntity.ok(response);
@@ -87,7 +90,7 @@ public class CustomerController {
      * Credit position only (limit, used, available), without personal data.
      */
     @GetMapping("/{customerId}/credit")
-    @PreAuthorize(CREDIT_CALLERS + " or (hasRole('CUSTOMER') and #customerId == authentication.name)")
+    @PreAuthorize(CREDIT_CALLERS + " or (hasRole('CUSTOMER') and #customerId == authentication.token.claims['customer_id'])")
     public ResponseEntity<CustomerCreditResponse> getCreditPosition(@PathVariable String customerId) {
         return ResponseEntity.ok(CustomerCreditResponse.from(getCreditPosition.getCreditPosition(CustomerId.of(customerId))));
     }

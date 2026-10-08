@@ -250,10 +250,10 @@ class CustomerServiceIT {
     void servicesReadOnlyTheCreditPositionAndOnlyListedServicesMayUseIt() throws Exception {
         String customerId = create("self@example.com", "3000.00");
 
-        mvc.perform(get("/api/v1/customers/{id}", customerId).with(jwt().jwt(j -> j.subject(customerId))
+        mvc.perform(get("/api/v1/customers/{id}", customerId).with(jwt().jwt(j -> j.subject("kc-user-1").claim("customer_id", customerId))
                 .authorities(new SimpleGrantedAuthority("ROLE_CUSTOMER"))))
             .andExpect(status().isOk());
-        mvc.perform(get("/api/v1/customers/{id}", customerId).with(jwt().jwt(j -> j.subject("someone-else"))
+        mvc.perform(get("/api/v1/customers/{id}", customerId).with(jwt().jwt(j -> j.subject("kc-user-2").claim("customer_id", "someone-else"))
                 .authorities(new SimpleGrantedAuthority("ROLE_CUSTOMER"))))
             .andExpect(status().isForbidden());
         mvc.perform(asService(get("/api/v1/customers/{id}", customerId)))
@@ -272,7 +272,7 @@ class CustomerServiceIT {
                 .content("{\"amount\": 10.00, \"currency\": \"AED\"}"))
             .andExpect(status().isForbidden());
         mvc.perform(post("/api/v1/customers/{id}/credit/reserve", customerId)
-                .with(jwt().jwt(j -> j.subject(customerId)).authorities(new SimpleGrantedAuthority("ROLE_CUSTOMER")))
+                .with(jwt().jwt(j -> j.subject("kc-user-1").claim("customer_id", customerId)).authorities(new SimpleGrantedAuthority("ROLE_CUSTOMER")))
                 .header("x-idempotency-key", "self-1")
                 .contentType(MediaType.APPLICATION_JSON)
                 .content("{\"amount\": 10.00, \"currency\": \"AED\"}"))
