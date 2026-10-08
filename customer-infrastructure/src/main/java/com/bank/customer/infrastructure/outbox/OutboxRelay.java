@@ -165,7 +165,8 @@ public class OutboxRelay {
     /**
      * Payload failure: the record itself cannot be sent (too large, not
      * serializable, invalid topic name), so retrying cannot help. Any other
-     * failure is treated as transient and only parks under the time ceiling.
+     * failure stops the batch and is retried after the backoff; never parked
+     * by the relay (ADR-021 decision 4).
      */
     static boolean isPayloadFailure(Throwable failure) {
         for (Throwable cause = failure; cause != null; cause = cause.getCause()) {

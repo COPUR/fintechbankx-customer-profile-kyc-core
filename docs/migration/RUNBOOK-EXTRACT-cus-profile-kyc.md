@@ -114,6 +114,9 @@ Every meter carries `service="svc-cus-profile-kyc"`, `app` (`METRICS_APP`, the c
 After a stopped batch the relay backs off: it waits the poll interval (`customer.outbox.relay.interval`, 1 s), doubling
 per stopped batch up to `customer.outbox.relay.backoff-max` (`OUTBOX_RELAY_BACKOFF_MAX`, default `PT5M`), and resets
 after a completed batch. The backoff is per replica and in memory; a restart starts from the poll interval again.
+Only the replica holding the advisory lock sends, but each replica keeps its own backoff, so while a failure lasts the
+cluster tries up to N times per backoff period for N replicas (at the 5 minute cap and 3 replicas, about one attempt
+every 100 s). Sharing the backoff state across replicas is a possible follow-up.
 
 Manual park (operator only). The relay never parks a row for a non-payload error. When one row holds the batch on
 such an error (`last_error` stays empty; see the relay log and `outbox_send_failures_total`) and the cause cannot be
