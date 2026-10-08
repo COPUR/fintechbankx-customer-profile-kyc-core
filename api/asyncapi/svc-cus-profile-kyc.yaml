@@ -6,9 +6,11 @@ asyncapi: 3.0.0
 id: urn:fintechbankx:asyncapi:svc-cus-profile-kyc
 info:
   title: svc-cus-profile-kyc events
-  version: 1.0.0
+  version: 1.1.0
   description: |-
     Event contract for svc-cus-profile-kyc (repository fintechbankx-customer-profile-kyc-core, canonical name fintechbankx-customer-profile-kyc-service).
+
+    Version 1.1.0: Customer.Customer.CreditScoreUpdated.v1 no longer carries the score value (newCreditScore removed before the first release); its data is customerId and updatedAt, and consumers read the score through GET /api/v1/customers/{id}/credit under the azp allow-list. The catalog spec is unmerged (asyncapi-catalog PR not merged), so no v2 topic is needed. Credit limit events keep their amounts.
 
     Status: Proposed. Owner: Customer and KYC Squad, Lending and Money Movement Tribe. Event namespace: `evt.cus.customer`.
 
@@ -317,12 +319,13 @@ components:
           type: string
           description: Customer id.
           minLength: 1
-        newCreditScore:
-          type: integer
-          description: 'New credit score. Restricted data: consumers must be entitled to read it.'
+        updatedAt:
+          type: string
+          format: date-time
+          description: When the credit score changed. The score value itself is not on the event; read it through GET /api/v1/customers/{customerId}/credit.
       required:
       - customerId
-      - newCreditScore
+      - updatedAt
     CustomerKycStatusChangedData:
       type: object
       description: Payload of Customer.Customer.KycStatusChanged.v1. Never carries who made the decision or personal data.

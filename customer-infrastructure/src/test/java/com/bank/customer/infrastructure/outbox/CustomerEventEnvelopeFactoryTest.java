@@ -71,7 +71,7 @@ class CustomerEventEnvelopeFactoryTest {
             .noneMatch(name -> name.toLowerCase(java.util.Locale.ROOT).contains("score"));
         assertThat(payload).doesNotContain("newCreditScore", "760");
         assertThat(java.nio.file.Files.readString(java.nio.file.Path.of("..", "api", "asyncapi", "svc-cus-profile-kyc.yaml")))
-            .as("contract").doesNotContain("newCreditScore");
+            .as("contract schema has no newCreditScore property").doesNotContain("newCreditScore:");
     }
 
     /** Staff KYC decisions: status, previous status, source and verifiedAt; never who decided or personal data. */

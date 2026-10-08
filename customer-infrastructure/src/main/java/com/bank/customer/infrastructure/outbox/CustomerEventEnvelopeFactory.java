@@ -72,9 +72,10 @@ public class CustomerEventEnvelopeFactory {
             case CustomerCreditReleasedEvent e -> new PublicEvent("credit-released", "CreditReleased", data(
                 "customerId", e.getCustomerId().getValue(),
                 "releasedAmount", money(e.getReleasedAmount())));
+            // Never the score value (restricted data): consumers read it through GET /credit under the azp allow-list.
             case CustomerCreditScoreUpdatedEvent e -> new PublicEvent("credit-score-updated", "CreditScoreUpdated", data(
                 "customerId", e.getCustomerId().getValue(),
-                "newCreditScore", e.getNewCreditScore()));
+                "updatedAt", e.getOccurredOn().toString()));
             // Never the staff subject: who decided stays in the customer row (kyc_updated_by).
             case CustomerKycStatusChangedEvent e -> new PublicEvent("kyc-status-changed", "KycStatusChanged", data(
                 "customerId", e.getCustomerId().getValue(),
