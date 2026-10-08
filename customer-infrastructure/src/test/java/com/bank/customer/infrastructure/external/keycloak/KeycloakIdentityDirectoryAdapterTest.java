@@ -54,14 +54,44 @@ class KeycloakIdentityDirectoryAdapterTest {
             Clock.fixed(Instant.parse("2026-10-08T12:00:00Z"), ZoneOffset.UTC), meters);
     }
 
+    /**
+     * client_secret_basic (RFC 6749 section 2.3.1): the client id and secret travel only in the
+     * Authorization header, form-urlencoded then base64; the form body is grant_type alone, so no
+     * request-body log can ever hold the credential.
+     */
     private void expectToken() {
+        expectToken("svc-cus-profile-kyc", "test-client-credential");
+    }
+
+    private void expectToken(String clientId, String secret) {
+        String basic = java.util.Base64.getEncoder().encodeToString(
+            (java.net.URLEncoder.encode(clientId, java.nio.charset.StandardCharsets.UTF_8) + ":"
+                + java.net.URLEncoder.encode(secret, java.nio.charset.StandardCharsets.UTF_8))
+                .getBytes(java.nio.charset.StandardCharsets.UTF_8));
         keycloak.expect(once(), requestTo(TOKEN_URL))
             .andExpect(method(HttpMethod.POST))
+            .andExpect(header("Authorization", "Basic " + basic))
             .andExpect(content().contentTypeCompatibleWith(MediaType.APPLICATION_FORM_URLENCODED))
-            .andExpect(content().formDataContains(java.util.Map.of(
-                "grant_type", "client_credentials", "client_id", "svc-cus-profile-kyc",
-                "client_secret", "test-client-credential")))
+            .andExpect(content().string("grant_type=client_credentials"))
             .andRespond(withSuccess("{\"access_token\":\"admin-token\",\"expires_in\":300}", MediaType.APPLICATION_JSON));
+    }
+
+    /** Reserved characters in the secret are form-encoded before base64, as Keycloak decodes them. */
+    @Test
+    void theClientCredentialIsSentInTheBasicHeaderFormEncoded() {
+        RestClient.Builder builder = RestClient.builder();
+        keycloak = MockRestServiceServer.bindTo(builder).build();
+        adapter = new KeycloakIdentityDirectoryAdapter(builder.build(),
+            new KeycloakAdminSettings(BASE, "fintechbankx", "svc-cus-profile-kyc", "a+b:c/d=e %f", Duration.ofSeconds(3)),
+            Clock.fixed(Instant.parse("2026-10-08T12:00:00Z"), ZoneOffset.UTC), meters);
+        expectToken("svc-cus-profile-kyc", "a+b:c/d=e %f");
+        keycloak.expect(once(), requestTo(USER_URL)).andExpect(method(HttpMethod.GET))
+            .andRespond(withSuccess("{\"id\":\"" + USER + "\",\"attributes\":{\"customer_id\":[\"CUST-1A2B3C4D\"]}}",
+                MediaType.APPLICATION_JSON));
+
+        adapter.linkCustomer(USER_ID, CUSTOMER);
+
+        keycloak.verify();
     }
 
     @Test
