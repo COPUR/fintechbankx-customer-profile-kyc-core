@@ -43,9 +43,22 @@ jobs:
           helm template ci "$chart" $args > /dev/null
           helm template ci "$chart" -f "$chart/values-dev.yaml" $args > /dev/null
           rendered="$(helm template ci "$chart" $args)"
-          # Platform contract: mesh policy belongs to the service-mesh repo, secrets to the one ClusterSecretStore.
-          if grep -qE "kind: (PeerAuthentication|AuthorizationPolicy|SecretStore)$" <<<"$rendered"; then
-            echo "chart must not ship mesh policies or its own SecretStore" >&2
+          # Platform contract: mesh policy and the ingress NetworkPolicy (mesh #11) belong to the service-mesh repo,
+          # secrets to the one ClusterSecretStore.
+          if grep -qE "kind: (PeerAuthentication|AuthorizationPolicy|SecretStore|NetworkPolicy)$" <<<"$rendered"; then
+            echo "chart must not ship mesh policies, a NetworkPolicy or its own SecretStore" >&2
+            exit 1
+          fi
+          # The outbox relay stays off in the chart until mesh #11's MSK egress is applied (runbook step 6).
+          grep -qE '^  OUTBOX_RELAY_ENABLED: "false"$' <<<"$rendered"
+          # Kafka TLS env only for the kafka-strimzi profile, from the Secret named by kafkaTls.secretName.
+          python3 -c "import yaml" 2>/dev/null || python3 -m pip install --user pyyaml==6.0.2
+          python3 scripts/ci/strimzi-tls-env.py --expect-none <<<"$rendered"
+          strimzi="--set config.SPRING_PROFILES_ACTIVE=kafka-strimzi"
+          helm template ci "$chart" $args $strimzi --set kafkaTls.secretName=kafka-client-tls \
+            | python3 scripts/ci/strimzi-tls-env.py --expect-secret kafka-client-tls
+          if helm template ci "$chart" $args $strimzi > /dev/null 2>&1; then
+            echo "chart rendered the kafka-strimzi profile without kafkaTls.secretName" >&2
             exit 1
           fi
           grep -q "name: aws-secrets-manager" <<<"$rendered"
