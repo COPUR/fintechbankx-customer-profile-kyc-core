@@ -42,6 +42,8 @@ class KeycloakIdentityDirectoryAdapterTest {
 
     private MockRestServiceServer keycloak;
     private KeycloakIdentityDirectoryAdapter adapter;
+    private final io.micrometer.core.instrument.simple.SimpleMeterRegistry meters =
+        new io.micrometer.core.instrument.simple.SimpleMeterRegistry();
 
     @BeforeEach
     void setUp() {
@@ -49,7 +51,7 @@ class KeycloakIdentityDirectoryAdapterTest {
         keycloak = MockRestServiceServer.bindTo(builder).build();
         adapter = new KeycloakIdentityDirectoryAdapter(builder.build(),
             new KeycloakAdminSettings(BASE, "fintechbankx", "svc-cus-profile-kyc", "test-client-credential", Duration.ofSeconds(3)),
-            Clock.fixed(Instant.parse("2026-10-08T12:00:00Z"), ZoneOffset.UTC));
+            Clock.fixed(Instant.parse("2026-10-08T12:00:00Z"), ZoneOffset.UTC), meters);
     }
 
     private void expectToken() {
@@ -128,6 +130,39 @@ class KeycloakIdentityDirectoryAdapterTest {
 
         assertThatThrownBy(() -> adapter.linkCustomer(USER_ID, CUSTOMER)).isInstanceOf(IdentityUserNotFoundException.class);
         keycloak.verify();
+    }
+
+    /**
+     * Review 5459671617: a 403 stays a 422 for the caller but is observable:
+     * identity.directory.responses{status} counts it, and a warning (without
+     * the user id) says it is expected only for users outside /customers. If
+     * every link answers 422 after enabling, the FGAP permission is missing.
+     */
+    @Test
+    void forbiddenAndNotFoundReadsAreCountedAndTheForbiddenOneIsLoggedWithoutTheUserId() {
+        ch.qos.logback.classic.Logger logger = (ch.qos.logback.classic.Logger)
+            org.slf4j.LoggerFactory.getLogger(KeycloakIdentityDirectoryAdapter.class);
+        ch.qos.logback.core.read.ListAppender<ch.qos.logback.classic.spi.ILoggingEvent> logs =
+            new ch.qos.logback.core.read.ListAppender<>();
+        logs.start();
+        logger.addAppender(logs);
+        try {
+            expectToken();
+            keycloak.expect(once(), requestTo(USER_URL)).andRespond(withStatus(HttpStatus.FORBIDDEN));
+            keycloak.expect(once(), requestTo(USER_URL)).andRespond(withResourceNotFound());
+
+            assertThatThrownBy(() -> adapter.linkCustomer(USER_ID, CUSTOMER)).isInstanceOf(IdentityUserNotFoundException.class);
+            assertThatThrownBy(() -> adapter.linkCustomer(USER_ID, CUSTOMER)).isInstanceOf(IdentityUserNotFoundException.class);
+
+            assertThat(meters.get("identity.directory.responses").tag("status", "403").counter().count()).isEqualTo(1.0);
+            assertThat(meters.get("identity.directory.responses").tag("status", "404").counter().count()).isEqualTo(1.0);
+            assertThat(logs.list).filteredOn(event -> event.getLevel() == ch.qos.logback.classic.Level.WARN)
+                .extracting(ch.qos.logback.classic.spi.ILoggingEvent::getFormattedMessage)
+                .containsExactly("Keycloak answered 403 reading an identity user; expected only for users outside /customers")
+                .noneMatch(message -> message.contains(USER));
+        } finally {
+            logger.detachAppender(logs);
+        }
     }
 
     @Test
