@@ -279,6 +279,28 @@ class CustomerServiceIT {
             .andExpect(status().isForbidden());
     }
 
+    /**
+     * Platform contract "End-user and caller claims": the end user is identified by the customer_id claim
+     * (set by the identity link), not by the token subject, which is the Keycloak user id.
+     */
+    @Test
+    void customersAreIdentifiedByTheCustomerIdClaimNotTheSubject() throws Exception {
+        String customerId = create("claim@example.com", "3000.00");
+        String keycloakUser = "6f1c2a7e-5b8d-4c3e-9a1f-0d2b3c4e5f60";
+
+        for (String path : List.of("/api/v1/customers/{id}", "/api/v1/customers/{id}/credit")) {
+            mvc.perform(get(path, customerId).with(jwt().jwt(j -> j.subject(keycloakUser).claim("customer_id", customerId))
+                    .authorities(new SimpleGrantedAuthority("ROLE_CUSTOMER"))))
+                .andExpect(status().isOk());
+            mvc.perform(get(path, customerId).with(jwt().jwt(j -> j.subject(customerId))
+                    .authorities(new SimpleGrantedAuthority("ROLE_CUSTOMER"))))
+                .andExpect(status().isForbidden());
+            mvc.perform(get(path, customerId).with(jwt().jwt(j -> j.subject(keycloakUser).claim("customer_id", "CUST-OTHER001"))
+                    .authorities(new SimpleGrantedAuthority("ROLE_CUSTOMER"))))
+                .andExpect(status().isForbidden());
+        }
+    }
+
     @Test
     void migratedMonolithCustomerLoadsAndCanReserveCredit() throws Exception {
         jdbc.update("""
