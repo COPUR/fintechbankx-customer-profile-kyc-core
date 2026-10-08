@@ -11,6 +11,12 @@ import com.bank.customer.domain.port.in.CreditPosition;
 import com.bank.customer.domain.port.in.CustomerProfile;
 import com.bank.customer.domain.port.in.RegisterCustomerCommand;
 import com.bank.customer.domain.port.out.CustomerRepository;
+import com.bank.customer.domain.port.out.IdentityDirectoryPort;
+import com.bank.customer.domain.IdentityDirectoryUnavailableException;
+import com.bank.customer.domain.IdentityLinkConflictException;
+import com.bank.customer.domain.IdentityUserId;
+import com.bank.customer.domain.port.in.IdentityLink;
+import com.bank.customer.domain.port.in.LinkIdentityCommand;
 import com.bank.customer.domain.port.out.CreditMovementJournal;
 import com.bank.customer.domain.port.out.CustomerEventPublisher;
 import com.bank.shared.kernel.domain.CustomerId;
@@ -54,6 +60,9 @@ class CustomerManagementServiceTest {
     @Mock
     private CreditMovementJournal creditMovements;
 
+    @Mock
+    private IdentityDirectoryPort identityDirectory;
+
     private static final Instant NOW = Instant.parse("2026-10-07T12:00:00Z");
 
     private CustomerManagementService service;
@@ -61,7 +70,7 @@ class CustomerManagementServiceTest {
     @BeforeEach
     void setUp() {
         service = new CustomerManagementService(customerRepository, eventPublisher, creditMovements,
-            Clock.fixed(NOW, ZoneOffset.UTC));
+            identityDirectory, Clock.fixed(NOW, ZoneOffset.UTC));
     }
 
     private Customer existingCustomer() {
@@ -321,6 +330,71 @@ class CustomerManagementServiceTest {
         assertThat(response.email()).isEqualTo("new-email@example.com");
         assertThat(response.phoneNumber()).isEqualTo("+971500009999");
         verify(customerRepository).save(customer);
+    }
+
+    private static final String USER = "6f1c2a7e-5b8d-4c3e-9a1f-0d2b3c4e5f60";
+
+    @Test
+    void linkingStoresTheLinkAndSetsTheCustomerIdOnTheIdentityUser() {
+        Customer customer = existingCustomer();
+        when(customerRepository.findById(CustomerId.of("CUST-IDEM"))).thenReturn(Optional.of(customer));
+        when(customerRepository.save(any(Customer.class))).thenAnswer(invocation -> invocation.getArgument(0));
+
+        IdentityLink link = service.linkIdentity(new LinkIdentityCommand(CustomerId.of("CUST-IDEM"), new IdentityUserId(USER)));
+
+        assertThat(link).isEqualTo(new IdentityLink(CustomerId.of("CUST-IDEM"), new IdentityUserId(USER)));
+        var order = org.mockito.Mockito.inOrder(customerRepository, identityDirectory);
+        order.verify(customerRepository).save(customer);
+        order.verify(identityDirectory).linkCustomer(new IdentityUserId(USER), CustomerId.of("CUST-IDEM"));
+        verifyNoInteractions(eventPublisher);
+    }
+
+    @Test
+    void relinkingTheSameUserOnlyRepairsTheIdentityAttribute() {
+        Customer customer = existingCustomer();
+        customer.linkIdentity(new IdentityUserId(USER));
+        when(customerRepository.findById(CustomerId.of("CUST-IDEM"))).thenReturn(Optional.of(customer));
+
+        service.linkIdentity(new LinkIdentityCommand(CustomerId.of("CUST-IDEM"), new IdentityUserId(USER)));
+
+        verify(customerRepository, never()).save(any(Customer.class));
+        verify(identityDirectory).linkCustomer(new IdentityUserId(USER), CustomerId.of("CUST-IDEM"));
+    }
+
+    @Test
+    void aCustomerLinkedToAnotherUserIsRefusedBeforeTheDirectoryIsTouched() {
+        Customer customer = existingCustomer();
+        customer.linkIdentity(new IdentityUserId("someone-else"));
+        when(customerRepository.findById(CustomerId.of("CUST-IDEM"))).thenReturn(Optional.of(customer));
+
+        assertThatThrownBy(() -> service.linkIdentity(
+                new LinkIdentityCommand(CustomerId.of("CUST-IDEM"), new IdentityUserId(USER))))
+            .isInstanceOf(IdentityLinkConflictException.class);
+        verifyNoInteractions(identityDirectory);
+        verify(customerRepository, never()).save(any(Customer.class));
+    }
+
+    @Test
+    void aDirectoryFailureFailsTheLinkSoTheTransactionRollsBack() {
+        Customer customer = existingCustomer();
+        when(customerRepository.findById(CustomerId.of("CUST-IDEM"))).thenReturn(Optional.of(customer));
+        when(customerRepository.save(any(Customer.class))).thenAnswer(invocation -> invocation.getArgument(0));
+        org.mockito.Mockito.doThrow(new IdentityDirectoryUnavailableException("down"))
+            .when(identityDirectory).linkCustomer(any(), any());
+
+        assertThatThrownBy(() -> service.linkIdentity(
+                new LinkIdentityCommand(CustomerId.of("CUST-IDEM"), new IdentityUserId(USER))))
+            .isInstanceOf(IdentityDirectoryUnavailableException.class);
+    }
+
+    @Test
+    void linkingAnUnknownCustomerIsNotFound() {
+        when(customerRepository.findById(CustomerId.of("CUST-NONE"))).thenReturn(Optional.empty());
+
+        assertThatThrownBy(() -> service.linkIdentity(
+                new LinkIdentityCommand(CustomerId.of("CUST-NONE"), new IdentityUserId(USER))))
+            .isInstanceOf(CustomerNotFoundException.class);
+        verifyNoInteractions(identityDirectory);
     }
 
     private static Money aed(String amount) {
