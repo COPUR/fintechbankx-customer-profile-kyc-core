@@ -150,6 +150,8 @@ jobs:
       - run: terraform fmt -check -recursive
       - run: terraform init -backend=false -input=false
       - run: terraform validate
+      # tests/*.tftest.hcl run offline against a mocked AWS provider (KMS key split, ADR-023).
+      - run: terraform test
 
   data-split:
     name: deploy/data-split-rehearsal
