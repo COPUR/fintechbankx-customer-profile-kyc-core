@@ -25,6 +25,8 @@ steps of `fbx-monolith-extraction`.
 
 Flyway migrations for the owned tables: `customer-infrastructure/src/main/resources/db/migration/V1__create_customer_tables.sql`, `V2__create_outbox.sql`. The service never reads monolith tables and the monolith must not read `sc_cus_profile_kyc`.
 
+**Identity of migrated customers.** A migrated customer keeps the monolith id as text as its customer id (monolith `customers.id = 1` becomes `customer_id = '1'`), the id the loans and payments migrated by their own backfills already carry. The identity-link step (`PUT /api/v1/customers/{id}/identity-link`) sets the end user's Keycloak attribute `customer_id` to exactly that value, so the `customer_id` claim in the user's tokens equals the customer id, and the ownership checks here, in the loan service and in the payment service match the same id. `Customer.linkIdentity` accepts any id of 1 to 64 letters, digits or hyphens, so plain numeric ids such as `1` link (`CustomerIdentityLinkTest.aMigratedCustomerWithAPlainNumericIdCanBeLinked`). The parity seed customers (`CUST-12345678`, `CUST-87654321`, `CUST-11111111`, `db/fixtures/parity_seed_customers.sql`) are not monolith rows; the parity realm users' `customer_id` attributes must be exactly those ids.
+
 The in-process `CustomerCreditSaga` (Spring `@EventListener` on loan and payment events) is removed. The loan service now reserves and releases credit synchronously over HTTP, idempotently, so a second asynchronous reservation path would double-count.
 
 ## 2. Backfill and reconciliation

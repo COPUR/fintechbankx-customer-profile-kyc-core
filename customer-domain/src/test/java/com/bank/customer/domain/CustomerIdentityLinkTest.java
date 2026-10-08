@@ -41,6 +41,21 @@ class CustomerIdentityLinkTest {
         assertThat(customer.getDomainEvents()).isEmpty();
     }
 
+    /**
+     * Migrated monolith customers keep the monolith id as text ("1", "42"),
+     * the id their migrated loans and payments carry; the identity link sets
+     * exactly that value as the Keycloak customer_id attribute.
+     */
+    @Test
+    void aMigratedCustomerWithAPlainNumericIdCanBeLinked() {
+        for (String migratedId : new String[] {"1", "42", "1000000"}) {
+            Customer customer = customer(migratedId);
+
+            assertThat(customer.linkIdentity(new IdentityUserId(USER))).as(migratedId).isTrue();
+            assertThat(customer.getId().getValue()).isEqualTo(migratedId);
+        }
+    }
+
     @Test
     void aCustomerLinkedToAnotherUserIsAConflict() {
         Customer customer = customer("CUST-LINK0002");
