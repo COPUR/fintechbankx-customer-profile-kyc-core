@@ -1,3 +1,4 @@
+{{- include "customer.validateDatabaseTls" . -}}
 apiVersion: v1
 kind: ConfigMap
 metadata:

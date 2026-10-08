@@ -60,8 +60,11 @@ spec:
               containerPort: {{ .Values.service.port }}
             - name: http-management
               containerPort: {{ .Values.service.managementPort }}
-          {{- if has "kafka-strimzi" (splitList "," (.Values.config.SPRING_PROFILES_ACTIVE | toString | nospace)) }}
           env:
+            # Aurora server certificate trust (cicd-templates 4f0f266); DB_URL names the same file as sslrootcert.
+            - name: DB_SSL_ROOT_CERT
+              value: {{ include "customer.databaseCaFile" . | quote }}
+          {{- if has "kafka-strimzi" (splitList "," (.Values.config.SPRING_PROFILES_ACTIVE | toString | nospace)) }}
             - name: KAFKA_TLS_CERT
               valueFrom:
                 secretKeyRef:
@@ -117,6 +120,17 @@ spec:
           volumeMounts:
             - name: tmp
               mountPath: /tmp
+            - name: database-ca
+              mountPath: {{ .Values.databaseCa.mountPath }}
+              readOnly: true
       volumes:
         - name: tmp
           emptyDir: {}
+        # Not optional: without the platform's bundle the pod does not start, rather than connect unverified.
+        - name: database-ca
+          configMap:
+            name: {{ required "databaseCa.configMapName is required" .Values.databaseCa.configMapName }}
+            optional: false
+            items:
+              - key: {{ .Values.databaseCa.key }}
+                path: {{ .Values.databaseCa.key }}

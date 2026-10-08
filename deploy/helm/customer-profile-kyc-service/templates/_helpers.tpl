@@ -23,3 +23,21 @@ helm.sh/chart: {{ .Chart.Name }}-{{ .Chart.Version }}
 {{- define "customer.secretName" -}}
 {{ include "customer.name" . }}-db
 {{- end -}}
+
+{{/*
+Path of the RDS CA bundle file inside the pod (cicd-templates 4f0f266).
+*/}}
+{{- define "customer.databaseCaFile" -}}
+{{- printf "%s/%s" (trimSuffix "/" .Values.databaseCa.mountPath) .Values.databaseCa.key -}}
+{{- end -}}
+
+{{/*
+A PostgreSQL DB_URL must verify the server certificate and host name:
+sslmode=require encrypts but trusts any certificate (cicd-templates 4f0f266).
+*/}}
+{{- define "customer.validateDatabaseTls" -}}
+{{- $url := toString (default "" .Values.config.DB_URL) -}}
+{{- if and (hasPrefix "jdbc:postgresql:" $url) (not (contains "sslmode=verify-full" $url)) -}}
+{{- fail (printf "config.DB_URL must use sslmode=verify-full with sslrootcert=%s" (include "customer.databaseCaFile" .)) -}}
+{{- end -}}
+{{- end -}}

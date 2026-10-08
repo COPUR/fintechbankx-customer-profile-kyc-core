@@ -47,7 +47,9 @@ podDisruptionBudget:
 
 # Non-secret runtime settings, rendered into a ConfigMap.
 config:
-  DB_URL: ""                      # jdbc:postgresql://<aurora-writer-endpoint>:5432/db_cus_profile_kyc_<env>?sslmode=require
+  # jdbc:postgresql://<aurora-writer-endpoint>:5432/db_cus_profile_kyc_<env>?sslmode=verify-full&sslrootcert=/etc/fintechbankx/rds-ca/global-bundle.pem
+  # (Terraform output jdbc_url). Rendering fails for a jdbc:postgresql URL without sslmode=verify-full.
+  DB_URL: ""
   DB_USERNAME: customer_profile_app
   DB_POOL_MAX: "10"
   KAFKA_BOOTSTRAP_SERVERS: ""
@@ -96,6 +98,15 @@ requiredConfig: [DB_URL, OIDC_ISSUER_URI, OIDC_JWK_SET_URI, OIDC_AUDIENCE, KAFKA
 # and the ingress NetworkPolicy (mesh #11) are owned by
 # fintechbankx-platform-mesh-security-service-mesh; this chart ships no
 # PeerAuthentication, AuthorizationPolicy or NetworkPolicy.
+
+# Aurora CA bundle (cicd-templates 4f0f266): the platform publishes ConfigMap
+# rds-ca-bundle (key global-bundle.pem) in every service namespace (mesh repo
+# trust-manager Bundle). Always mounted read-only and not optional; its file is
+# exported as DB_SSL_ROOT_CERT and named by sslrootcert in DB_URL.
+databaseCa:
+  configMapName: rds-ca-bundle
+  key: global-bundle.pem
+  mountPath: /etc/fintechbankx/rds-ca
 
 # Kafka client certificate for the kafka-strimzi profile (local, kind): the
 # Secret holding the PEM files; rendered as KAFKA_TLS_CERT, KAFKA_TLS_KEY and

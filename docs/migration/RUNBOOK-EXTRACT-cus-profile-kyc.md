@@ -49,6 +49,11 @@ Re-runs are expected until cut-over. The monolith keeps reserving and releasing 
 
 Customer data must have one writer at any time: the monolith's `public.customers` until step 2, nobody during the freeze (steps 2 to 4), this service from step 5 on. The order is freeze, final backfill, reconcile, then route writes; the service never takes a write on a row the final backfill has not refreshed.
 
+**Deployment prerequisites** (before step 1, in every environment):
+
+- ConfigMap `rds-ca-bundle` with key `global-bundle.pem` exists in namespace `customer` (published by the mesh repo's trust-manager Bundle, cicd-templates 4f0f266). The chart mounts it read-only at `/etc/fintechbankx/rds-ca`, not optional, and exports `DB_SSL_ROOT_CERT`; without it the pods stay in `ContainerCreating` (`kubectl -n customer get configmap rds-ca-bundle` must succeed first).
+- `config.DB_URL` is the Terraform output `jdbc_url`: `...?sslmode=verify-full&sslrootcert=/etc/fintechbankx/rds-ca/global-bundle.pem`. The chart refuses to render a `jdbc:postgresql` URL without `sslmode=verify-full` (`sslmode=require` encrypts but trusts any server certificate).
+
 Owners: **monolith squad** (enterprise-loan-management-system flags and anti-corruption client), **customer squad** (this service), **lending squad** (`svc-ln-loan-lifecycle`), **migration lead** (runs the backfill and signs off reconciliation), **change manager** (go/no-go and the freeze window). Every step needs the migration lead's sign-off in the change record before the next one starts.
 
 | Step | Action | Owner | Validation (all must hold) | Rollback trigger (any one) | Rollback |
