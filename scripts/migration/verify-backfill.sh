@@ -26,10 +26,8 @@ for migration in "$root"/customer-infrastructure/src/main/resources/db/migration
   PGOPTIONS="-c search_path=$schema" psql_q -d "$dst_db" -f "$migration"
 done
 
-for run in 1 2; do
-  echo "--- backfill run $run"
-  "$root/db/backfill/run-backfill.sh" "dbname=$src_db" "dbname=$dst_db" AED
-done
+report="$(mktemp)"
+trap 'rm -f "$report"' EXIT
 
 check() {
   local label="$1" sql="$2" expected="$3" actual
@@ -41,24 +39,34 @@ check() {
   echo "ok   $label"
 }
 
+# The ledger currency is a required decision (monolith evidence: USD); a run
+# without it must refuse to start rather than label every limit with a default.
+if "$root/db/backfill/run-backfill.sh" "dbname=$src_db" "dbname=$dst_db" > "$report" 2>&1; then
+  cat "$report"; echo "FAIL a backfill without the currency argument ran" >&2; exit 1
+fi
+grep -q "^usage:" "$report" || { cat "$report"; echo "FAIL a backfill without the currency argument did not print usage" >&2; exit 1; }
+check "a backfill without the currency argument loads nothing" "SELECT count(*) FROM $schema.customer" "0"
+
+for run in 1 2; do
+  echo "--- backfill run $run"
+  "$root/db/backfill/run-backfill.sh" "dbname=$src_db" "dbname=$dst_db" USD
+done
+
 # The monolith never bumps customers.version (no @Version on its CustomerEntity,
 # only an updated_at trigger), so every monolith change below leaves it as is,
 # except the last case, which proves a bumped version is caught too.
 echo "--- monolith reserves 1000 for customer 2 without bumping version, backfill run 3"
 psql_q -d "$src_db" -c "UPDATE customers SET used_credit_limit = used_credit_limit + 1000, updated_at = updated_at + interval '1 minute' WHERE id = 2"
-"$root/db/backfill/run-backfill.sh" "dbname=$src_db" "dbname=$dst_db" AED
+"$root/db/backfill/run-backfill.sh" "dbname=$src_db" "dbname=$dst_db" USD
 
 echo "--- the service changes customers 1 and 3 (as JPA would: version + 1), backfill run 4"
 psql_q -d "$dst_db" -c "UPDATE $schema.customer SET email = 'amina@example.com', version = version + 1 WHERE customer_id = '1'" \
   -c "UPDATE $schema.customer SET used_credit = used_credit - 500, version = version + 1 WHERE customer_id = '3'"
-"$root/db/backfill/run-backfill.sh" "dbname=$src_db" "dbname=$dst_db" AED
-
-report="$(mktemp)"
-trap 'rm -f "$report"' EXIT
+"$root/db/backfill/run-backfill.sh" "dbname=$src_db" "dbname=$dst_db" USD
 
 expect_two_ledgers() {
   local run="$1" customer="$2"
-  if "$root/db/backfill/run-backfill.sh" "dbname=$src_db" "dbname=$dst_db" AED > "$report" 2>&1; then
+  if "$root/db/backfill/run-backfill.sh" "dbname=$src_db" "dbname=$dst_db" USD > "$report" 2>&1; then
     cat "$report"; echo "FAIL run $run: backfill accepted customer $customer changed on both sides" >&2; exit 1
   fi
   grep -q "^$customer monolith changed it after the service did" "$report" \
@@ -79,7 +87,7 @@ check "customers loaded once despite repeated runs" \
 check "customer id is the monolith id as text, the id loans and payments use" \
   "SELECT string_agg(customer_id || ':' || legacy_customer_id, ',' ORDER BY legacy_customer_id) FROM $schema.customer" "1:1,2:2,3:3"
 check "names, credit position, currency and version carried" \
-  "SELECT first_name || ' ' || last_name || ' ' || currency || ' ' || credit_limit::numeric(19,2) || ' ' || used_credit::numeric(19,2) || ' ' || version FROM $schema.customer WHERE customer_id = '1'" "Amina Haddad AED 50000.00 20000.00 4"
+  "SELECT first_name || ' ' || last_name || ' ' || currency || ' ' || credit_limit::numeric(19,2) || ' ' || used_credit::numeric(19,2) || ' ' || version FROM $schema.customer WHERE customer_id = '1'" "Amina Haddad USD 50000.00 20000.00 4"
 check "contact, score and income stay empty unless the service set them" \
   "SELECT count(*) FROM $schema.customer WHERE email IS NULL AND phone_number IS NULL AND credit_score IS NULL AND monthly_income IS NULL" "2"
 check "a monolith credit change before cut-over is picked up by a re-run" \
