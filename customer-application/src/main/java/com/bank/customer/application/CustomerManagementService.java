@@ -137,7 +137,7 @@ public class CustomerManagementService implements RegisterCustomerUseCase, GetCu
 
         Optional<CreditMovement> previous = creditMovements.find(command.customerId(), command.idempotencyKey());
         if (previous.isPresent()) {
-            if (!previous.get().sameInstruction(type, command.amount())) {
+            if (!previous.get().sameInstruction(type, command.amount(), command.reference())) {
                 throw IdempotencyKeyConflictException.forKey(command.idempotencyKey());
             }
             return customer;

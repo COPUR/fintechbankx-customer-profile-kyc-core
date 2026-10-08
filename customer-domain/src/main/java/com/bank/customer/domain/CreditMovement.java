@@ -42,7 +42,12 @@ public record CreditMovement(
         }
     }
 
-    public boolean sameInstruction(Type otherType, Money otherAmount) {
-        return type == otherType && amount.equals(otherAmount);
+    /**
+     * Whether a request with this movement's idempotency key is a replay of it:
+     * same type, amount (and so currency) and reference. Anything else reusing
+     * the key is a conflict, never a silent replay.
+     */
+    public boolean sameInstruction(Type otherType, Money otherAmount, String otherReference) {
+        return type == otherType && amount.equals(otherAmount) && Objects.equals(reference, otherReference);
     }
 }
