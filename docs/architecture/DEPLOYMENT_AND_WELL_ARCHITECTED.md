@@ -35,6 +35,7 @@ svc-ln-loan-lifecycle ─HTTP──▶    │  └─ JDBC ─▶ Aurora Postgre
 
 - `svc-ln-loan-lifecycle` still forwards the end user's token. It must move to a client-credentials token with the `SERVICE` realm role and the `svc-cus-profile-kyc` audience, use `GET /credit`, and send deterministic idempotency keys before cutover (runbook step 4).
 - Keycloak clients need an audience mapper for `svc-cus-profile-kyc`; tokens without it are rejected.
+- Identity link (`PUT .../identity-link`): the service only links existing Keycloak users, it never creates them. Its client holds the scoped FGAP v2 permission (users in group `/customers` only, identity repo 8f9024b); a 403 on reading a user means "not a customer user" and is answered 422 `IDENTITY_USER_NOT_FOUND`.
 - The `customer` namespace must be onboarded to the mesh (sidecar injection) before the STRICT policies are applied.
 - Kafka topics and ACLs for `evt.cus.customer.*.v1` are not yet created on the platform cluster.
 - The application DB role (`customer_profile_app`) is created by a DBA bootstrap step, not by Terraform, so Terraform never holds the password.

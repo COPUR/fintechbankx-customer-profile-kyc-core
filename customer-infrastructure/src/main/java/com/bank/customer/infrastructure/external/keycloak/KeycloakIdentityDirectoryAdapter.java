@@ -28,7 +28,11 @@ import java.util.Map;
  * user, adds the customer_id attribute and writes the whole representation
  * back (Keycloak replaces the attribute map on update, so the other attributes
  * must be sent again). A user that already carries the customer id is not
- * written; one that carries another id is a conflict. Every other failure
+ * written; one that carries another id is a conflict. The client's scoped
+ * permission (Keycloak FGAP v2, identity 8f9024b) covers users in group
+ * /customers only, so a 403 on reading the user is the same outcome as an
+ * unknown user. This service only links existing users; it never creates
+ * Keycloak users. Every other failure
  * fails closed with {@link IdentityDirectoryUnavailableException}.
  */
 public class KeycloakIdentityDirectoryAdapter implements IdentityDirectoryPort {
@@ -93,7 +97,10 @@ public class KeycloakIdentityDirectoryAdapter implements IdentityDirectoryPort {
             }
             return new LinkedHashMap<>(user);
         } catch (RestClientResponseException e) {
-            if (e.getStatusCode().value() == HttpStatus.NOT_FOUND.value()) {
+            // FGAP v2 (identity 8f9024b) scopes this client to users in group /customers:
+            // a 403 means the user exists but is not a customer user, so it is "not found" here.
+            int status = e.getStatusCode().value();
+            if (status == HttpStatus.NOT_FOUND.value() || status == HttpStatus.FORBIDDEN.value()) {
                 throw new IdentityUserNotFoundException();
             }
             throw e;

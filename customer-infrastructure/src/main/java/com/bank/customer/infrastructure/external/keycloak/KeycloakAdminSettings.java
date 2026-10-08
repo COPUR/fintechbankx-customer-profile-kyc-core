@@ -5,8 +5,9 @@ import java.time.Duration;
 /**
  * Where and as whom the service calls the Keycloak admin API. The client is
  * this service's own confidential client (client credentials); its service
- * account needs the realm-management role manage-users (or a fine-grained
- * permission limited to the customer_id attribute). The credential comes from
+ * account holds the scoped Keycloak FGAP v2 permission (identity 8f9024b):
+ * view and manage users in group /customers only, not realm-management
+ * manage-users. The credential comes from
  * the environment (Secrets Manager, &lt;env&gt;/customer-profile-kyc-service/oidc-client).
  */
 public record KeycloakAdminSettings(String baseUrl, String realm, String clientId, String clientSecret,

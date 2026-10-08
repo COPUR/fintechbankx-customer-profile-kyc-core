@@ -61,8 +61,9 @@ config:
   SERVICE_CALLERS_KYC: svc-pay-initiation-settlement   # token azp values allowed to read the KYC status
   OUTBOX_RELAY_ENABLED: "true"
   # Onboarding sets the Keycloak user attribute customer_id (identity link).
-  # Off until the service client has manage-users in the realm and
-  # externalSecret.oidcClientSecretName is set; while off, linking fails closed (503).
+  # Off until the service client holds the scoped FGAP v2 permission (users in
+  # group /customers, identity 8f9024b) and externalSecret.oidcClientSecretName
+  # is set; while off, linking fails closed (503).
   IDENTITY_ADMIN_ENABLED: "false"
   KEYCLOAK_BASE_URL: http://keycloak.identity.svc.cluster.local:8080
   KEYCLOAK_REALM: fintechbankx

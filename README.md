@@ -68,6 +68,8 @@ Published events (contract: [`api/asyncapi/svc-cus-profile-kyc.yaml`](api/asynca
 | `evt.cus.customer.credit-score-updated.v1` | The credit score changes |
 | `evt.cus.customer.kyc-status-changed.v1` | Staff verify or reject the KYC status |
 
+Identity link: staff link a customer to an existing Keycloak user (`PUT /api/v1/customers/{id}/identity-link`); the service never creates Keycloak users. Its client holds the scoped Keycloak FGAP v2 permission (users in group `/customers` only, identity repo 8f9024b), not realm-management `manage-users`; a user outside `/customers` is answered 422 `IDENTITY_USER_NOT_FOUND`.
+
 Relay failures follow ADR-021 decision 4: payload errors (`RecordTooLargeException`, `SerializationException`, `InvalidTopicException`) park the row and the relay continues; every other failure, including authorization, SASL/IAM and unclassified errors, stops the batch without marking the row, retries with backoff and alerts, and never parks or skips the row. See the runbook section "Parked outbox events".
 
 Module layout: `customer-domain` (aggregate, events, ports) ← `customer-application` (use cases) ← `customer-infrastructure` (JPA, outbox, web, security) ← `customer-bootstrap` (Spring Boot app).
