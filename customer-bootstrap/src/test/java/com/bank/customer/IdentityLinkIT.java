@@ -174,7 +174,8 @@ class IdentityLinkIT {
         link(customerId, STAFF_USER).andExpect(status().isUnprocessableEntity())
             .andExpect(jsonPath("$.code").value("IDENTITY_USER_NOT_FOUND"));
 
-        assertThat(REQUESTS).containsExactly("POST token true", "GET user " + STAFF_USER + " true");
+        // The admin token may already be cached from an earlier test; the user is read once and never written.
+        assertThat(REQUESTS).filteredOn(request -> request.contains(" user ")).containsExactly("GET user " + STAFF_USER + " true");
         assertThat(USERS.get(STAFF_USER).has("attributes")).as("staff user untouched").isFalse();
         assertThat(jdbc.queryForObject("select identity_user_id from sc_cus_profile_kyc.customer where customer_id = ?",
             String.class, customerId)).as("rolled back").isNull();
