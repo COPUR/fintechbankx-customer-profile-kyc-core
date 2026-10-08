@@ -47,7 +47,7 @@ class OutboxPersistenceTest {
         OutboxEventJpaEntity parked = outbox.saveAndFlush(row("CUST-PARK-1"));
         OutboxEventJpaEntity behindParked = outbox.saveAndFlush(row("CUST-PARK-1"));
         OutboxEventJpaEntity otherCustomer = outbox.saveAndFlush(row("CUST-PARK-2"));
-        parked.markFailed("RecordTooLargeException: too large");
+        parked.markFailed("RecordTooLargeException: too large", NOW);
         parked.park(NOW);
         outbox.saveAndFlush(parked);
 
@@ -56,11 +56,13 @@ class OutboxPersistenceTest {
             .contains(otherCustomer.getEventId())
             .doesNotContain(parked.getEventId(), behindParked.getEventId());
         assertThat(outbox.countByPublishedAtIsNullAndParkedAtIsNotNull()).isEqualTo(1);
+        assertThat(outbox.oldestPendingOccurredAt()).as("oldest row waiting for the relay").isNotNull();
         assertThat(outbox.countByPublishedAtIsNullAndParkedAtIsNull()).isGreaterThanOrEqualTo(2);
         assertThat(outbox.findById(parked.getEventId())).get()
             .satisfies(found -> {
                 assertThat(found.getParkedAt()).isEqualTo(NOW);
                 assertThat(found.getLastError()).startsWith("RecordTooLargeException");
+                assertThat(found.getFirstFailedAt()).isEqualTo(NOW);
             });
     }
 

@@ -44,10 +44,26 @@ class OutboxConfigurationTest {
 
     @Test
     @SuppressWarnings("unchecked")
-    void relayTakesItsAttemptCapFromSettings() {
+    void relayTakesItsRetryableCeilingFromSettings() {
         OutboxRelay relay = new OutboxConfiguration.RelayConfiguration().outboxRelay(outbox, mock(KafkaTemplate.class),
-            mock(PlatformTransactionManager.class), Clock.systemUTC(), 100, Duration.ofSeconds(10), Duration.ofDays(7), 10);
+            mock(PlatformTransactionManager.class), Clock.systemUTC(), 100, Duration.ofSeconds(10), Duration.ofDays(7),
+            Duration.ofHours(24));
 
-        assertThat(relay.maxAttempts()).isEqualTo(10);
+        assertThat(relay.retryableParkAfter()).isEqualTo(Duration.ofHours(24));
+    }
+
+    /** Age of the oldest event waiting for the relay; 0 when nothing waits. Alert when it keeps growing. */
+    @Test
+    void oldestPendingAgeGaugeIsExportedInSeconds() {
+        SimpleMeterRegistry registry = new SimpleMeterRegistry();
+        java.time.Instant now = java.time.Instant.parse("2026-10-08T10:00:00Z");
+        Clock clock = Clock.fixed(now, java.time.ZoneOffset.UTC);
+        when(outbox.oldestPendingOccurredAt()).thenReturn(now.minusSeconds(90), (java.time.Instant) null);
+
+        configuration.customerOutboxOldestPendingAgeGauge(registry, outbox, clock);
+
+        Gauge gauge = registry.get("outbox.oldest.pending.age.seconds").gauge();
+        assertThat(gauge.value()).isEqualTo(90.0);
+        assertThat(gauge.value()).as("nothing pending").isZero();
     }
 }
