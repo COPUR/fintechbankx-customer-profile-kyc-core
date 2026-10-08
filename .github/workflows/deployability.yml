@@ -53,9 +53,12 @@ jobs:
           helm template ci "$chart" $args > /dev/null
           helm template ci "$chart" -f "$chart/values-dev.yaml" $args > /dev/null
           rendered="$(helm template ci "$chart" $args)"
-          # Strict schema validation of every rendered resource (unknown fields fail); CRDs from the CRDs catalog.
-          kubeconform_args=(-strict -summary -kubernetes-version 1.30.0 -schema-location default
-            -schema-location 'https://raw.githubusercontent.com/datreeio/CRDs-catalog/main/{{.Group}}/{{.ResourceKind}}_{{.ResourceAPIVersion}}.json')
+          # Strict schema validation of every rendered resource (unknown fields fail). Schemas come from pinned
+          # commits, not moving refs (as in compliance): Kubernetes 1.30 strict at kubernetes-json-schema 39a87cd,
+          # the ExternalSecret CRD at CRDs-catalog 63669a5.
+          k8s='https://raw.githubusercontent.com/yannh/kubernetes-json-schema/39a87cd29966bc0b3434e8cfbc2061782c8cb69a/{{.NormalizedKubernetesVersion}}-standalone{{.StrictSuffix}}/{{.ResourceKind}}{{.KindSuffix}}.json'
+          crds='https://raw.githubusercontent.com/datreeio/CRDs-catalog/63669a570e231d4f1f8396d229a1de512bcf0a34/{{.Group}}/{{.ResourceKind}}_{{.ResourceAPIVersion}}.json'
+          kubeconform_args=(-strict -summary -kubernetes-version 1.30.0 -schema-location "$k8s" -schema-location "$crds")
           kubeconform "${kubeconform_args[@]}" - <<<"$rendered"
           helm template ci "$chart" -f "$chart/values-dev.yaml" $args | kubeconform "${kubeconform_args[@]}" -
           helm template ci "$chart" $args --set config.SPRING_PROFILES_ACTIVE=kafka-strimzi --set kafkaTls.secretName=kafka-client-tls \
