@@ -327,8 +327,10 @@ class CustomerServiceIT {
     void migratedMonolithCustomerLoadsAndCanReserveCredit() throws Exception {
         jdbc.update("""
             insert into sc_cus_profile_kyc.customer
-              (customer_id, first_name, last_name, currency, credit_limit, used_credit, legacy_customer_id, created_at, updated_at, version)
-            values ('42', 'Legacy', 'Customer', 'AED', 50000, 20000, 42, timestamp '2024-01-01 10:00', timestamp '2024-06-01 10:00', 3)
+              (customer_id, first_name, last_name, currency, credit_limit, used_credit, legacy_customer_id, created_at, updated_at, version,
+               kyc_status, kyc_source, kyc_verified_at)
+            values ('42', 'Legacy', 'Customer', 'AED', 50000, 20000, 42, timestamp '2024-01-01 10:00', timestamp '2024-06-01 10:00', 3,
+               'VERIFIED', 'MIGRATED', timestamptz '2026-10-08 00:00:00+00')
             """);
 
         mvc.perform(asBanker(get("/api/v1/customers/{id}", "42")))

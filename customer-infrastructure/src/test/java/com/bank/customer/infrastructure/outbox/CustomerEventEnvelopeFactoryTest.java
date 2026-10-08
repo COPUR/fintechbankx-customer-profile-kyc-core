@@ -47,6 +47,29 @@ class CustomerEventEnvelopeFactoryTest {
         assertThat(CustomerEventEnvelopeFactory.map(events.get(5)).data()).containsEntry("newCreditScore", 760);
     }
 
+    /** Staff KYC decisions: status, previous status, source and verifiedAt; never who decided or personal data. */
+    @Test
+    void aKycStatusChangeMapsToItsContractTopicWithoutTheStaffSubject() {
+        Customer customer = customer("CUST-ENV-K");
+        customer.clearDomainEvents();
+        java.time.Instant at = java.time.Instant.parse("2026-10-08T10:00:00Z");
+        customer.verifyKyc("banker-sub-1", at);
+
+        var mapped = CustomerEventEnvelopeFactory.map(customer.getDomainEvents().get(0));
+
+        assertThat(mapped.topic()).isEqualTo("evt.cus.customer.kyc-status-changed.v1");
+        assertThat(mapped.eventType()).isEqualTo("Customer.Customer.KycStatusChanged.v1");
+        assertThat(mapped.data()).containsExactly(
+            java.util.Map.entry("customerId", "CUST-ENV-K"),
+            java.util.Map.entry("kycStatus", "VERIFIED"),
+            java.util.Map.entry("previousKycStatus", "PENDING"),
+            java.util.Map.entry("kycSource", "STAFF"),
+            java.util.Map.entry("verifiedAt", "2026-10-08T10:00:00Z"));
+        customer.rejectKyc("banker-sub-1", at.plusSeconds(1));
+        assertThat(CustomerEventEnvelopeFactory.map(customer.getDomainEvents().get(1)).data())
+            .containsEntry("kycStatus", "REJECTED").containsEntry("verifiedAt", null);
+    }
+
     @Test
     void everyTopicAndEventTypeIsDeclaredInTheAsyncApiContract() throws Exception {
         java.nio.file.Path contract = java.util.stream.Stream.of("api/asyncapi/svc-cus-profile-kyc.yaml",
@@ -59,6 +82,7 @@ class CustomerEventEnvelopeFactoryTest {
         customer.reserveCredit(Money.aed(new BigDecimal("10.00")));
         customer.releaseCredit(Money.aed(new BigDecimal("10.00")));
         customer.updateCreditScore(710);
+        customer.verifyKyc("banker-sub-1", java.time.Instant.parse("2026-10-08T10:00:00Z"));
 
         for (DomainEvent event : customer.getDomainEvents()) {
             var mapped = CustomerEventEnvelopeFactory.map(event);

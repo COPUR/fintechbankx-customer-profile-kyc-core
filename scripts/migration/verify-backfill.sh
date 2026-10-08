@@ -22,7 +22,17 @@ done
 psql_q -d "$src_db" -f "$root/db/backfill/test/monolith_fixture.sql"
 
 psql_q -d "$dst_db" -c "CREATE SCHEMA $schema"
-for migration in "$root"/customer-infrastructure/src/main/resources/db/migration/V*.sql; do
+migrations="$root/customer-infrastructure/src/main/resources/db/migration"
+for migration in "$migrations"/V[1-6]__*.sql; do
+  PGOPTIONS="-c search_path=$schema" psql_q -d "$dst_db" -f "$migration"
+done
+
+# V7 adds the KYC status. Rows that exist when it runs: a migrated monolith
+# customer becomes VERIFIED/MIGRATED as of the migration; a customer created in
+# this service was never checked and stays PENDING/STAFF.
+psql_q -d "$dst_db" -c "INSERT INTO $schema.customer (customer_id, first_name, last_name, currency, credit_limit, used_credit, legacy_customer_id, legacy_synced_version, created_at, updated_at, version) VALUES ('900', 'Pre', 'Migrated', 'USD', 1000, 0, 900, 0, now(), now(), 0), ('CUST-PRE00001', 'Pre', 'Service', 'USD', 1000, 0, NULL, NULL, now(), now(), 0)"
+for migration in "$migrations"/V*.sql; do
+  case "$(basename "$migration")" in V[1-6]__*) continue ;; esac
   PGOPTIONS="-c search_path=$schema" psql_q -d "$dst_db" -f "$migration"
 done
 
@@ -38,6 +48,12 @@ check() {
   fi
   echo "ok   $label"
 }
+
+check "V7: an existing migrated customer is VERIFIED/MIGRATED as of the migration" \
+  "SELECT kyc_status || ' ' || kyc_source || ' ' || (kyc_verified_at IS NOT NULL) FROM $schema.customer WHERE customer_id = '900'" "VERIFIED MIGRATED true"
+check "V7: an existing customer created in this service stays PENDING/STAFF" \
+  "SELECT kyc_status || ' ' || kyc_source || ' ' || (kyc_verified_at IS NULL) FROM $schema.customer WHERE customer_id = 'CUST-PRE00001'" "PENDING STAFF true"
+psql_q -d "$dst_db" -c "DELETE FROM $schema.customer WHERE customer_id IN ('900', 'CUST-PRE00001')"
 
 # The ledger currency is a required decision (monolith evidence: USD); a run
 # without it must refuse to start rather than label every limit with a default.
@@ -96,6 +112,8 @@ check "a re-run never overwrites a customer the service changed" \
   "SELECT used_credit::numeric(19,2) FROM $schema.customer WHERE customer_id = '3'" "999500.00"
 check "the conflicting monolith change did not reach the service copy" \
   "SELECT used_credit::numeric(19,2) FROM $schema.customer WHERE customer_id = '1'" "20000.00"
+check "backfilled monolith customers are KYC VERIFIED/MIGRATED with a verification time" \
+  "SELECT count(*) FROM $schema.customer WHERE kyc_status = 'VERIFIED' AND kyc_source = 'MIGRATED' AND kyc_verified_at IS NOT NULL AND kyc_updated_by IS NULL" "3"
 check "no loan or payment tables in the customer schema" \
   "SELECT count(*) FROM information_schema.tables WHERE table_schema = '$schema' AND (table_name LIKE 'loan%' OR table_name LIKE 'payment%')" "0"
 

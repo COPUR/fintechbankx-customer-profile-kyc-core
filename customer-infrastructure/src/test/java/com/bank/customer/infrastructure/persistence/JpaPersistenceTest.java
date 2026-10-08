@@ -134,6 +134,35 @@ class JpaPersistenceTest {
             .isInstanceOf(DataIntegrityViolationException.class);
     }
 
+    @Test
+    void theKycStatusIsStoredAndTheDatabaseKeepsItConsistent() {
+        repository.save(newCustomer("CUST-JPA-KYC", "jpakyc@example.com"));
+        assertThat(repository.findById(CustomerId.of("CUST-JPA-KYC"))).get()
+            .satisfies(found -> assertThat(found.getKycStatus()).isEqualTo(com.bank.customer.domain.KycStatus.pending()));
+
+        Customer loaded = repository.findById(CustomerId.of("CUST-JPA-KYC")).orElseThrow();
+        Instant at = Instant.parse("2026-10-08T10:00:00Z");
+        loaded.verifyKyc("banker-sub-1", at);
+        repository.save(loaded);
+
+        assertThat(repository.findById(CustomerId.of("CUST-JPA-KYC"))).get()
+            .satisfies(found -> assertThat(found.getKycStatus()).isEqualTo(new com.bank.customer.domain.KycStatus(
+                com.bank.customer.domain.KycStatus.Status.VERIFIED, com.bank.customer.domain.KycStatus.Source.STAFF,
+                at, "banker-sub-1")));
+        assertThat(jdbc.queryForObject("select kyc_updated_by from sc_cus_profile_kyc.customer where customer_id = 'CUST-JPA-KYC'",
+            String.class)).isEqualTo("banker-sub-1");
+        // ck_customer_kyc: verified_at present exactly when VERIFIED; status and source from the enums.
+        assertThatThrownBy(() -> jdbc.update("update sc_cus_profile_kyc.customer set kyc_verified_at = null "
+                + "where customer_id = 'CUST-JPA-KYC'"))
+            .isInstanceOf(DataIntegrityViolationException.class);
+        assertThatThrownBy(() -> jdbc.update("update sc_cus_profile_kyc.customer set kyc_status = 'APPROVED' "
+                + "where customer_id = 'CUST-JPA-KYC'"))
+            .isInstanceOf(DataIntegrityViolationException.class);
+        assertThatThrownBy(() -> jdbc.update("update sc_cus_profile_kyc.customer set kyc_source = 'API' "
+                + "where customer_id = 'CUST-JPA-KYC'"))
+            .isInstanceOf(DataIntegrityViolationException.class);
+    }
+
     private static Customer newCustomer(String id, String email) {
         Customer customer = Customer.create(CustomerId.of(id), "Test", "Customer", email, "+971500000000",
             Money.aed(new BigDecimal("10000.00")));

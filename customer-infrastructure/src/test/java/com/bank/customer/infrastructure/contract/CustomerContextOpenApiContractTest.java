@@ -82,6 +82,35 @@ class CustomerContextOpenApiContractTest {
             .contains("random");
     }
 
+    /** Payments reads only the KYC fields; staff set the status. No personal data in either answer. */
+    @Test
+    @SuppressWarnings("unchecked")
+    void theKycStatusEndpointsAnswerWithTheKycFieldsOnly() throws IOException {
+        java.util.Map<String, Object> spec = new org.yaml.snakeyaml.Yaml().load(loadSpec());
+        java.util.Map<String, Object> kyc = (java.util.Map<String, Object>)
+            ((java.util.Map<String, Object>) spec.get("paths")).get("/api/v1/customers/{customerId}/kyc-status");
+
+        assertThat(kyc).as("kyc-status path").containsKeys("get", "put");
+        for (String method : List.of("get", "put")) {
+            java.util.Map<String, Object> responses = (java.util.Map<String, Object>)
+                ((java.util.Map<String, Object>) kyc.get(method)).get("responses");
+            java.util.Map<String, Object> schema = (java.util.Map<String, Object>) ((java.util.Map<String, Object>)
+                ((java.util.Map<String, Object>) ((java.util.Map<String, Object>) responses.get("200")).get("content"))
+                    .get("application/json")).get("schema");
+            assertThat(schema.get("$ref")).isEqualTo("#/components/schemas/KycStatusResponse");
+            assertThat(responses).containsKey("404");
+        }
+        java.util.Map<String, Object> schemas = (java.util.Map<String, Object>)
+            ((java.util.Map<String, Object>) spec.get("components")).get("schemas");
+        java.util.Map<String, Object> response = (java.util.Map<String, Object>) schemas.get("KycStatusResponse");
+        assertThat(((java.util.Map<String, Object>) response.get("properties")).keySet())
+            .containsExactlyInAnyOrder("customerId", "kycVerified", "kycStatus", "kycSource", "verifiedAt");
+        java.util.Map<String, Object> request = (java.util.Map<String, Object>) schemas.get("ChangeKycStatusRequest");
+        java.util.Map<String, Object> status = (java.util.Map<String, Object>)
+            ((java.util.Map<String, Object>) request.get("properties")).get("status");
+        assertThat((List<String>) status.get("enum")).containsExactly("VERIFIED", "REJECTED");
+    }
+
     private static String loadSpec() throws IOException {
         List<Path> candidates = List.of(
                 Path.of("api/openapi/customer-context.yaml"),
