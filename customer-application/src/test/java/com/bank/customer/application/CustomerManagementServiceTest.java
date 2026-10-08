@@ -419,4 +419,62 @@ class CustomerManagementServiceTest {
             Money.aed(new BigDecimal("10000.00"))
         );
     }
+
+    @Test
+    void staffChangeTheKycStatusAndTheChangeIsPublished() {
+        Customer customer = existingCustomer();
+        when(customerRepository.findById(CustomerId.of("CUST-IDEM"))).thenReturn(Optional.of(customer));
+        when(customerRepository.save(any(Customer.class))).thenAnswer(invocation -> invocation.getArgument(0));
+
+        com.bank.customer.domain.port.in.KycStatusView view = service.changeKycStatus(
+            new com.bank.customer.domain.port.in.ChangeKycStatusCommand(CustomerId.of("CUST-IDEM"),
+                com.bank.customer.domain.KycStatus.Status.VERIFIED, "banker-sub-1"));
+
+        assertThat(view.customerId()).isEqualTo(CustomerId.of("CUST-IDEM"));
+        assertThat(view.kycStatus().status()).isEqualTo(com.bank.customer.domain.KycStatus.Status.VERIFIED);
+        assertThat(view.kycStatus().verifiedAt()).isEqualTo(NOW);
+        assertThat(view.kycStatus().updatedBy()).isEqualTo("banker-sub-1");
+        @SuppressWarnings("unchecked")
+        ArgumentCaptor<List<com.bank.shared.kernel.domain.DomainEvent>> events = ArgumentCaptor.forClass(List.class);
+        verify(eventPublisher).publish(eq(customer), events.capture());
+        assertThat(events.getValue()).singleElement()
+            .isInstanceOf(com.bank.customer.domain.CustomerKycStatusChangedEvent.class);
+    }
+
+    @Test
+    void anUnchangedKycStatusIsNotSaved() {
+        Customer customer = existingCustomer();
+        customer.verifyKyc("banker-sub-1", NOW);
+        customer.clearDomainEvents();
+        when(customerRepository.findById(CustomerId.of("CUST-IDEM"))).thenReturn(Optional.of(customer));
+
+        service.changeKycStatus(new com.bank.customer.domain.port.in.ChangeKycStatusCommand(CustomerId.of("CUST-IDEM"),
+            com.bank.customer.domain.KycStatus.Status.VERIFIED, "banker-sub-2"));
+
+        verify(customerRepository, never()).save(any(Customer.class));
+        verifyNoInteractions(eventPublisher);
+    }
+
+    @Test
+    void pendingIsNotAStaffDecision() {
+        assertThatThrownBy(() -> new com.bank.customer.domain.port.in.ChangeKycStatusCommand(CustomerId.of("CUST-IDEM"),
+                com.bank.customer.domain.KycStatus.Status.PENDING, "banker-sub-1"))
+            .isInstanceOf(IllegalArgumentException.class)
+            .hasMessage("Staff set the KYC status to VERIFIED or REJECTED");
+    }
+
+    @Test
+    void theKycStatusIsReadWithoutPersonalData() {
+        Customer customer = existingCustomer();
+        when(customerRepository.findById(CustomerId.of("CUST-IDEM"))).thenReturn(Optional.of(customer));
+
+        com.bank.customer.domain.port.in.KycStatusView view = service.getKycStatus(CustomerId.of("CUST-IDEM"));
+
+        assertThat(view).isEqualTo(new com.bank.customer.domain.port.in.KycStatusView(CustomerId.of("CUST-IDEM"),
+            com.bank.customer.domain.KycStatus.pending()));
+        assertThat(view.kycVerified()).isFalse();
+        when(customerRepository.findById(CustomerId.of("CUST-NONE"))).thenReturn(Optional.empty());
+        assertThatThrownBy(() -> service.getKycStatus(CustomerId.of("CUST-NONE")))
+            .isInstanceOf(com.bank.customer.domain.CustomerNotFoundException.class);
+    }
 }
