@@ -48,6 +48,7 @@ import static org.mockito.Mockito.when;
 import static org.springframework.security.test.web.servlet.request.SecurityMockMvcRequestPostProcessors.jwt;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.put;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.header;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
@@ -179,6 +180,42 @@ class CustomerServiceIT {
         mvc.perform(asService(get("/api/v1/customers/{id}/credit", customerId)))
             .andExpect(jsonPath("$.usedCredit").value(1500.00))
             .andExpect(jsonPath("$.availableCredit").value(8500.00));
+    }
+
+    @Test
+    void invalidAmountsAndCurrenciesAreA400AndMoveNothing() throws Exception {
+        String customerId = create("invalid@example.com", "10000.00");
+        List<String> invalidBodies = List.of(
+            "{\"currency\": \"AED\", \"reference\": \"LOAN-5\"}",
+            "{\"amount\": 10.00, \"reference\": \"LOAN-5\"}",
+            "{\"amount\": 0, \"currency\": \"AED\", \"reference\": \"LOAN-5\"}",
+            "{\"amount\": -10.00, \"currency\": \"AED\", \"reference\": \"LOAN-5\"}",
+            "{\"amount\": 10.00, \"currency\": \"ZZZ\", \"reference\": \"LOAN-5\"}",
+            "{\"amount\": 10.00, \"currency\": \"dirham\", \"reference\": \"LOAN-5\"}");
+
+        int key = 0;
+        for (String body : invalidBodies) {
+            for (String movement : List.of("reserve", "release")) {
+                mvc.perform(asService(post("/api/v1/customers/{id}/credit/" + movement, customerId))
+                        .header("x-idempotency-key", "invalid-" + key++)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(body))
+                    .andExpect(status().isBadRequest())
+                    .andExpect(jsonPath("$.code").value("INVALID_REQUEST"))
+                    .andExpect(jsonPath("$.message").isNotEmpty())
+                    .andExpect(jsonPath("$.interactionId").value("it-interaction-3"));
+            }
+            mvc.perform(asBanker(put("/api/v1/customers/{id}/credit-limit", customerId))
+                    .contentType(MediaType.APPLICATION_JSON)
+                    .content(body))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.code").value("INVALID_REQUEST"))
+                .andExpect(jsonPath("$.message").isNotEmpty());
+        }
+        assertThat(jdbc.queryForMap("select credit_limit, used_credit from sc_cus_profile_kyc.customer where customer_id = ?", customerId))
+            .hasEntrySatisfying("credit_limit", v -> assertThat((BigDecimal) v).isEqualByComparingTo("10000.00"))
+            .hasEntrySatisfying("used_credit", v -> assertThat((BigDecimal) v).isEqualByComparingTo("0"));
+        assertThat(jdbc.queryForObject("select count(*) from sc_cus_profile_kyc.credit_movement", Integer.class)).isZero();
     }
 
     @Test

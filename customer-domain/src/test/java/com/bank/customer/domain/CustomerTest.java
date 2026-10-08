@@ -171,6 +171,25 @@ class CustomerTest {
         assertThat(eligible.isEligibleForLoan(Money.aed(new BigDecimal("12000.00")))).isFalse();
     }
 
+    @Test
+    void creditMovementsRejectZeroAndNegativeAmountsAndLeaveTheProfileUnchanged() {
+        Customer customer = createCustomer();
+        customer.reserveCredit(Money.aed(new BigDecimal("2500.00")));
+        customer.clearDomainEvents();
+
+        for (String amount : List.of("0.00", "-100.00")) {
+            Money money = Money.aed(new BigDecimal(amount));
+            assertThatThrownBy(() -> customer.reserveCredit(money))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessage("Credit amount must be positive");
+            assertThatThrownBy(() -> customer.releaseCredit(money))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessage("Credit amount must be positive");
+        }
+        assertThat(customer.getCreditProfile().getUsedCredit()).isEqualTo(Money.aed(new BigDecimal("2500.00")));
+        assertThat(customer.getDomainEvents()).isEmpty();
+    }
+
     private static Customer createCustomer() {
         return Customer.create(
             CustomerId.of("CUST-UNIT-BASE"),
