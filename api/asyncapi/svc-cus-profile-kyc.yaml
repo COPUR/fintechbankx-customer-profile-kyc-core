@@ -152,25 +152,6 @@ channels:
           retention.ms: 604800000
           max.message.bytes: 1048576
         bindingVersion: 0.5.0
-  deadLetter:
-    address: evt.cus.customer.dlq.v1
-    title: evt.cus.customer.dlq.v1
-    description: Dead-letter topic for the evt.cus.customer namespace. Written by consumers (not by svc-cus-profile-kyc)
-      after bounded retries; replayed by the owning consumer squad.
-    messages:
-      DeadLetter:
-        $ref: '#/components/messages/DeadLetter'
-    bindings:
-      kafka:
-        topic: evt.cus.customer.dlq.v1
-        partitions: 3
-        replicas: 3
-        topicConfiguration:
-          cleanup.policy:
-          - delete
-          retention.ms: 1209600000
-          max.message.bytes: 1048576
-        bindingVersion: 0.5.0
 operations:
   publishCustomerCreated:
     action: send
@@ -226,8 +207,6 @@ components:
       $ref: ./common/event-envelope.yaml#/EventEnvelope
     EventHeaders:
       $ref: ./common/event-envelope.yaml#/EventHeaders
-    DeadLetterHeaders:
-      $ref: ./common/event-envelope.yaml#/DeadLetterHeaders
     MonetaryAmount:
       $ref: ./common/event-envelope.yaml#/MonetaryAmount
     DecimalAmount:
@@ -474,21 +453,6 @@ components:
             description: aggregateId (customerId).
           bindingVersion: 0.5.0
       x-source-class: com.bank.customer.domain.CustomerCreditScoreUpdatedEvent
-    DeadLetter:
-      name: DeadLetter
-      title: Dead letter for evt.cus.customer
-      summary: A message from this namespace that a consumer could not process after bounded retries.
-      contentType: application/json
-      headers:
-        $ref: '#/components/schemas/DeadLetterHeaders'
-      payload:
-        $ref: '#/components/schemas/EventEnvelope'
-      bindings:
-        kafka:
-          key:
-            type: string
-            description: Original record key (aggregateId).
-          bindingVersion: 0.5.0
   securitySchemes:
     mskIam:
       type: userPassword
