@@ -29,7 +29,9 @@ The in-process `CustomerCreditSaga` (Spring `@EventListener` on loan and payment
 
 ## 2. Backfill and reconciliation
 
-`db/backfill/run-backfill.sh "<monolith conninfo>" "<customer service conninfo>" AED`
+`db/backfill/run-backfill.sh "<monolith conninfo>" "<customer service conninfo>" USD`
+
+The currency is a required argument with no default (the script prints its usage and exits 2 without it). Decision in force: the ledger currency is USD, which the monolith evidence points to. `svc-ln-loan-lifecycle`'s `loan.customer-credit.ledger-currency` must be the same value before step 2.
 
 1. Exports `customers` in one read-only snapshot.
 2. Stages them in `backfill_stage` in the service database and transforms them (`02_transform_into_customer_service.sql`; the mapping is listed at the top of that file). The monolith stored no currency, e-mail, phone, score or income: currency comes from the run parameter and the rest stay empty.

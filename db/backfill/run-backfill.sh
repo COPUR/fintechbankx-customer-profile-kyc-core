@@ -3,20 +3,24 @@
 # own database and reconciles the two. Re-runnable until cut-over: a re-run
 # refreshes customers the service has not changed yet (see 02_*.sql).
 #
-#   db/backfill/run-backfill.sh <monolith-conninfo> <customer-service-conninfo> [currency]
+#   db/backfill/run-backfill.sh <monolith-conninfo> <customer-service-conninfo> <currency>
+#
+# <currency> is required, with no default: the monolith stored no currency, so
+# the run labels every limit with it. The decision in force is USD (monolith
+# evidence); svc-ln-loan-lifecycle's ledger currency must be the same.
 #
 # Example conninfo: "host=elms-db dbname=elms user=readonly sslmode=require".
 # Passwords come from PGPASSWORD or ~/.pgpass, never from arguments.
 set -euo pipefail
 
-if [ "$#" -lt 2 ]; then
-  echo "usage: $0 <monolith-conninfo> <customer-service-conninfo> [currency]" >&2
+if [ "$#" -ne 3 ]; then
+  echo "usage: $0 <monolith-conninfo> <customer-service-conninfo> <currency>   (ISO 4217, required; e.g. USD)" >&2
   exit 2
 fi
 
 source_db="$1"
 target_db="$2"
-currency="${3:-AED}"
+currency="$3"
 here="$(cd "$(dirname "$0")" && pwd)"
 work="$(mktemp -d)"
 trap 'rm -rf "$work"' EXIT
