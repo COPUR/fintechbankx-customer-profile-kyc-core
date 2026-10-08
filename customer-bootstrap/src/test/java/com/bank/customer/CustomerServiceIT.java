@@ -81,6 +81,7 @@ class CustomerServiceIT {
     @Autowired SpringDataOutboxRepository outbox;
     @Autowired PlatformTransactionManager transactionManager;
     @MockBean KafkaTemplate<String, String> kafka;
+    @MockBean org.springframework.security.oauth2.jwt.JwtDecoder jwtDecoder;
 
     @BeforeEach
     void cleanTables() {
@@ -250,11 +251,9 @@ class CustomerServiceIT {
     void servicesReadOnlyTheCreditPositionAndOnlyListedServicesMayUseIt() throws Exception {
         String customerId = create("self@example.com", "3000.00");
 
-        mvc.perform(get("/api/v1/customers/{id}", customerId).with(jwt().jwt(j -> j.subject("kc-user-1").claim("customer_id", customerId))
-                .authorities(new SimpleGrantedAuthority("ROLE_CUSTOMER"))))
+        mvc.perform(asCustomerToken(get("/api/v1/customers/{id}", customerId), "kc-user-1", customerId))
             .andExpect(status().isOk());
-        mvc.perform(get("/api/v1/customers/{id}", customerId).with(jwt().jwt(j -> j.subject("kc-user-2").claim("customer_id", "someone-else"))
-                .authorities(new SimpleGrantedAuthority("ROLE_CUSTOMER"))))
+        mvc.perform(asCustomerToken(get("/api/v1/customers/{id}", customerId), "kc-user-2", "someone-else"))
             .andExpect(status().isForbidden());
         mvc.perform(asService(get("/api/v1/customers/{id}", customerId)))
             .andExpect(status().isForbidden());
@@ -271,8 +270,7 @@ class CustomerServiceIT {
                 .contentType(MediaType.APPLICATION_JSON)
                 .content("{\"amount\": 10.00, \"currency\": \"AED\"}"))
             .andExpect(status().isForbidden());
-        mvc.perform(post("/api/v1/customers/{id}/credit/reserve", customerId)
-                .with(jwt().jwt(j -> j.subject("kc-user-1").claim("customer_id", customerId)).authorities(new SimpleGrantedAuthority("ROLE_CUSTOMER")))
+        mvc.perform(asCustomerToken(post("/api/v1/customers/{id}/credit/reserve", customerId), "kc-user-1", customerId)
                 .header("x-idempotency-key", "self-1")
                 .contentType(MediaType.APPLICATION_JSON)
                 .content("{\"amount\": 10.00, \"currency\": \"AED\"}"))
@@ -280,23 +278,25 @@ class CustomerServiceIT {
     }
 
     /**
-     * Platform contract "End-user and caller claims": the end user is identified by the customer_id claim
-     * (set by the identity link), not by the token subject, which is the Keycloak user id.
+     * Platform contract "End-user and caller claims": under Keycloak, sub is a UUID and the customer
+     * profile id comes in the customer_id claim. The real decoder chain runs here (bearer token through
+     * the resource-server filter and SecurityConfiguration's converter); only the signature check is mocked.
      */
     @Test
-    void customersAreIdentifiedByTheCustomerIdClaimNotTheSubject() throws Exception {
-        String customerId = create("claim@example.com", "3000.00");
+    void aCustomerTokenIsMatchedOnItsCustomerIdClaimAndFallsBackToTheSubject() throws Exception {
+        loadParitySeed();
         String keycloakUser = "6f1c2a7e-5b8d-4c3e-9a1f-0d2b3c4e5f60";
 
         for (String path : List.of("/api/v1/customers/{id}", "/api/v1/customers/{id}/credit")) {
-            mvc.perform(get(path, customerId).with(jwt().jwt(j -> j.subject(keycloakUser).claim("customer_id", customerId))
-                    .authorities(new SimpleGrantedAuthority("ROLE_CUSTOMER"))))
-                .andExpect(status().isOk());
-            mvc.perform(get(path, customerId).with(jwt().jwt(j -> j.subject(customerId))
-                    .authorities(new SimpleGrantedAuthority("ROLE_CUSTOMER"))))
+            mvc.perform(asCustomerToken(get(path, "CUST-12345678"), keycloakUser, "CUST-12345678"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.customerId").value("CUST-12345678"));
+            mvc.perform(asCustomerToken(get(path, "CUST-87654321"), keycloakUser, "CUST-12345678"))
                 .andExpect(status().isForbidden());
-            mvc.perform(get(path, customerId).with(jwt().jwt(j -> j.subject(keycloakUser).claim("customer_id", "CUST-OTHER001"))
-                    .authorities(new SimpleGrantedAuthority("ROLE_CUSTOMER"))))
+            // No customer_id claim: the subject is the principal name.
+            mvc.perform(asCustomerToken(get(path, "CUST-87654321"), "CUST-87654321", null))
+                .andExpect(status().isOk());
+            mvc.perform(asCustomerToken(get(path, "CUST-87654321"), keycloakUser, null))
                 .andExpect(status().isForbidden());
         }
     }
@@ -449,6 +449,21 @@ class CustomerServiceIT {
             {"firstName": "Noor", "lastName": "Rahman", "email": "%s", "phoneNumber": "+971500000123",
              "initialCreditLimit": %s, "currency": "AED"}
             """.formatted(email, limit);
+    }
+
+    /** A bearer token decoded by the mocked JwtDecoder and converted by the service's real converter. */
+    private MockHttpServletRequestBuilder asCustomerToken(MockHttpServletRequestBuilder request, String subject,
+                                                          String customerIdClaim) {
+        String token = "customer-token-" + java.util.UUID.randomUUID();
+        org.springframework.security.oauth2.jwt.Jwt.Builder jwt = org.springframework.security.oauth2.jwt.Jwt.withTokenValue(token)
+            .header("alg", "RS256").subject(subject)
+            .claim("realm_access", java.util.Map.of("roles", List.of("customer")))
+            .issuedAt(java.time.Instant.now()).expiresAt(java.time.Instant.now().plusSeconds(60));
+        if (customerIdClaim != null) {
+            jwt.claim("customer_id", customerIdClaim);
+        }
+        when(jwtDecoder.decode(token)).thenReturn(jwt.build());
+        return request.header("x-fapi-interaction-id", "it-interaction-5").header("Authorization", "Bearer " + token);
     }
 
     private static MockHttpServletRequestBuilder asBanker(MockHttpServletRequestBuilder request) {

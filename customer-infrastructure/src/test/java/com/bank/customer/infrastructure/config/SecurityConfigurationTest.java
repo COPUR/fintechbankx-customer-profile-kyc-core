@@ -21,6 +21,24 @@ class SecurityConfigurationTest {
         assertThat(SecurityConfiguration.keycloakRealmRoles().convert(jwt).getName()).isEqualTo("user-1");
     }
 
+    /** Platform contract "End-user and caller claims": end-user tokens carry customer_id; sub is a Keycloak UUID. */
+    @Test
+    void theCustomerIdClaimIsThePrincipalNameWhenPresent() {
+        Jwt customer = jwt(Map.of("sub", "6f1c2a7e-5b8d-4c3e-9a1f-0d2b3c4e5f60", "customer_id", "CUST-12345678",
+            "realm_access", Map.of("roles", List.of("customer"))));
+
+        assertThat(SecurityConfiguration.keycloakRealmRoles().convert(customer).getName()).isEqualTo("CUST-12345678");
+    }
+
+    @Test
+    void staffAndServiceTokensWithoutTheClaimFallBackToTheSubject() {
+        Jwt service = jwt(Map.of("sub", "service-account-loan", "azp", "svc-ln-loan-lifecycle"));
+        Jwt blankClaim = jwt(Map.of("sub", "banker-7", "customer_id", " "));
+
+        assertThat(SecurityConfiguration.keycloakRealmRoles().convert(service).getName()).isEqualTo("service-account-loan");
+        assertThat(SecurityConfiguration.keycloakRealmRoles().convert(blankClaim).getName()).isEqualTo("banker-7");
+    }
+
     @Test
     void tokensWithoutRealmRolesGetNoAuthorities() {
         assertThat(SecurityConfiguration.realmRoles(jwt(Map.of("scope", "customer:read")))).isEmpty();
