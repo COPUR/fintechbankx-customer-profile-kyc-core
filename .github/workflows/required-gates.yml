@@ -148,6 +148,17 @@ jobs:
         if: ${{ hashFiles('openapi/*.yaml') != '' || hashFiles('api/openapi/*.yaml') != '' || hashFiles('src/main/resources/openapi/*.yaml') != '' }}
         run: ./scripts/ci/fapi-dpop-guard.sh
 
+      - name: AsyncAPI contract lint
+        if: ${{ hashFiles('api/asyncapi/*.yaml') != '' }}
+        env:
+          NPM_CONFIG_CACHE: /tmp/.npm
+        shell: bash
+        run: |
+          # api/asyncapi/common holds shared schemas resolved through $ref, not standalone documents.
+          for spec in api/asyncapi/*.yaml; do
+            npx -y @asyncapi/cli@2.13.0 validate "$spec"
+          done
+
       - name: Guardrail - disallow generic map request payloads
         shell: bash
         run: |

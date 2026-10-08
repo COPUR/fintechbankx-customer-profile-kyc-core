@@ -13,8 +13,10 @@ serviceAccount:
   # IAM role from deploy/terraform output workload_role_arn (IRSA).
   roleArn: ""
 
+# Mesh labels from the platform contract. app.kubernetes.io/name (= the chart
+# name, which is the service account name) and version are set by the chart.
 podLabels:
-  app: app-cus-profile-kyc
+  app: customer-profile-kyc-service
   app.kubernetes.io/part-of: fintechbankx-customer
   fintechbankx.io/service-id: svc-cus-profile-kyc
   sidecar.istio.io/inject: "true"
@@ -46,19 +48,21 @@ config:
   DB_USERNAME: customer_profile_app
   DB_POOL_MAX: "10"
   KAFKA_BOOTSTRAP_SERVERS: ""
-  KAFKA_SECURITY_PROTOCOL: SSL
+  # kafka-msk: SASL_SSL + AWS_MSK_IAM through the service IRSA role (AWS).
+  # kafka-strimzi: TLS listener of the in-cluster Strimzi cluster (local, kind).
+  SPRING_PROFILES_ACTIVE: kafka-msk
   OIDC_ISSUER_URI: ""
   OIDC_JWK_SET_URI: ""
-  OIDC_AUDIENCE: customer-profile-kyc-service
+  OIDC_AUDIENCE: svc-cus-profile-kyc   # token aud must contain the service id
   SERVICE_CALLERS: svc-ln-loan-lifecycle   # token azp values allowed to read and move credit
   OUTBOX_RELAY_ENABLED: "true"
 
 # Database credential, synced from AWS Secrets Manager by External Secrets Operator.
 externalSecret:
   enabled: true
-  # Namespaced store rendered by this chart (templates/secretstore.yaml); it
-  # authenticates as this service account, so only the IRSA role reads the secret.
-  awsRegion: ""
+  # The platform ClusterSecretStore (External Secrets Operator in namespace
+  # external-secrets reads only <env>/* secrets).
+  storeName: aws-secrets-manager
   # Secrets Manager secret from deploy/terraform output app_db_secret_name.
   remoteSecretName: ""
   refreshInterval: 1h
@@ -69,14 +73,14 @@ topologySpread:
 # Settings the pod cannot start without; rendering fails while any is empty.
 requiredConfig: [DB_URL, OIDC_ISSUER_URI, OIDC_JWK_SET_URI, OIDC_AUDIENCE, KAFKA_BOOTSTRAP_SERVERS]
 
-# Istio: STRICT mTLS and an allow-list of callers by mesh identity
-# (templates/mesh-policies.yaml). The namespace must be in the mesh
-# (istio-injection=enabled); onboarding is owned by the mesh-security squad.
-mesh:
+# Mesh-wide STRICT mTLS, default deny and the ALLOW rules per caller principal
+# are owned by fintechbankx-platform-mesh-security-service-mesh; this chart
+# ships neither a PeerAuthentication nor an AuthorizationPolicy. The
+# NetworkPolicy below (templates/networkpolicy.yaml) is a CNI-level backstop
+# that admits only the namespaces of those callers.
+networkPolicy:
   enabled: true
-  monitoringNamespace: monitoring
-  allowedCallers:
-    - namespace: istio-system
-      serviceAccount: istio-ingressgateway-service-account
-    - namespace: lending
-      serviceAccount: loan-lifecycle-service
+  monitoringNamespace: observability
+  callerNamespaces:
+    - istio-ingress   # istio-ingressgateway
+    - lending         # loan-lifecycle-service

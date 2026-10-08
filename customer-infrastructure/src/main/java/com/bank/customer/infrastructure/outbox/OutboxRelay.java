@@ -86,6 +86,9 @@ public class OutboxRelay {
         record.headers().add("eventId", row.getEventId().toString().getBytes(StandardCharsets.UTF_8));
         record.headers().add("correlationId", row.getCorrelationId().getBytes(StandardCharsets.UTF_8));
         record.headers().add("x-fapi-interaction-id", row.getCorrelationId().getBytes(StandardCharsets.UTF_8));
+        if (row.getTraceparent() != null) {
+            record.headers().add("traceparent", row.getTraceparent().getBytes(StandardCharsets.UTF_8));
+        }
         return record;
     }
 }

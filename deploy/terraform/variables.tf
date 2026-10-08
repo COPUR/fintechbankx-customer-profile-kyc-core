@@ -129,3 +129,9 @@ variable "db_pool_max" {
   description = "DB_POOL_MAX of the Helm values; sizes the connection alarm."
   default     = 10
 }
+
+variable "msk_cluster_arn" {
+  type        = string
+  description = "ARN of the platform MSK cluster. When set, the workload role may connect with IAM auth and write evt.cus.customer.* topics. Empty disables Kafka access."
+  default     = ""
+}

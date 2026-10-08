@@ -32,8 +32,9 @@ public class OutboxCustomerEventPublisher implements CustomerEventPublisher {
     @Transactional(propagation = Propagation.MANDATORY)
     public void publish(Customer customer, List<DomainEvent> events) {
         String correlationId = currentCorrelationId();
+        String traceparent = MDC.get(CorrelationIdFilter.TRACEPARENT_MDC_KEY);
         outbox.saveAll(events.stream()
-            .map(event -> envelopes.toOutboxRow(customer, event, correlationId))
+            .map(event -> envelopes.toOutboxRow(customer, event, correlationId).withTraceparent(traceparent))
             .toList());
     }
 

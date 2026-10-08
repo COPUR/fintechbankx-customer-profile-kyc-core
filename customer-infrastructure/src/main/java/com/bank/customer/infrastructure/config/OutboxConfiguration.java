@@ -34,11 +34,12 @@ public class OutboxConfiguration {
 
     /**
      * Backlog of events not yet on Kafka. Alert on growth: it means the relay
-     * or the brokers are down while customers keep changing.
+     * or the brokers are down while customers keep changing. Exported as
+     * outbox_pending_events (platform name), tagged service=svc-cus-profile-kyc.
      */
     @Bean
     Gauge customerOutboxPendingGauge(MeterRegistry registry, SpringDataOutboxRepository outbox) {
-        return Gauge.builder("customer.outbox.pending", outbox, SpringDataOutboxRepository::countByPublishedAtIsNull)
+        return Gauge.builder("outbox.pending.events", outbox, SpringDataOutboxRepository::countByPublishedAtIsNull)
             .description("Customer events written to the outbox but not yet published to Kafka")
             .register(registry);
     }

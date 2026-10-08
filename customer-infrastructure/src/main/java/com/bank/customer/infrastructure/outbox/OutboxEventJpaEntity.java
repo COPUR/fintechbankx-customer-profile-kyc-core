@@ -56,6 +56,10 @@ public class OutboxEventJpaEntity {
     @Column(name = "last_error", length = 512)
     private String lastError;
 
+    // W3C trace context of the request that raised the event; null when none came in.
+    @Column(name = "traceparent", length = 55, updatable = false)
+    private String traceparent;
+
     protected OutboxEventJpaEntity() {
     }
 
@@ -81,6 +85,12 @@ public class OutboxEventJpaEntity {
     public String getTopic() { return topic; }
     public String getPayload() { return payload; }
     public String getCorrelationId() { return correlationId; }
+    public String getTraceparent() { return traceparent; }
+
+    public OutboxEventJpaEntity withTraceparent(String traceparent) {
+        this.traceparent = traceparent;
+        return this;
+    }
     public Instant getOccurredAt() { return occurredAt; }
     public Instant getPublishedAt() { return publishedAt; }
     public int getAttempts() { return attempts; }

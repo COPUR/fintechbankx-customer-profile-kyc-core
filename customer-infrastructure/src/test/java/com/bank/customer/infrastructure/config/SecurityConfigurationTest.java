@@ -29,9 +29,9 @@ class SecurityConfigurationTest {
 
     @Test
     void tokensMustNameThisServiceInTheirAudience() {
-        var validator = SecurityConfiguration.audienceValidator("customer-profile-kyc-service");
+        var validator = SecurityConfiguration.audienceValidator("svc-cus-profile-kyc");
 
-        assertThat(validator.validate(jwt(Map.of("aud", List.of("account", "customer-profile-kyc-service")))).hasErrors()).isFalse();
+        assertThat(validator.validate(jwt(Map.of("aud", List.of("account", "svc-cus-profile-kyc")))).hasErrors()).isFalse();
         assertThat(validator.validate(jwt(Map.of("aud", List.of("loan-frontend")))).hasErrors()).isTrue();
         assertThat(validator.validate(jwt(Map.of("scope", "openid"))).hasErrors()).isTrue();
     }
@@ -42,7 +42,7 @@ class SecurityConfigurationTest {
         properties.getJwt().setIssuerUri("https://keycloak.example/realms/fintechbankx");
         properties.getJwt().setJwkSetUri("https://keycloak.example/realms/fintechbankx/protocol/openid-connect/certs");
 
-        assertThat(new SecurityConfiguration().jwtDecoder(properties, "customer-profile-kyc-service"))
+        assertThat(new SecurityConfiguration().jwtDecoder(properties, "svc-cus-profile-kyc"))
             .isInstanceOf(org.springframework.security.oauth2.jwt.NimbusJwtDecoder.class);
     }
 

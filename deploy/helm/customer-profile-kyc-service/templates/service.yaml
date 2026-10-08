@@ -14,4 +14,4 @@ spec:
       targetPort: http
     - name: http-management
       port: {{ .Values.service.managementPort }}
-      targetPort: management
+      targetPort: http-management

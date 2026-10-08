@@ -11,7 +11,7 @@ steps of `fbx-monolith-extraction`.
 | Owned data | `db_cus_profile_kyc_<env>`, schema `sc_cus_profile_kyc`: `customer`, `credit_movement`, `outbox_event` |
 | Events | `evt.cus.customer.{created,contact-updated,credit-limit-updated,credit-reserved,credit-released,credit-score-updated}.v1` (contract in this repo, `api/asyncapi/svc-cus-profile-kyc.yaml`; proposed to the catalog in fintechbankx-governance-api-contracts-asyncapi-catalog PR #9, which must merge before the relay is switched on) |
 | Called by | `svc-ln-loan-lifecycle`: `GET /api/v1/customers/{id}/credit` (no personal data), `POST .../credit/reserve` and `.../credit/release` with a required `x-idempotency-key` and the loan id as `reference` |
-| Caller identity | Client-credentials token with the `SERVICE` realm role, `aud` containing `customer-profile-kyc-service` (Keycloak audience mapper) and `azp` on `SERVICE_CALLERS` |
+| Caller identity | Client-credentials token with the `SERVICE` realm role, `aud` containing `svc-cus-profile-kyc` (Keycloak audience mapper) and `azp` on `SERVICE_CALLERS` |
 
 ## 1. Data ownership split
 
@@ -66,7 +66,7 @@ Credit must have one ledger at any time: the monolith's `public.customers` until
 - [x] Tokens must name this service in `aud`; service calls must come from a client on `SERVICE_CALLERS`
 - [x] Container image, Helm chart, Terraform validate in CI (`Deployability` workflow)
 - [ ] `svc-ln-loan-lifecycle` calls with a client-credentials token (`SERVICE` role) instead of forwarding the end user's token
-- [ ] Keycloak: audience mapper for `customer-profile-kyc-service` on each calling client (fintechbankx-platform-identity-iam-keycloak-ldap)
+- [ ] Keycloak: audience mapper for `svc-cus-profile-kyc` on each calling client (fintechbankx-platform-identity-iam-keycloak-ldap)
 - [ ] Namespace `customer` onboarded to the mesh (istio-injection) by the mesh-security squad
 - [ ] Monolith anti-corruption client behind a flag (enterprise-loan-management-system)
 - [ ] Topics `evt.cus.customer.*.v1` created on the platform cluster (fintechbankx-platform-event-streaming-kafka)

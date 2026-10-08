@@ -43,4 +43,25 @@ class CorrelationIdFilterTest {
 
         assertThat(response.getHeader("x-fapi-interaction-id")).matches("[0-9a-f-]{36}");
     }
+
+    @Test
+    void validTraceparentIsKeptForTheRequestAndInvalidOneIsDropped() throws Exception {
+        String valid = "00-0af7651916cd43dd8448eb211c80319c-b7ad6b7169203331-01";
+        assertThat(traceparentSeenFor(valid)).isEqualTo(valid);
+        assertThat(traceparentSeenFor("00-not-a-trace\n")).isNull();
+        assertThat(MDC.get(CorrelationIdFilter.TRACEPARENT_MDC_KEY)).isNull();
+    }
+
+    private String traceparentSeenFor(String header) throws Exception {
+        MockHttpServletRequest request = new MockHttpServletRequest();
+        request.addHeader("traceparent", header);
+        AtomicReference<String> seen = new AtomicReference<>();
+        filter.doFilter(request, new MockHttpServletResponse(), new MockFilterChain() {
+            @Override
+            public void doFilter(jakarta.servlet.ServletRequest req, jakarta.servlet.ServletResponse res) {
+                seen.set(MDC.get(CorrelationIdFilter.TRACEPARENT_MDC_KEY));
+            }
+        });
+        return seen.get();
+    }
 }

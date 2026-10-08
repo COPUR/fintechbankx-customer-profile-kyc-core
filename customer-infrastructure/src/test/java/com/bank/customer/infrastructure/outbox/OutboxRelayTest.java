@@ -80,6 +80,16 @@ class OutboxRelayTest {
         assertThat(header(record, "eventType")).isEqualTo("Customer.Customer.Created.v1");
         assertThat(header(record, "eventId")).isEqualTo(row.getEventId().toString());
         assertThat(header(record, "x-fapi-interaction-id")).isEqualTo("corr-9");
+        assertThat(record.headers().lastHeader("traceparent")).isNull();
+    }
+
+    @Test
+    void recordCarriesTheW3cTraceparentOfTheRequestThatRaisedTheEvent() {
+        String traceparent = "00-0af7651916cd43dd8448eb211c80319c-b7ad6b7169203331-01";
+
+        ProducerRecord<String, String> record = OutboxRelay.toRecord(row("CUST-9").withTraceparent(traceparent));
+
+        assertThat(header(record, "traceparent")).isEqualTo(traceparent);
     }
 
     @Test

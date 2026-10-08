@@ -38,17 +38,25 @@ spring:
     create-schemas: true
     locations: classpath:db/migration
   kafka:
+    # Runtime-neutral: authentication comes from the kafka-msk or kafka-strimzi
+    # profile (SPRING_PROFILES_ACTIVE), per the platform Kafka client guide.
     bootstrap-servers: ${KAFKA_BOOTSTRAP_SERVERS:localhost:9092}
+    client-id: svc-cus-profile-kyc
     security:
       protocol: ${KAFKA_SECURITY_PROTOCOL:PLAINTEXT}
+    admin:
+      # Topics exist only through the catalog (event-streaming repo); never created from here.
+      auto-create: false
     producer:
       acks: all
+      compression-type: lz4
       key-serializer: org.apache.kafka.common.serialization.StringSerializer
       value-serializer: org.apache.kafka.common.serialization.StringSerializer
       properties:
         enable.idempotence: true
         max.in.flight.requests.per.connection: 5
         delivery.timeout.ms: 30000
+        linger.ms: 5
   security:
     oauth2:
       resourceserver:
@@ -58,8 +66,8 @@ spring:
 
 fintechbankx:
   security:
-    # Tokens must carry this value in "aud" (Keycloak audience mapper on each calling client).
-    audience: ${OIDC_AUDIENCE:customer-profile-kyc-service}
+    # Tokens must carry the service id in "aud" (Keycloak audience mapper on each calling client).
+    audience: ${OIDC_AUDIENCE:svc-cus-profile-kyc}
     # Client ids (token "azp") allowed to read and move credit with the SERVICE role.
     service-callers: ${SERVICE_CALLERS:svc-ln-loan-lifecycle}
 

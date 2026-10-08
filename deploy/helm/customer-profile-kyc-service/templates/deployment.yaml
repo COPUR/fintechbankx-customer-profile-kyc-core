@@ -21,6 +21,7 @@ spec:
     metadata:
       labels:
         {{- include "customer.selectorLabels" . | nindent 8 }}
+        version: {{ .Values.image.tag | default .Chart.AppVersion | quote }}
         {{- toYaml .Values.podLabels | nindent 8 }}
       annotations:
         checksum/config: {{ include (print $.Template.BasePath "/configmap.yaml") . | sha256sum }}
@@ -57,7 +58,7 @@ spec:
           ports:
             - name: http
               containerPort: {{ .Values.service.port }}
-            - name: management
+            - name: http-management
               containerPort: {{ .Values.service.managementPort }}
           envFrom:
             - configMapRef:
@@ -69,19 +70,19 @@ spec:
           startupProbe:
             httpGet:
               path: /actuator/health/liveness
-              port: management
+              port: http-management
             periodSeconds: 5
             failureThreshold: 36
           livenessProbe:
             httpGet:
               path: /actuator/health/liveness
-              port: management
+              port: http-management
             periodSeconds: 10
             failureThreshold: 3
           readinessProbe:
             httpGet:
               path: /actuator/health/readiness
-              port: management
+              port: http-management
             periodSeconds: 5
             failureThreshold: 3
           lifecycle:
