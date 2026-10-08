@@ -36,21 +36,71 @@ module "service_base" {
 
 # --- Encryption -------------------------------------------------------------
 
+data "aws_caller_identity" "current" {}
+data "aws_partition" "current" {}
+
+# Platform ruling ADR-023: two keys. External Secrets (terraform-modules
+# external-secrets-irsa) may decrypt, through Secrets Manager only, with keys
+# tagged fintechbankx.io/secrets=true, so that tag goes on the secrets key alone.
+
+# Aurora storage, snapshots, Performance Insights and the RDS-managed master
+# user secret (never synced by External Secrets; as compliance 7d76e85 and risk
+# 7776da9). Untagged, and its key policy denies the External Secrets roles
+# (<cluster>-external-secrets[-platform]) even if someone tags it later.
 resource "aws_kms_key" "database" {
-  description             = "Encrypts ${local.database} storage, snapshots, logs and credentials"
+  description             = "Encrypts ${local.database} storage, snapshots, Performance Insights and the RDS-managed master secret"
   enable_key_rotation     = true
   deletion_window_in_days = 30
 
-  # Lets the platform External Secrets role decrypt the app credential
-  # (platform contract: ESO decrypts only keys with this tag).
-  tags = {
-    "fintechbankx.io/secrets" = "true"
-  }
+  policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [
+      {
+        Sid       = "EnableIamPolicies"
+        Effect    = "Allow"
+        Principal = { AWS = "arn:${data.aws_partition.current.partition}:iam::${data.aws_caller_identity.current.account_id}:root" }
+        Action    = "kms:*"
+        Resource  = "*"
+      },
+      {
+        Sid       = "DenyExternalSecrets"
+        Effect    = "Deny"
+        Principal = { AWS = "*" }
+        Action    = ["kms:Decrypt", "kms:ReEncrypt*", "kms:GenerateDataKey*", "kms:CreateGrant"]
+        Resource  = "*"
+        Condition = {
+          ArnLike = {
+            "aws:PrincipalArn" = [
+              "arn:${data.aws_partition.current.partition}:iam::${data.aws_caller_identity.current.account_id}:role/*-external-secrets",
+              "arn:${data.aws_partition.current.partition}:iam::${data.aws_caller_identity.current.account_id}:role/*-external-secrets-platform",
+            ]
+          }
+        }
+      },
+    ]
+  })
 }
 
 resource "aws_kms_alias" "database" {
   name          = "alias/${local.name}-db"
   target_key_id = aws_kms_key.database.key_id
+}
+
+# Secrets Manager secrets External Secrets syncs into the namespace (db-app).
+# The tag is what lets the platform External Secrets role decrypt them.
+resource "aws_kms_key" "secrets" {
+  description             = "Encrypts the Secrets Manager secrets of ${local.service_id} that External Secrets syncs (db-app)"
+  enable_key_rotation     = true
+  deletion_window_in_days = 30
+
+  tags = {
+    "fintechbankx.io/secrets" = "true"
+  }
+}
+
+resource "aws_kms_alias" "secrets" {
+  name          = "alias/${local.name}-secrets"
+  target_key_id = aws_kms_key.secrets.key_id
 }
 
 # --- Network ----------------------------------------------------------------
@@ -153,7 +203,7 @@ resource "aws_rds_cluster_instance" "database" {
 resource "aws_secretsmanager_secret" "app_database" {
   name                    = "${var.environment}/${local.service_slug}/db-app"
   description             = "Application database credential for ${local.service_id}"
-  kms_key_id              = aws_kms_key.database.arn
+  kms_key_id              = aws_kms_key.secrets.arn
   recovery_window_in_days = 7
 }
 
