@@ -56,6 +56,13 @@ config:
   OIDC_AUDIENCE: svc-cus-profile-kyc   # token aud must contain the service id
   SERVICE_CALLERS: svc-ln-loan-lifecycle   # token azp values allowed to read and move credit
   OUTBOX_RELAY_ENABLED: "true"
+  # Onboarding sets the Keycloak user attribute customer_id (identity link).
+  # Off until the service client has manage-users in the realm and
+  # externalSecret.oidcClientSecretName is set; while off, linking fails closed (503).
+  IDENTITY_ADMIN_ENABLED: "false"
+  KEYCLOAK_BASE_URL: http://keycloak.identity.svc.cluster.local:8080
+  KEYCLOAK_REALM: fintechbankx
+  IDENTITY_ADMIN_CLIENT_ID: svc-cus-profile-kyc
 
 # Database credential, synced from AWS Secrets Manager by External Secrets Operator.
 externalSecret:
@@ -65,6 +72,9 @@ externalSecret:
   storeName: aws-secrets-manager
   # Secrets Manager secret from deploy/terraform output app_db_secret_name.
   remoteSecretName: ""
+  # Secrets Manager secret <env>/customer-profile-kyc-service/oidc-client (platform
+  # contract); its client_secret becomes IDENTITY_ADMIN_CLIENT_SECRET. Empty: not synced.
+  oidcClientSecretName: ""
   refreshInterval: 1h
 
 topologySpread:

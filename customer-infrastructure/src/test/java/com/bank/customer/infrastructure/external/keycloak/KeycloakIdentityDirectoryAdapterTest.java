@@ -129,7 +129,7 @@ class KeycloakIdentityDirectoryAdapterTest {
             .isInstanceOf(IdentityDirectoryUnavailableException.class);
 
         keycloak.reset();
-        expectToken();
+        // The token from the previous call is still valid and is reused.
         keycloak.expect(once(), requestTo(USER_URL)).andExpect(method(HttpMethod.GET))
             .andRespond(withSuccess("{\"id\":\"" + USER + "\"}", MediaType.APPLICATION_JSON));
         keycloak.expect(once(), requestTo(USER_URL)).andExpect(method(HttpMethod.PUT))
@@ -145,7 +145,7 @@ class KeycloakIdentityDirectoryAdapterTest {
             .isInstanceOf(IllegalStateException.class);
         assertThatThrownBy(() -> new KeycloakAdminSettings(BASE, "r", "c", " ", Duration.ofSeconds(1)))
             .isInstanceOf(IllegalStateException.class)
-            .hasMessageNotContaining(" ");
+            .hasMessageStartingWith("fintechbankx.identity.admin.client-secret must be set");
         assertThat(new KeycloakAdminSettings(BASE + "/", "r", "c", "s", null).baseUrl()).isEqualTo(BASE);
     }
 

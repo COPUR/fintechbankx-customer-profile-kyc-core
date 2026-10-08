@@ -11,6 +11,9 @@ import com.bank.customer.domain.port.in.CreditPosition;
 import com.bank.customer.domain.port.in.CustomerProfile;
 import com.bank.customer.domain.port.in.GetCreditPositionUseCase;
 import com.bank.customer.domain.port.in.GetCustomerProfileUseCase;
+import com.bank.customer.domain.port.in.IdentityLink;
+import com.bank.customer.domain.port.in.LinkIdentityCommand;
+import com.bank.customer.domain.port.in.LinkIdentityUseCase;
 import com.bank.customer.domain.port.in.MoveCreditUseCase;
 import com.bank.customer.domain.port.in.RegisterCustomerCommand;
 import com.bank.customer.domain.port.in.RegisterCustomerUseCase;
@@ -18,6 +21,7 @@ import com.bank.customer.domain.port.in.UpdateCreditLimitUseCase;
 import com.bank.customer.domain.port.out.CreditMovementJournal;
 import com.bank.customer.domain.port.out.CustomerEventPublisher;
 import com.bank.customer.domain.port.out.CustomerRepository;
+import com.bank.customer.domain.port.out.IdentityDirectoryPort;
 import com.bank.shared.kernel.domain.CustomerId;
 import com.bank.shared.kernel.domain.DomainEvent;
 import com.bank.shared.kernel.domain.Money;
@@ -40,20 +44,23 @@ import java.util.UUID;
 @Service
 @Transactional
 public class CustomerManagementService implements RegisterCustomerUseCase, GetCustomerProfileUseCase,
-        GetCreditPositionUseCase, UpdateCreditLimitUseCase, MoveCreditUseCase {
+        GetCreditPositionUseCase, UpdateCreditLimitUseCase, MoveCreditUseCase, LinkIdentityUseCase {
 
     private final CustomerRepository customerRepository;
     private final CustomerEventPublisher eventPublisher;
     private final CreditMovementJournal creditMovements;
+    private final IdentityDirectoryPort identityDirectory;
     private final Clock clock;
 
     public CustomerManagementService(CustomerRepository customerRepository,
                                      CustomerEventPublisher eventPublisher,
                                      CreditMovementJournal creditMovements,
+                                     IdentityDirectoryPort identityDirectory,
                                      Clock clock) {
         this.customerRepository = customerRepository;
         this.eventPublisher = eventPublisher;
         this.creditMovements = creditMovements;
+        this.identityDirectory = identityDirectory;
         this.clock = clock;
     }
 
@@ -71,6 +78,24 @@ public class CustomerManagementService implements RegisterCustomerUseCase, GetCu
             command.phoneNumber(),
             command.initialCreditLimit());
         return CustomerProfile.of(saveAndPublish(customer));
+    }
+
+    /**
+     * Onboarding: link the customer to the end user's identity account. The
+     * link is saved first, so a user already linked to another customer is
+     * refused by the database before the directory is touched; then the
+     * directory sets customer_id on the user. If the directory fails, the
+     * exception rolls the link back. Relinking the same user only repeats the
+     * (idempotent) directory call, which repairs a missing attribute.
+     */
+    @Override
+    public IdentityLink linkIdentity(LinkIdentityCommand command) {
+        Customer customer = load(command.customerId());
+        if (customer.linkIdentity(command.identityUserId())) {
+            customerRepository.save(customer);
+        }
+        identityDirectory.linkCustomer(command.identityUserId(), command.customerId());
+        return new IdentityLink(command.customerId(), command.identityUserId());
     }
 
     /** FR-002: full profile. */

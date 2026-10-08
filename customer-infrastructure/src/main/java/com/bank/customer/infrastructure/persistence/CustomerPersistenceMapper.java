@@ -2,6 +2,7 @@ package com.bank.customer.infrastructure.persistence;
 
 import com.bank.customer.domain.Customer;
 import com.bank.customer.domain.CustomerSnapshot;
+import com.bank.customer.domain.IdentityUserId;
 import com.bank.shared.kernel.domain.CustomerId;
 import com.bank.shared.kernel.domain.Money;
 
@@ -32,7 +33,8 @@ final class CustomerPersistenceMapper {
             row.getMonthlyIncome() == null ? null : Money.of(row.getMonthlyIncome(), currency),
             row.getCreatedAt(),
             row.getUpdatedAt(),
-            row.getVersion()));
+            row.getVersion(),
+            row.getIdentityUserId() == null ? null : new IdentityUserId(row.getIdentityUserId())));
     }
 
     static CustomerJpaEntity newEntity(Customer customer) {
@@ -55,6 +57,7 @@ final class CustomerPersistenceMapper {
         row.setCreditScore(customer.getCreditScore());
         row.setMonthlyIncome(customer.getMonthlyIncome() == null ? null : amountIn(customer.getMonthlyIncome(), currency));
         row.setUpdatedAt(customer.getUpdatedAt());
+        row.setIdentityUserId(customer.getIdentityUserId() == null ? null : customer.getIdentityUserId().value());
     }
 
     private static BigDecimal amountIn(Money money, Currency currency) {

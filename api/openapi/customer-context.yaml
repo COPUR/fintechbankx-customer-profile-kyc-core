@@ -331,6 +331,81 @@ paths:
               schema:
                 $ref: '#/components/schemas/ErrorResponse'
 
+  /api/v1/customers/{customerId}/identity-link:
+    put:
+      tags: [CustomerManagement]
+      summary: Link the customer to the end user's identity account
+      operationId: linkIdentity
+      description: |-
+        Onboarding step for staff. Records the link to the Keycloak user and
+        sets that user's attribute customer_id to the customer id, so the
+        user's access tokens carry the customer_id claim. Repeating the call
+        for the same user is safe. Fails closed: if the identity directory
+        cannot be updated, nothing is recorded (503).
+      security:
+        - bearerAuth: []
+          dpopAuth: []
+      parameters:
+        - $ref: '#/components/parameters/Authorization'
+        - $ref: '#/components/parameters/DPoP'
+        - $ref: '#/components/parameters/InteractionId'
+        - $ref: '#/components/parameters/CustomerId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/IdentityLinkRequest'
+      responses:
+        '200':
+          description: Customer linked; the identity user carries customer_id
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/IdentityLinkResponse'
+        '400':
+          description: Invalid identity user id
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '401':
+          description: Unauthorized
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '403':
+          description: Forbidden
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '404':
+          description: Customer not found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '409':
+          description: The customer or the identity user is already linked elsewhere (IDENTITY_LINK_CONFLICT)
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '422':
+          description: No identity user with this id (IDENTITY_USER_NOT_FOUND)
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '503':
+          description: Identity directory could not be updated; nothing recorded (IDENTITY_DIRECTORY_UNAVAILABLE)
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
 components:
   securitySchemes:
     bearerAuth:
@@ -487,6 +562,24 @@ components:
         lastModifiedAt:
           type: string
           format: date-time
+
+    IdentityLinkRequest:
+      type: object
+      required: [identityUserId]
+      properties:
+        identityUserId:
+          type: string
+          pattern: '^[A-Za-z0-9-]{1,64}$'
+          description: Keycloak user id (token sub) of the end user.
+
+    IdentityLinkResponse:
+      type: object
+      required: [customerId, identityUserId]
+      properties:
+        customerId:
+          type: string
+        identityUserId:
+          type: string
 
     ErrorResponse:
       type: object

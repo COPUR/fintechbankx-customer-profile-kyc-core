@@ -52,6 +52,9 @@ public class CustomerJpaEntity {
     @Column(name = "legacy_customer_id", updatable = false)
     private Long legacyCustomerId;
 
+    @Column(name = "identity_user_id", length = 64)
+    private String identityUserId;
+
     @Column(name = "created_at", nullable = false, updatable = false)
     private LocalDateTime createdAt;
 
@@ -78,6 +81,8 @@ public class CustomerJpaEntity {
     public BigDecimal getCreditLimit() { return creditLimit; }
     public BigDecimal getUsedCredit() { return usedCredit; }
     public Integer getCreditScore() { return creditScore; }
+    public String getIdentityUserId() { return identityUserId; }
+    void setIdentityUserId(String identityUserId) { this.identityUserId = identityUserId; }
     public BigDecimal getMonthlyIncome() { return monthlyIncome; }
     public Long getLegacyCustomerId() { return legacyCustomerId; }
     public LocalDateTime getCreatedAt() { return createdAt; }

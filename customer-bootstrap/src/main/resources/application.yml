@@ -73,6 +73,18 @@ fintechbankx:
     audience: ${OIDC_AUDIENCE:svc-cus-profile-kyc}
     # Client ids (token "azp") allowed to read and move credit with the SERVICE role.
     service-callers: ${SERVICE_CALLERS:svc-ln-loan-lifecycle}
+  identity:
+    # Onboarding sets the Keycloak user attribute customer_id through the admin
+    # API (PUT /api/v1/customers/{id}/identity-link). Off by default: linking
+    # then fails closed with 503 and records nothing.
+    admin:
+      enabled: ${IDENTITY_ADMIN_ENABLED:false}
+      base-url: ${KEYCLOAK_BASE_URL:http://localhost:8180}
+      realm: ${KEYCLOAK_REALM:fintechbankx}
+      client-id: ${IDENTITY_ADMIN_CLIENT_ID:svc-cus-profile-kyc}
+      # From the Kubernetes Secret synced from <env>/customer-profile-kyc-service/oidc-client.
+      client-secret: ${IDENTITY_ADMIN_CLIENT_SECRET:}
+      timeout: PT3S
 
 server:
   port: 8080

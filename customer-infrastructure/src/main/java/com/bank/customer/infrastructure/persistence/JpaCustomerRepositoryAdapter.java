@@ -2,6 +2,7 @@ package com.bank.customer.infrastructure.persistence;
 
 import com.bank.customer.domain.Customer;
 import com.bank.customer.domain.CustomerAlreadyExistsException;
+import com.bank.customer.domain.IdentityLinkConflictException;
 import com.bank.customer.domain.port.out.CustomerRepository;
 import com.bank.shared.kernel.domain.CustomerId;
 import org.springframework.dao.DataIntegrityViolationException;
@@ -25,6 +26,8 @@ public class JpaCustomerRepositoryAdapter implements CustomerRepository {
 
     /** V1__create_customer_tables.sql: unique on lower(email). */
     static final String EMAIL_UNIQUE_INDEX = "uq_customer_email";
+    /** V4__customer_identity_link.sql: one customer per identity user. */
+    static final String IDENTITY_USER_UNIQUE_INDEX = "uq_customer_identity_user";
 
     private final SpringDataCustomerRepository customers;
 
@@ -52,6 +55,9 @@ public class JpaCustomerRepositoryAdapter implements CustomerRepository {
             if (violates(e, EMAIL_UNIQUE_INDEX)) {
                 // Two registrations raced past existsByEmail: same answer as the check.
                 throw new CustomerAlreadyExistsException(e);
+            }
+            if (violates(e, IDENTITY_USER_UNIQUE_INDEX)) {
+                throw new IdentityLinkConflictException(e);
             }
             throw e;
         }

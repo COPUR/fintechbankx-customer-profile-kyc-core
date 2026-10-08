@@ -31,6 +31,11 @@ public class Customer extends AggregateRoot<CustomerId> {
     private Money monthlyIncome;
     private LocalDateTime createdAt;
     private LocalDateTime updatedAt;
+    private IdentityUserId identityUserId;
+
+    /** Rule of the Keycloak user attribute customer_id (platform contract). */
+    private static final java.util.regex.Pattern IDENTITY_ATTRIBUTE_VALUE =
+        java.util.regex.Pattern.compile("^[A-Za-z0-9-]{1,64}$");
     
     // Private constructor for JPA
     protected Customer() {}
@@ -91,6 +96,7 @@ public class Customer extends AggregateRoot<CustomerId> {
         customer.monthlyIncome = snapshot.monthlyIncome();
         customer.createdAt = snapshot.createdAt();
         customer.updatedAt = snapshot.updatedAt();
+        customer.identityUserId = snapshot.identityUserId();
         customer.setVersion(snapshot.version());
         return customer;
     }
@@ -209,6 +215,34 @@ public class Customer extends AggregateRoot<CustomerId> {
         return updatedAt;
     }
     
+    public IdentityUserId getIdentityUserId() {
+        return identityUserId;
+    }
+
+    /**
+     * Links this customer to the end user's identity account. One identity user
+     * per customer: linking the same user again changes nothing and returns
+     * false; a different user is a conflict. Raises no event (the link is not
+     * part of the published contract).
+     *
+     * @return true if the link was added
+     */
+    public boolean linkIdentity(IdentityUserId userId) {
+        Objects.requireNonNull(userId, "Identity user id cannot be null");
+        if (userId.equals(identityUserId)) {
+            return false;
+        }
+        if (identityUserId != null) {
+            throw new IdentityLinkConflictException();
+        }
+        if (!IDENTITY_ATTRIBUTE_VALUE.matcher(customerId.getValue()).matches()) {
+            throw new IllegalStateException("Customer id cannot be used as the customer_id identity attribute");
+        }
+        this.identityUserId = userId;
+        this.updatedAt = LocalDateTime.now();
+        return true;
+    }
+
     public void updateContactInformation(String email, String phoneNumber) {
         if (email != null && isValidEmail(email)) {
             this.email = email;

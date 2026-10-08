@@ -3,6 +3,9 @@ package com.bank.customer.infrastructure.web;
 import com.bank.customer.domain.CustomerNotFoundException;
 import com.bank.customer.domain.IdempotencyKeyConflictException;
 import com.bank.customer.domain.CustomerAlreadyExistsException;
+import com.bank.customer.domain.IdentityDirectoryUnavailableException;
+import com.bank.customer.domain.IdentityLinkConflictException;
+import com.bank.customer.domain.IdentityUserNotFoundException;
 import com.bank.customer.domain.InsufficientCreditException;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -50,6 +53,24 @@ public class ApiExceptionHandler {
     @ExceptionHandler(OptimisticLockingFailureException.class)
     ResponseEntity<ErrorResponse> concurrentUpdate(OptimisticLockingFailureException ex) {
         return error(HttpStatus.CONFLICT, "CONCURRENT_UPDATE", "The customer was changed by another request; retry");
+    }
+
+    @ExceptionHandler(IdentityLinkConflictException.class)
+    ResponseEntity<ErrorResponse> identityLinkConflict(IdentityLinkConflictException ex) {
+        return error(HttpStatus.CONFLICT, "IDENTITY_LINK_CONFLICT", ex.getMessage());
+    }
+
+    @ExceptionHandler(IdentityUserNotFoundException.class)
+    ResponseEntity<ErrorResponse> identityUserNotFound(IdentityUserNotFoundException ex) {
+        return error(HttpStatus.UNPROCESSABLE_ENTITY, "IDENTITY_USER_NOT_FOUND", ex.getMessage());
+    }
+
+    /** Fail closed: the link was not recorded. The cause stays in the log. */
+    @ExceptionHandler(IdentityDirectoryUnavailableException.class)
+    ResponseEntity<ErrorResponse> identityDirectoryUnavailable(IdentityDirectoryUnavailableException ex) {
+        log.warn("Identity link refused: {}", ex.getMessage());
+        return error(HttpStatus.SERVICE_UNAVAILABLE, "IDENTITY_DIRECTORY_UNAVAILABLE",
+            "The identity directory could not be updated; the link was not recorded");
     }
 
     /** Same code whether the check or the unique index caught it; never echoes the e-mail. */
