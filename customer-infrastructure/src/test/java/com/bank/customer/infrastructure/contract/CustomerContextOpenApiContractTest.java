@@ -21,6 +21,7 @@ class CustomerContextOpenApiContractTest {
         assertThat(spec).contains("\n  /api/v1/customers/{customerId}/credit-limit:\n");
         assertThat(spec).contains("\n  /api/v1/customers/{customerId}/credit/reserve:\n");
         assertThat(spec).contains("\n  /api/v1/customers/{customerId}/credit/release:\n");
+        assertThat(spec).contains("\n  /api/v1/customers/{customerId}/identity-link:\n");
     }
 
     @Test

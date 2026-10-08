@@ -87,6 +87,20 @@ class JpaPersistenceTest {
     }
 
     @Test
+    void theIdentityLinkIsStoredAndOneIdentityUserBelongsToOneCustomer() {
+        Customer first = newCustomer("CUST-JPA-ID-1", "id1@example.com");
+        first.linkIdentity(new com.bank.customer.domain.IdentityUserId("user-1"));
+        repository.save(first);
+        assertThat(repository.findById(CustomerId.of("CUST-JPA-ID-1")).orElseThrow().getIdentityUserId())
+            .isEqualTo(new com.bank.customer.domain.IdentityUserId("user-1"));
+
+        Customer second = newCustomer("CUST-JPA-ID-2", "id2@example.com");
+        second.linkIdentity(new com.bank.customer.domain.IdentityUserId("user-1"));
+        assertThatThrownBy(() -> repository.save(second))
+            .isInstanceOf(com.bank.customer.domain.IdentityLinkConflictException.class);
+    }
+
+    @Test
     void aChangeMadeOnAStaleVersionIsRefused() {
         repository.save(newCustomer("CUST-JPA-2", "jpa2@example.com"));
         Customer first = repository.findById(CustomerId.of("CUST-JPA-2")).orElseThrow();

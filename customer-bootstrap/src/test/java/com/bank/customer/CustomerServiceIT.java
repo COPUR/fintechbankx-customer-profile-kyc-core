@@ -372,6 +372,21 @@ class CustomerServiceIT {
         assertThat(records.getAllValues()).extracting(ProducerRecord::key).containsOnly(customerId);
     }
 
+    /** IDENTITY_ADMIN_ENABLED defaults to false: linking fails closed and records nothing. */
+    @Test
+    void identityLinkFailsClosedWhileTheDirectoryIntegrationIsDisabled() throws Exception {
+        String customerId = create("closed@example.com", "5000.00");
+
+        mvc.perform(asBanker(put("/api/v1/customers/{id}/identity-link", customerId))
+                .contentType(MediaType.APPLICATION_JSON)
+                .content("{\"identityUserId\": \"6f1c2a7e-5b8d-4c3e-9a1f-0d2b3c4e5f60\"}"))
+            .andExpect(status().isServiceUnavailable())
+            .andExpect(jsonPath("$.code").value("IDENTITY_DIRECTORY_UNAVAILABLE"));
+
+        assertThat(jdbc.queryForObject("select identity_user_id from sc_cus_profile_kyc.customer where customer_id = ?",
+            String.class, customerId)).isNull();
+    }
+
     @Test
     void unknownCustomerIsA404WithTheInteractionId() throws Exception {
         mvc.perform(asBanker(get("/api/v1/customers/{id}", "CUST-MISSING")))

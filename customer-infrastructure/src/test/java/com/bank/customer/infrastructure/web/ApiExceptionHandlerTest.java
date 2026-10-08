@@ -57,6 +57,23 @@ class ApiExceptionHandlerTest {
     }
 
     @Test
+    void identityLinkFailuresHaveStableCodes() {
+        assertThat(handler.identityLinkConflict(new com.bank.customer.domain.IdentityLinkConflictException()))
+            .extracting(ResponseEntity::getStatusCode, r -> r.getBody().code())
+            .containsExactly(HttpStatus.CONFLICT, "IDENTITY_LINK_CONFLICT");
+        assertThat(handler.identityUserNotFound(new com.bank.customer.domain.IdentityUserNotFoundException()))
+            .extracting(ResponseEntity::getStatusCode, r -> r.getBody().code())
+            .containsExactly(HttpStatus.UNPROCESSABLE_ENTITY, "IDENTITY_USER_NOT_FOUND");
+        assertThat(handler.identityDirectoryUnavailable(
+                new com.bank.customer.domain.IdentityDirectoryUnavailableException("Keycloak answered 500")))
+            .satisfies(r -> {
+                assertThat(r.getStatusCode()).isEqualTo(HttpStatus.SERVICE_UNAVAILABLE);
+                assertThat(r.getBody().code()).isEqualTo("IDENTITY_DIRECTORY_UNAVAILABLE");
+                assertThat(r.getBody().message()).doesNotContain("Keycloak answered");
+            });
+    }
+
+    @Test
     void aDuplicateCustomerIsA409WithoutPersonalData() {
         ResponseEntity<ApiExceptionHandler.ErrorResponse> response =
             handler.customerAlreadyExists(new CustomerAlreadyExistsException());
