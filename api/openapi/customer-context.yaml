@@ -21,7 +21,7 @@ paths:
       operationId: createCustomer
       security:
         - bearerAuth: []
-          dpopAuth: []
+        - dpopAuth: []
       parameters:
         - $ref: '#/components/parameters/Authorization'
         - $ref: '#/components/parameters/DPoP'
@@ -77,7 +77,7 @@ paths:
       operationId: getCustomer
       security:
         - bearerAuth: []
-          dpopAuth: []
+        - dpopAuth: []
       parameters:
         - $ref: '#/components/parameters/Authorization'
         - $ref: '#/components/parameters/DPoP'
@@ -120,7 +120,7 @@ paths:
         the service's allowed list), staff, and the customer themself.
       security:
         - bearerAuth: []
-          dpopAuth: []
+        - dpopAuth: []
       parameters:
         - $ref: '#/components/parameters/Authorization'
         - $ref: '#/components/parameters/DPoP'
@@ -159,7 +159,7 @@ paths:
       operationId: updateCreditLimit
       security:
         - bearerAuth: []
-          dpopAuth: []
+        - dpopAuth: []
       parameters:
         - $ref: '#/components/parameters/Authorization'
         - $ref: '#/components/parameters/DPoP'
@@ -222,7 +222,7 @@ paths:
         a 409. The answer is the credit position only (no personal data).
       security:
         - bearerAuth: []
-          dpopAuth: []
+        - dpopAuth: []
       parameters:
         - $ref: '#/components/parameters/Authorization'
         - $ref: '#/components/parameters/DPoP'
@@ -292,7 +292,7 @@ paths:
         a 409. The answer is the credit position only (no personal data).
       security:
         - bearerAuth: []
-          dpopAuth: []
+        - dpopAuth: []
       parameters:
         - $ref: '#/components/parameters/Authorization'
         - $ref: '#/components/parameters/DPoP'
@@ -356,7 +356,7 @@ paths:
         cannot be updated, nothing is recorded (503).
       security:
         - bearerAuth: []
-          dpopAuth: []
+        - dpopAuth: []
       parameters:
         - $ref: '#/components/parameters/Authorization'
         - $ref: '#/components/parameters/DPoP'
@@ -439,10 +439,17 @@ components:
     DPoP:
       name: DPoP
       in: header
-      required: true
+      required: false
       schema:
         type: string
-      description: DPoP proof JWT.
+      description: |-
+        DPoP proof (RFC 9449). Optional here: per the platform contract
+        (addendum 2026-10-08) DPoP binding applies only to open-finance TPP
+        clients. This service is called with internal client-credentials,
+        staff and first-party web/mobile tokens, which are not DPoP-bound, so
+        it does not verify DPoP; a DPoP header sent anyway is ignored. The
+        service enforces the issuer, its own service id in aud, and the azp
+        allow-list for SERVICE callers.
     InteractionId:
       name: X-FAPI-Interaction-ID
       in: header
