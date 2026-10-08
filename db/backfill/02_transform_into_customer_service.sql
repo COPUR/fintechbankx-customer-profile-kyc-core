@@ -20,6 +20,8 @@
 --   email, phone, credit score, income = NULL (never stored by the monolith)
 --   created_at, updated_at, version kept; legacy_synced_version = version
 --   legacy_synced_hash = backfill_stage.synced_hash(name, surname, credit_limit, used_credit_limit)
+--   kyc_status, kyc_source, kyc_verified_at = VERIFIED, MIGRATED, time of the first copy (V7; decision
+--                        pending with the user). A re-run never changes the KYC columns.
 
 \set ON_ERROR_STOP on
 
@@ -28,7 +30,7 @@ BEGIN;
 INSERT INTO sc_cus_profile_kyc.customer (
     customer_id, first_name, last_name, email, phone_number, currency, credit_limit, used_credit,
     credit_score, monthly_income, legacy_customer_id, created_at, updated_at, version, legacy_synced_version,
-    legacy_synced_hash)
+    legacy_synced_hash, kyc_status, kyc_source, kyc_verified_at)
 SELECT c.id::text,
        c.name,
        c.surname,
@@ -44,7 +46,10 @@ SELECT c.id::text,
        c.updated_at,
        c.version,
        c.version,
-       backfill_stage.synced_hash(c.name, c.surname, c.credit_limit, c.used_credit_limit)
+       backfill_stage.synced_hash(c.name, c.surname, c.credit_limit, c.used_credit_limit),
+       'VERIFIED',
+       'MIGRATED',
+       now()
   FROM backfill_stage.customers c
 ON CONFLICT (customer_id) DO UPDATE SET
        first_name            = EXCLUDED.first_name,

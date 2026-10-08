@@ -77,6 +77,8 @@ fintechbankx:
     audience: ${OIDC_AUDIENCE:svc-cus-profile-kyc}
     # Client ids (token "azp") allowed to read and move credit with the SERVICE role.
     service-callers: ${SERVICE_CALLERS:svc-ln-loan-lifecycle}
+    # Client ids (token "azp") allowed to read the KYC status with the SERVICE role.
+    service-callers-kyc: ${SERVICE_CALLERS_KYC:svc-pay-initiation-settlement}
   identity:
     # Onboarding sets the Keycloak user attribute customer_id through the admin
     # API (PUT /api/v1/customers/{id}/identity-link). Off by default: linking

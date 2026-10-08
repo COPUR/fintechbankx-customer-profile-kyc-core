@@ -55,6 +55,18 @@ public class CustomerJpaEntity {
     @Column(name = "identity_user_id", length = 64)
     private String identityUserId;
 
+    @Column(name = "kyc_status", nullable = false, length = 16)
+    private String kycStatus;
+
+    @Column(name = "kyc_source", nullable = false, length = 16)
+    private String kycSource;
+
+    @Column(name = "kyc_verified_at")
+    private java.time.Instant kycVerifiedAt;
+
+    @Column(name = "kyc_updated_by", length = 128)
+    private String kycUpdatedBy;
+
     @Column(name = "created_at", nullable = false, updatable = false)
     private LocalDateTime createdAt;
 
@@ -88,6 +100,17 @@ public class CustomerJpaEntity {
     public LocalDateTime getCreatedAt() { return createdAt; }
     public LocalDateTime getUpdatedAt() { return updatedAt; }
     public Long getVersion() { return version; }
+    public String getKycStatus() { return kycStatus; }
+    public String getKycSource() { return kycSource; }
+    public java.time.Instant getKycVerifiedAt() { return kycVerifiedAt; }
+    public String getKycUpdatedBy() { return kycUpdatedBy; }
+
+    void setKyc(String status, String source, java.time.Instant verifiedAt, String updatedBy) {
+        this.kycStatus = status;
+        this.kycSource = source;
+        this.kycVerifiedAt = verifiedAt;
+        this.kycUpdatedBy = updatedBy;
+    }
 
     void setFirstName(String firstName) { this.firstName = firstName; }
     void setLastName(String lastName) { this.lastName = lastName; }

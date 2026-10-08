@@ -152,15 +152,19 @@ class JpaPersistenceTest {
         assertThat(jdbc.queryForObject("select kyc_updated_by from sc_cus_profile_kyc.customer where customer_id = 'CUST-JPA-KYC'",
             String.class)).isEqualTo("banker-sub-1");
         // ck_customer_kyc: verified_at present exactly when VERIFIED; status and source from the enums.
-        assertThatThrownBy(() -> jdbc.update("update sc_cus_profile_kyc.customer set kyc_verified_at = null "
-                + "where customer_id = 'CUST-JPA-KYC'"))
-            .isInstanceOf(DataIntegrityViolationException.class);
-        assertThatThrownBy(() -> jdbc.update("update sc_cus_profile_kyc.customer set kyc_status = 'APPROVED' "
-                + "where customer_id = 'CUST-JPA-KYC'"))
-            .isInstanceOf(DataIntegrityViolationException.class);
-        assertThatThrownBy(() -> jdbc.update("update sc_cus_profile_kyc.customer set kyc_source = 'API' "
-                + "where customer_id = 'CUST-JPA-KYC'"))
-            .isInstanceOf(DataIntegrityViolationException.class);
+        assertViolates("update sc_cus_profile_kyc.customer set kyc_verified_at = null where customer_id = 'CUST-JPA-KYC'");
+        assertViolates("update sc_cus_profile_kyc.customer set kyc_status = 'APPROVED' where customer_id = 'CUST-JPA-KYC'");
+        assertViolates("update sc_cus_profile_kyc.customer set kyc_source = 'API' where customer_id = 'CUST-JPA-KYC'");
+    }
+
+    /** Each violation runs behind a savepoint so the test transaction stays usable for the next one. */
+    private void assertViolates(String sql) {
+        jdbc.execute("savepoint kyc_check");
+        try {
+            assertThatThrownBy(() -> jdbc.update(sql)).isInstanceOf(DataIntegrityViolationException.class);
+        } finally {
+            jdbc.execute("rollback to savepoint kyc_check");
+        }
     }
 
     private static Customer newCustomer(String id, String email) {

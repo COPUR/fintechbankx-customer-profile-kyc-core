@@ -7,6 +7,7 @@ import com.bank.customer.domain.CustomerCreditLimitUpdatedEvent;
 import com.bank.customer.domain.CustomerCreditReleasedEvent;
 import com.bank.customer.domain.CustomerCreditReservedEvent;
 import com.bank.customer.domain.CustomerCreditScoreUpdatedEvent;
+import com.bank.customer.domain.CustomerKycStatusChangedEvent;
 import com.bank.shared.kernel.domain.DomainEvent;
 import com.bank.shared.kernel.domain.Money;
 import com.fasterxml.jackson.core.JsonProcessingException;
@@ -74,6 +75,13 @@ public class CustomerEventEnvelopeFactory {
             case CustomerCreditScoreUpdatedEvent e -> new PublicEvent("credit-score-updated", "CreditScoreUpdated", data(
                 "customerId", e.getCustomerId().getValue(),
                 "newCreditScore", e.getNewCreditScore()));
+            // Never the staff subject: who decided stays in the customer row (kyc_updated_by).
+            case CustomerKycStatusChangedEvent e -> new PublicEvent("kyc-status-changed", "KycStatusChanged", data(
+                "customerId", e.getCustomerId().getValue(),
+                "kycStatus", e.getKycStatus().status().name(),
+                "previousKycStatus", e.getPreviousStatus().name(),
+                "kycSource", e.getKycStatus().source().name(),
+                "verifiedAt", e.getKycStatus().verifiedAt() == null ? null : e.getKycStatus().verifiedAt().toString()));
             default -> throw new IllegalArgumentException(
                 "No public contract for customer event " + event.getClass().getName());
         };

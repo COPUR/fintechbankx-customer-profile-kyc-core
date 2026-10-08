@@ -152,6 +152,24 @@ channels:
           retention.ms: 604800000
           max.message.bytes: 1048576
         bindingVersion: 0.5.0
+  kycStatusChanged:
+    address: evt.cus.customer.kyc-status-changed.v1
+    title: evt.cus.customer.kyc-status-changed.v1
+    description: Customer.Customer.KycStatusChanged.v1. Staff verified or rejected the customer's KYC.
+    messages:
+      CustomerKycStatusChanged:
+        $ref: '#/components/messages/CustomerKycStatusChanged'
+    bindings:
+      kafka:
+        topic: evt.cus.customer.kyc-status-changed.v1
+        partitions: 3
+        replicas: 3
+        topicConfiguration:
+          cleanup.policy:
+          - delete
+          retention.ms: 604800000
+          max.message.bytes: 1048576
+        bindingVersion: 0.5.0
 operations:
   publishCustomerCreated:
     action: send
@@ -201,6 +219,14 @@ operations:
       $ref: '#/channels/creditScoreUpdated'
     messages:
     - $ref: '#/channels/creditScoreUpdated/messages/CustomerCreditScoreUpdated'
+  publishCustomerKycStatusChanged:
+    action: send
+    title: Publish Customer.Customer.KycStatusChanged.v1
+    summary: svc-cus-profile-kyc publishes Customer.Customer.KycStatusChanged.v1 through its transactional outbox.
+    channel:
+      $ref: '#/channels/kycStatusChanged'
+    messages:
+    - $ref: '#/channels/kycStatusChanged/messages/CustomerKycStatusChanged'
 components:
   schemas:
     EventEnvelope:
@@ -297,6 +323,35 @@ components:
       required:
       - customerId
       - newCreditScore
+    CustomerKycStatusChangedData:
+      type: object
+      description: Payload of Customer.Customer.KycStatusChanged.v1. Never carries who made the decision or personal data.
+      properties:
+        customerId:
+          type: string
+          description: Customer id.
+          minLength: 1
+        kycStatus:
+          type: string
+          enum: [PENDING, VERIFIED, REJECTED]
+        previousKycStatus:
+          type: string
+          enum: [PENDING, VERIFIED, REJECTED]
+        kycSource:
+          type: string
+          enum: [MIGRATED, STAFF]
+        verifiedAt:
+          type:
+          - string
+          - 'null'
+          format: date-time
+          description: When the customer was verified; null unless kycStatus is VERIFIED.
+      required:
+      - customerId
+      - kycStatus
+      - previousKycStatus
+      - kycSource
+      - verifiedAt
   messages:
     CustomerCreated:
       name: CustomerCreated
@@ -453,6 +508,31 @@ components:
             description: aggregateId (customerId).
           bindingVersion: 0.5.0
       x-source-class: com.bank.customer.domain.CustomerCreditScoreUpdatedEvent
+    CustomerKycStatusChanged:
+      name: CustomerKycStatusChanged
+      title: Customer.Customer.KycStatusChanged.v1
+      summary: Staff verified or rejected the customer's KYC.
+      contentType: application/json
+      headers:
+        $ref: '#/components/schemas/EventHeaders'
+      payload:
+        allOf:
+        - $ref: '#/components/schemas/EventEnvelope'
+        - type: object
+          properties:
+            eventType:
+              const: Customer.Customer.KycStatusChanged.v1
+            producer:
+              const: svc-cus-profile-kyc
+            data:
+              $ref: '#/components/schemas/CustomerKycStatusChangedData'
+      bindings:
+        kafka:
+          key:
+            type: string
+            description: aggregateId (customerId).
+          bindingVersion: 0.5.0
+      x-source-class: com.bank.customer.domain.CustomerKycStatusChangedEvent
   securitySchemes:
     mskIam:
       type: userPassword

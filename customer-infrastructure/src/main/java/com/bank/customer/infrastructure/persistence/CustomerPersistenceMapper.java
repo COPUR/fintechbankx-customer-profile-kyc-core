@@ -3,6 +3,7 @@ package com.bank.customer.infrastructure.persistence;
 import com.bank.customer.domain.Customer;
 import com.bank.customer.domain.CustomerSnapshot;
 import com.bank.customer.domain.IdentityUserId;
+import com.bank.customer.domain.KycStatus;
 import com.bank.shared.kernel.domain.CustomerId;
 import com.bank.shared.kernel.domain.Money;
 
@@ -34,7 +35,9 @@ final class CustomerPersistenceMapper {
             row.getCreatedAt(),
             row.getUpdatedAt(),
             row.getVersion(),
-            row.getIdentityUserId() == null ? null : new IdentityUserId(row.getIdentityUserId())));
+            row.getIdentityUserId() == null ? null : new IdentityUserId(row.getIdentityUserId()),
+            new KycStatus(KycStatus.Status.valueOf(row.getKycStatus()), KycStatus.Source.valueOf(row.getKycSource()),
+                row.getKycVerifiedAt(), row.getKycUpdatedBy())));
     }
 
     static CustomerJpaEntity newEntity(Customer customer) {
@@ -58,6 +61,8 @@ final class CustomerPersistenceMapper {
         row.setMonthlyIncome(customer.getMonthlyIncome() == null ? null : amountIn(customer.getMonthlyIncome(), currency));
         row.setUpdatedAt(customer.getUpdatedAt());
         row.setIdentityUserId(customer.getIdentityUserId() == null ? null : customer.getIdentityUserId().value());
+        KycStatus kyc = customer.getKycStatus();
+        row.setKyc(kyc.status().name(), kyc.source().name(), kyc.verifiedAt(), kyc.updatedBy());
     }
 
     private static BigDecimal amountIn(Money money, Currency currency) {

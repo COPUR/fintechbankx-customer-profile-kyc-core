@@ -5,7 +5,8 @@
 -- The three customers the monolith's CustomerCreditServiceAdapter hard-codes
 -- (loan-context/.../external/CustomerCreditServiceAdapter.java), in USD as
 -- that adapter reports them. Names are synthetic; e-mail, phone, score and
--- income stay empty. They are not monolith rows, so they carry no
+-- income stay empty. KYC is VERIFIED/MIGRATED, like migrated customers, so
+-- payment parity runs see them as verified. They are not monolith rows, so they carry no
 -- legacy_customer_id and are not part of the db/backfill reconciliation.
 --
 -- Re-runnable: a reload resets the three credit positions, bumps the version
@@ -19,14 +20,18 @@ DELETE FROM sc_cus_profile_kyc.credit_movement
 
 INSERT INTO sc_cus_profile_kyc.customer AS c (
     customer_id, first_name, last_name, email, phone_number, currency, credit_limit, used_credit,
-    credit_score, monthly_income, legacy_customer_id, legacy_synced_version, created_at, updated_at, version)
+    credit_score, monthly_income, legacy_customer_id, legacy_synced_version, created_at, updated_at, version,
+    kyc_status, kyc_source, kyc_verified_at)
 VALUES
     ('CUST-12345678', 'Parity', 'Seed One',   NULL, NULL, 'USD', 100000.00,     0.00, NULL, NULL, NULL, NULL,
-     TIMESTAMP '2026-01-01 00:00:00', TIMESTAMP '2026-01-01 00:00:00', 0),
+     TIMESTAMP '2026-01-01 00:00:00', TIMESTAMP '2026-01-01 00:00:00', 0,
+     'VERIFIED', 'MIGRATED', TIMESTAMPTZ '2026-01-01 00:00:00+00'),
     ('CUST-87654321', 'Parity', 'Seed Two',   NULL, NULL, 'USD',  50000.00, 10000.00, NULL, NULL, NULL, NULL,
-     TIMESTAMP '2026-01-01 00:00:00', TIMESTAMP '2026-01-01 00:00:00', 0),
+     TIMESTAMP '2026-01-01 00:00:00', TIMESTAMP '2026-01-01 00:00:00', 0,
+     'VERIFIED', 'MIGRATED', TIMESTAMPTZ '2026-01-01 00:00:00+00'),
     ('CUST-11111111', 'Parity', 'Seed Three', NULL, NULL, 'USD',  25000.00, 20000.00, NULL, NULL, NULL, NULL,
-     TIMESTAMP '2026-01-01 00:00:00', TIMESTAMP '2026-01-01 00:00:00', 0)
+     TIMESTAMP '2026-01-01 00:00:00', TIMESTAMP '2026-01-01 00:00:00', 0,
+     'VERIFIED', 'MIGRATED', TIMESTAMPTZ '2026-01-01 00:00:00+00')
 ON CONFLICT (customer_id) DO UPDATE SET
     first_name   = EXCLUDED.first_name,
     last_name    = EXCLUDED.last_name,
@@ -34,4 +39,8 @@ ON CONFLICT (customer_id) DO UPDATE SET
     credit_limit = EXCLUDED.credit_limit,
     used_credit  = EXCLUDED.used_credit,
     updated_at   = EXCLUDED.updated_at,
+    kyc_status   = EXCLUDED.kyc_status,
+    kyc_source   = EXCLUDED.kyc_source,
+    kyc_verified_at = EXCLUDED.kyc_verified_at,
+    kyc_updated_by  = NULL,
     version      = c.version + 1;
