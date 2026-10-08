@@ -73,13 +73,16 @@ Owners: **monolith squad** (enterprise-loan-management-system flags and anti-cor
 
 `OutboxRelay` parks a row (sets `parked_at`, keeps the reason in `last_error`) in two cases:
 
-- at once when Kafka refuses it permanently (`RecordTooLargeException`, `SerializationException`,
-  `InvalidTopicException`, `TopicAuthorizationException`, any error that is not a Kafka `RetriableException`);
-- for a retryable failure (`RetriableException`, a producer or relay timeout) only when the row has kept failing for
-  longer than `customer.outbox.relay.retryable-park-after` (`OUTBOX_RELAY_RETRYABLE_PARK_AFTER`, default `PT24H`)
-  since its first failure (`first_failed_at`). Retryable failures never park by count: until then they stop the batch
-  and are retried every run, so a broker or egress outage shorter than the ceiling needs no replay; the backlog drains
-  by itself when Kafka is back.
+- at once only for a payload failure, where the record itself can never be sent: `RecordTooLargeException`,
+  `SerializationException`, `InvalidTopicException`. The batch continues with other customers;
+- for every other failure only when the row has kept failing for longer than
+  `customer.outbox.relay.retryable-park-after` (`OUTBOX_RELAY_RETRYABLE_PARK_AFTER`, default `PT24H`) since its first
+  failure (`first_failed_at`). This covers Kafka `RetriableException`s and producer or relay timeouts, but also
+  `SaslAuthenticationException`, `AuthenticationException`, `AuthorizationException` (including
+  `TopicAuthorizationException`), a generic `KafkaException` and any unclassified exception: they say nothing about the
+  row, so until the ceiling they stop the batch and are retried every run. A broker or egress outage, an expired
+  credential or a missing IAM/ACL grant fixed within 24 h needs no replay; the backlog drains by itself. Watch
+  `last_error` and `outbox_oldest_pending_age_seconds` to tell an auth failure from an outage.
 
 Parked rows are skipped and never purged. The same customer's later events wait behind a parked row (they stay in
 `outbox_pending_events`), so a consumer never sees a customer's events out of order; other customers' events keep

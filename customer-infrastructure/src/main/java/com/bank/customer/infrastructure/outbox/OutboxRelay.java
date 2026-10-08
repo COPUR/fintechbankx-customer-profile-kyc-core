@@ -1,7 +1,9 @@
 package com.bank.customer.infrastructure.outbox;
 
 import org.apache.kafka.clients.producer.ProducerRecord;
-import org.apache.kafka.common.errors.RetriableException;
+import org.apache.kafka.common.errors.InvalidTopicException;
+import org.apache.kafka.common.errors.RecordTooLargeException;
+import org.apache.kafka.common.errors.SerializationException;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.kafka.core.KafkaProducerException;
@@ -29,21 +31,22 @@ import java.util.concurrent.TimeoutException;
  *
  * A failed send is handled by what failed:
  * <ul>
- *   <li>retryable (a Kafka {@link RetriableException}, including the producer's
- *   own timeouts, or the relay's send timeout): the batch stops and the row is
- *   retried on the next run, so later events cannot overtake it. Retryable
- *   failures never park by count, so a broker or egress outage does not turn
- *   into manual replays;</li>
- *   <li>permanent (RecordTooLarge, Serialization, InvalidTopic,
- *   TopicAuthorization, anything else that is not retriable), or a retryable
- *   failure when the row has kept failing for longer than
- *   {@code retryableParkAfter} since its first failure: the row is parked
- *   (parked_at set, reason in last_error) and the batch continues. The parked
- *   customer's later events wait behind it (here and in the batch query) so a
- *   customer's events stay in order; other customers' events flow. Parked rows
- *   are counted by the outbox.parked.events gauge and replayed by hand
- *   (runbook "Parked outbox events").</li>
+ *   <li>payload failures (RecordTooLarge, Serialization, InvalidTopic): the
+ *   record itself can never be sent, so the row is parked at once (parked_at
+ *   set, reason in last_error) and the batch continues;</li>
+ *   <li>everything else (Kafka retriable errors and the relay's send timeout,
+ *   SASL, authentication and authorization errors, a generic KafkaException,
+ *   any other exception): the failure says nothing about this row, so the
+ *   batch stops and the row is retried on the next run; later events cannot
+ *   overtake it, and an outage or a broken credential never parks rows one by
+ *   one. Such a row parks only once it has kept failing for longer than
+ *   {@code retryableParkAfter} since its first failure, and the batch then
+ *   continues.</li>
  * </ul>
+ * The parked customer's later events wait behind it (here and in the batch
+ * query) so a customer's events stay in order; other customers' events flow.
+ * Parked rows are counted by the outbox.parked.events gauge and replayed by
+ * hand (runbook "Parked outbox events").
  */
 public class OutboxRelay {
 
@@ -105,7 +108,7 @@ public class OutboxRelay {
                 } catch (Exception e) {
                     Instant now = clock.instant();
                     row.markFailed(describe(e), now);
-                    if (isRetryable(e) && !now.isAfter(row.getFirstFailedAt().plus(retryableParkAfter))) {
+                    if (!isPayloadFailure(e) && !now.isAfter(row.getFirstFailedAt().plus(retryableParkAfter))) {
                         log.warn("Outbox relay could not publish event {} to {} (attempt {}, failing since {}); will retry",
                             row.getEventId(), row.getTopic(), row.getAttempts(), row.getFirstFailedAt(), e);
                         break;
@@ -130,10 +133,15 @@ public class OutboxRelay {
         return row.getAggregateType() + "/" + row.getAggregateId();
     }
 
-    /** Retryable: a Kafka RetriableException (timeouts included) or the relay's own send timeout. */
-    static boolean isRetryable(Throwable failure) {
+    /**
+     * Payload failure: the record itself cannot be sent (too large, not
+     * serializable, invalid topic name), so retrying cannot help. Any other
+     * failure is treated as transient and only parks under the time ceiling.
+     */
+    static boolean isPayloadFailure(Throwable failure) {
         for (Throwable cause = failure; cause != null; cause = cause.getCause()) {
-            if (cause instanceof RetriableException || cause instanceof TimeoutException) {
+            if (cause instanceof RecordTooLargeException || cause instanceof SerializationException
+                    || cause instanceof InvalidTopicException) {
                 return true;
             }
         }
