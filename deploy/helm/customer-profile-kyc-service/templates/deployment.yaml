@@ -16,11 +16,11 @@ spec:
       maxSurge: 1
   selector:
     matchLabels:
-      {{- include "customer.selectorLabels" . | nindent 6 }}
+      {{- include "customer.podSelectorLabels" . | nindent 6 }}
   template:
     metadata:
       labels:
-        {{- include "customer.selectorLabels" . | nindent 8 }}
+        {{- include "customer.podSelectorLabels" . | nindent 8 }}
         version: {{ .Values.image.tag | default .Chart.AppVersion | quote }}
         {{- toYaml .Values.podLabels | nindent 8 }}
       annotations:
@@ -44,13 +44,13 @@ spec:
           whenUnsatisfiable: DoNotSchedule
           labelSelector:
             matchLabels:
-              {{- include "customer.selectorLabels" . | nindent 14 }}
+              {{- include "customer.podSelectorLabels" . | nindent 14 }}
         - maxSkew: {{ .Values.topologySpread.maxSkew }}
           topologyKey: kubernetes.io/hostname
           whenUnsatisfiable: ScheduleAnyway
           labelSelector:
             matchLabels:
-              {{- include "customer.selectorLabels" . | nindent 14 }}
+              {{- include "customer.podSelectorLabels" . | nindent 14 }}
       containers:
         - name: customer-profile-kyc-service
           image: "{{ required "image.repository is required" .Values.image.repository }}:{{ required "image.tag is required" .Values.image.tag }}"
