@@ -1,9 +1,13 @@
 package com.bank.customer.infrastructure.outbox;
 
 import org.apache.kafka.clients.producer.ProducerRecord;
+import org.apache.kafka.common.KafkaException;
+import org.apache.kafka.common.errors.AuthenticationException;
+import org.apache.kafka.common.errors.AuthorizationException;
 import org.apache.kafka.common.errors.InvalidTopicException;
 import org.apache.kafka.common.errors.NetworkException;
 import org.apache.kafka.common.errors.RecordTooLargeException;
+import org.apache.kafka.common.errors.SaslAuthenticationException;
 import org.apache.kafka.common.errors.SerializationException;
 import org.apache.kafka.common.errors.TopicAuthorizationException;
 import org.junit.jupiter.api.Test;
@@ -126,18 +130,74 @@ class OutboxRelayTest {
         verify(kafka, times(1)).send(any(ProducerRecord.class));
     }
 
-    static Stream<RuntimeException> permanentFailures() {
+    /** Failures caused by the record itself: no retry can succeed, so the row parks at once. */
+    static Stream<RuntimeException> payloadFailures() {
         return Stream.of(
             new RecordTooLargeException("too large"),
             new SerializationException("cannot serialize"),
-            new InvalidTopicException("bad topic"),
+            new InvalidTopicException("bad topic"));
+    }
+
+    /**
+     * Failures of the relay's credentials or of unknown kind: they hit every
+     * row alike and usually clear once the platform is fixed, so they stop the
+     * batch like a retryable failure and only park under the time ceiling.
+     */
+    static Stream<RuntimeException> failuresThatStopTheBatch() {
+        return Stream.of(
+            new SaslAuthenticationException("SASL authentication failed"),
+            new AuthenticationException("authentication failed"),
+            new AuthorizationException("not authorized"),
             new TopicAuthorizationException(Set.of("evt.cus.customer.created.v1")),
-            new IllegalStateException("not a Kafka retriable error"));
+            new KafkaException("unclassified producer failure"),
+            new IllegalStateException("not a Kafka error"));
     }
 
     @ParameterizedTest
-    @MethodSource("permanentFailures")
-    void aPermanentFailureParksTheRowAndTheBatchContinuesWithOtherCustomers(RuntimeException permanent) {
+    @MethodSource("failuresThatStopTheBatch")
+    void anAuthOrUnclassifiedFailureStopsTheBatchAndParksNothing(RuntimeException failure) {
+        OutboxEventJpaEntity first = row("CUST-1");
+        OutboxEventJpaEntity next = row("CUST-2");
+        when(outbox.tryRelayLock(anyLong())).thenReturn(true);
+        when(outbox.findUnpublishedBatch(50)).thenReturn(List.of(first, next));
+        when(kafka.send(any(ProducerRecord.class)))
+            .thenReturn(CompletableFuture.failedFuture(producerFailure(failure)))
+            .thenReturn(CompletableFuture.completedFuture((SendResult<String, String>) null));
+
+        assertThat(relay.relayOnce()).isZero();
+
+        assertThat(first.getParkedAt()).as("not parked on its first failure").isNull();
+        assertThat(first.getAttempts()).isEqualTo(1);
+        assertThat(first.getFirstFailedAt()).isEqualTo(NOW);
+        assertThat(first.getLastError()).startsWith(failure.getClass().getSimpleName());
+        assertThat(next.getParkedAt()).isNull();
+        assertThat(next.getPublishedAt()).as("the batch stopped").isNull();
+        assertThat(next.getAttempts()).isZero();
+        verify(kafka, times(1)).send(any(ProducerRecord.class));
+    }
+
+    @Test
+    void anAuthFailurePastTheCeilingParksTheRow() {
+        OutboxEventJpaEntity stuck = row("CUST-1");
+        when(outbox.tryRelayLock(anyLong())).thenReturn(true);
+        when(outbox.findUnpublishedBatch(50)).thenReturn(List.of(stuck));
+        when(kafka.send(any(ProducerRecord.class))).thenAnswer(invocation -> CompletableFuture.failedFuture(
+            producerFailure(new TopicAuthorizationException(Set.of("evt.cus.customer.created.v1")))));
+
+        relay.relayOnce();
+        clock.advance(PARK_AFTER);
+        relay.relayOnce();
+        assertThat(stuck.getParkedAt()).as("at the ceiling: still retried").isNull();
+        clock.advance(Duration.ofSeconds(1));
+        relay.relayOnce();
+
+        assertThat(stuck.getParkedAt()).isEqualTo(NOW.plus(PARK_AFTER).plusSeconds(1));
+        assertThat(stuck.getAttempts()).isEqualTo(3);
+    }
+
+    @ParameterizedTest
+    @MethodSource("payloadFailures")
+    void aPayloadFailureParksTheRowAndTheBatchContinuesWithOtherCustomers(RuntimeException permanent) {
         OutboxEventJpaEntity poison = row("CUST-1");
         OutboxEventJpaEntity next = row("CUST-2");
         when(outbox.tryRelayLock(anyLong())).thenReturn(true);
