@@ -124,6 +124,21 @@ class CustomerTest {
     }
 
     @Test
+    void aCreditMoveInAnotherCurrencyIsACurrencyMismatchAndNothingChanges() {
+        Customer customer = createCustomer();
+        customer.clearDomainEvents();
+
+        assertThatThrownBy(() -> customer.reserveCredit(Money.usd(new BigDecimal("100.00"))))
+            .isInstanceOf(CreditCurrencyMismatchException.class)
+            .hasMessage("Credit is held in AED, the request is in USD");
+        assertThatThrownBy(() -> customer.releaseCredit(Money.usd(new BigDecimal("100.00"))))
+            .isInstanceOf(CreditCurrencyMismatchException.class);
+
+        assertThat(customer.getCreditProfile().getUsedCredit()).isEqualTo(Money.aed(new BigDecimal("0.00")));
+        assertThat(customer.getDomainEvents()).isEmpty();
+    }
+
+    @Test
     void aLimitBelowTheUsedCreditIsRefusedAndNothingChanges() {
         Customer customer = createCustomer();
         customer.reserveCredit(Money.aed(new BigDecimal("6000.00")));

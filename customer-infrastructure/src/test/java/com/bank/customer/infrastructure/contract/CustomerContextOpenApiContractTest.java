@@ -67,6 +67,21 @@ class CustomerContextOpenApiContractTest {
         }
     }
 
+    /** The loan service is the consumer; its keys must be deterministic so a retry resends the same key. */
+    @Test
+    @SuppressWarnings("unchecked")
+    void theIdempotencyKeyIsDocumentedAsDerivedFromTheLoan() throws IOException {
+        java.util.Map<String, Object> spec = new org.yaml.snakeyaml.Yaml().load(loadSpec());
+        java.util.Map<String, Object> key = (java.util.Map<String, Object>) ((java.util.Map<String, Object>)
+            ((java.util.Map<String, Object>) spec.get("components")).get("parameters")).get("IdempotencyKey");
+
+        assertThat((String) key.get("description"))
+            .contains("deterministic")
+            .contains("<loanId>:reserve")
+            .contains("<loanId>:release")
+            .contains("random");
+    }
+
     private static String loadSpec() throws IOException {
         List<Path> candidates = List.of(
                 Path.of("api/openapi/customer-context.yaml"),
