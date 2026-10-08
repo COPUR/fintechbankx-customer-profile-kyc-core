@@ -3,6 +3,7 @@ package com.bank.customer.application;
 import com.bank.customer.application.dto.CreateCustomerRequestWithCreditScore;
 import com.bank.customer.domain.CreditMovement;
 import com.bank.customer.domain.Customer;
+import com.bank.customer.domain.CustomerAlreadyExistsException;
 import com.bank.customer.domain.CustomerNotFoundException;
 import com.bank.customer.domain.IdempotencyKeyConflictException;
 import com.bank.customer.domain.port.in.CreditMovementCommand;
@@ -60,7 +61,7 @@ public class CustomerManagementService implements RegisterCustomerUseCase, GetCu
     @Override
     public CustomerProfile registerCustomer(RegisterCustomerCommand command) {
         if (customerRepository.existsByEmail(command.email())) {
-            throw new IllegalArgumentException("Customer with email " + command.email() + " already exists");
+            throw new CustomerAlreadyExistsException();
         }
         Customer customer = Customer.create(
             CustomerId.generate(),
@@ -135,7 +136,7 @@ public class CustomerManagementService implements RegisterCustomerUseCase, GetCu
     public CustomerProfile createCustomerWithCreditScore(CreateCustomerRequestWithCreditScore request) {
         request.validate();
         if (customerRepository.existsByEmail(request.email())) {
-            throw new IllegalArgumentException("Customer with email " + request.email() + " already exists");
+            throw new CustomerAlreadyExistsException();
         }
         Customer customer = Customer.createWithCreditScore(
             CustomerId.generate(),

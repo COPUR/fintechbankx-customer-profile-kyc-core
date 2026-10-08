@@ -58,7 +58,7 @@ paths:
               schema:
                 $ref: '#/components/schemas/ErrorResponse'
         '409':
-          description: Conflict
+          description: A customer with this e-mail address already exists (code CUSTOMER_ALREADY_EXISTS; the e-mail is not echoed)
           content:
             application/json:
               schema:

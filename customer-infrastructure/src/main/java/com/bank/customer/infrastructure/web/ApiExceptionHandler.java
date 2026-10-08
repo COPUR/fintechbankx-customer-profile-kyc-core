@@ -2,6 +2,7 @@ package com.bank.customer.infrastructure.web;
 
 import com.bank.customer.domain.CustomerNotFoundException;
 import com.bank.customer.domain.IdempotencyKeyConflictException;
+import com.bank.customer.domain.CustomerAlreadyExistsException;
 import com.bank.customer.domain.InsufficientCreditException;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -51,7 +52,13 @@ public class ApiExceptionHandler {
         return error(HttpStatus.CONFLICT, "CONCURRENT_UPDATE", "The customer was changed by another request; retry");
     }
 
-    /** A duplicate e-mail, or two concurrent first calls with one idempotency key: the database lets one through. */
+    /** Same code whether the check or the unique index caught it; never echoes the e-mail. */
+    @ExceptionHandler(CustomerAlreadyExistsException.class)
+    ResponseEntity<ErrorResponse> customerAlreadyExists(CustomerAlreadyExistsException ex) {
+        return error(HttpStatus.CONFLICT, "CUSTOMER_ALREADY_EXISTS", ex.getMessage());
+    }
+
+    /** Two concurrent first calls with one idempotency key, or another unique key: the database lets one through. */
     @ExceptionHandler(DataIntegrityViolationException.class)
     ResponseEntity<ErrorResponse> duplicate(DataIntegrityViolationException ex) {
         return error(HttpStatus.CONFLICT, "DUPLICATE_REQUEST", "A conflicting request was already processed; retry");

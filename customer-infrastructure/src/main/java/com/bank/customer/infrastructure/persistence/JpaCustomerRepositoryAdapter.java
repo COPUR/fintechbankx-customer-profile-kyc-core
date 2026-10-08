@@ -1,8 +1,10 @@
 package com.bank.customer.infrastructure.persistence;
 
 import com.bank.customer.domain.Customer;
+import com.bank.customer.domain.CustomerAlreadyExistsException;
 import com.bank.customer.domain.port.out.CustomerRepository;
 import com.bank.shared.kernel.domain.CustomerId;
+import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.dao.OptimisticLockingFailureException;
 import org.springframework.stereotype.Repository;
 import org.springframework.transaction.annotation.Transactional;
@@ -20,6 +22,9 @@ import java.util.Optional;
 @Repository
 @Transactional
 public class JpaCustomerRepositoryAdapter implements CustomerRepository {
+
+    /** V1__create_customer_tables.sql: unique on lower(email). */
+    static final String EMAIL_UNIQUE_INDEX = "uq_customer_email";
 
     private final SpringDataCustomerRepository customers;
 
@@ -40,9 +45,31 @@ public class JpaCustomerRepositoryAdapter implements CustomerRepository {
             }
             CustomerPersistenceMapper.copyInto(customer, entity);
         }
-        CustomerJpaEntity saved = customers.saveAndFlush(entity);
+        CustomerJpaEntity saved;
+        try {
+            saved = customers.saveAndFlush(entity);
+        } catch (DataIntegrityViolationException e) {
+            if (violates(e, EMAIL_UNIQUE_INDEX)) {
+                // Two registrations raced past existsByEmail: same answer as the check.
+                throw new CustomerAlreadyExistsException(e);
+            }
+            throw e;
+        }
         customer.setVersion(saved.getVersion());
         return customer;
+    }
+
+    private static boolean violates(Throwable e, String constraint) {
+        for (Throwable t = e; t != null; t = t.getCause()) {
+            if (t instanceof org.hibernate.exception.ConstraintViolationException violation
+                    && constraint.equalsIgnoreCase(violation.getConstraintName())) {
+                return true;
+            }
+            if (t.getMessage() != null && t.getMessage().contains(constraint)) {
+                return true;
+            }
+        }
+        return false;
     }
 
     @Override
