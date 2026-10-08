@@ -47,6 +47,7 @@ class OutboxPersistenceTest {
 
     @Autowired SpringDataOutboxRepository outbox;
     @Autowired JdbcTemplate jdbc;
+    @Autowired org.springframework.transaction.PlatformTransactionManager transactionManager;
 
     /**
      * The runbook's operator-only manual park (a row stuck on a non-payload
@@ -75,6 +76,34 @@ class OutboxPersistenceTest {
         assertThat(jdbc.queryForObject("select parked_at is null and last_error is null and attempts = 0 "
             + "from sc_cus_profile_kyc.outbox_event where event_id = ?::uuid", Boolean.class, id)).isTrue();
         assertThat(outbox.findUnpublishedBatch(10)).extracting(OutboxEventJpaEntity::getEventId).contains(stuck.getEventId());
+    }
+
+    /**
+     * PostgreSQL: a row parked with the runbook UPDATE is counted once by the
+     * relay (OperatorPark) and marked park_counted; later ticks do not count
+     * it again, and the runbook replay clears the mark.
+     */
+    @Test
+    @SuppressWarnings("unchecked")
+    void anOperatorParkIsCountedOnceByTheRelay() throws IOException {
+        OutboxEventJpaEntity stuck = outbox.saveAndFlush(row("CUST-MANUAL-2"));
+        String id = stuck.getEventId().toString();
+        jdbc.update(runbookStatement("-- Manual park (operator only)").replace("<event id>", id).replace("<reason>", "CHG-2"));
+        io.micrometer.core.instrument.simple.SimpleMeterRegistry meters = new io.micrometer.core.instrument.simple.SimpleMeterRegistry();
+        OutboxRelay relay = new OutboxRelay(outbox, org.mockito.Mockito.mock(org.springframework.kafka.core.KafkaTemplate.class),
+            new org.springframework.transaction.support.TransactionTemplate(transactionManager), java.time.Clock.systemUTC(), 10,
+            java.time.Duration.ofSeconds(1), java.time.Duration.ofDays(7), java.time.Duration.ofSeconds(1),
+            java.time.Duration.ofMinutes(5), meters);
+
+        relay.relayOnce();
+        relay.relayOnce();
+
+        assertThat(meters.get("outbox.parked.events").tag("exception", "OperatorPark").counter().count()).isEqualTo(1.0);
+        assertThat(jdbc.queryForObject("select park_counted from sc_cus_profile_kyc.outbox_event where event_id = ?::uuid",
+            Boolean.class, id)).isTrue();
+        jdbc.update(runbookStatement("-- Un-park one row").replace("<event id>", id));
+        assertThat(jdbc.queryForObject("select park_counted from sc_cus_profile_kyc.outbox_event where event_id = ?::uuid",
+            Boolean.class, id)).as("replay clears the mark so a later park counts again").isFalse();
     }
 
     /** The SQL statement that follows the given comment line in the runbook's "Parked outbox events" section. */

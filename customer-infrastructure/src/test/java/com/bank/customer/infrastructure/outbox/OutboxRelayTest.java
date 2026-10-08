@@ -425,6 +425,51 @@ class OutboxRelayTest {
         assertThat(row.getPublishedAt()).isNull();
     }
 
+    /**
+     * Platform ruling (16:43Z): outbox.parked.events (Prometheus
+     * outbox_parked_events_total) counts each parked row once, tagged with
+     * the root cause's simple class name; the row is marked counted in the
+     * same update that parks it.
+     */
+    @Test
+    void aRelayParkIncrementsTheParkedCounterWithTheExceptionTag() {
+        OutboxEventJpaEntity poison = row("CUST-1");
+        when(outbox.tryRelayLock(anyLong())).thenReturn(true);
+        when(outbox.findUnpublishedBatch(50)).thenReturn(List.of(poison), List.of());
+        when(outbox.findParkedNotCounted()).thenAnswer(invocation ->
+            java.util.stream.Stream.of(poison).filter(r -> r.getParkedAt() != null && !r.isParkCounted()).toList());
+        when(kafka.send(any(ProducerRecord.class)))
+            .thenReturn(CompletableFuture.failedFuture(producerFailure(new RecordTooLargeException("too large"))));
+
+        relay.relayOnce();
+        relay.relayOnce();
+
+        assertThat(poison.isParkCounted()).isTrue();
+        assertThat(meters.get("outbox.parked.events").counters()).hasSize(1);
+        io.micrometer.core.instrument.Counter parked = meters.get("outbox.parked.events").counter();
+        assertThat(parked.getId().getTags()).extracting(tag -> tag.getKey()).containsExactly("exception");
+        assertThat(parked.getId().getTag("exception")).isEqualTo("RecordTooLargeException");
+        assertThat(parked.count()).as("once per row, never again on later ticks").isEqualTo(1.0);
+    }
+
+    /** An operator park (runbook UPDATE, park_counted false) is counted once by the relay, as OperatorPark. */
+    @Test
+    void anOperatorParkIsCountedExactlyOnceAsOperatorPark() {
+        OutboxEventJpaEntity parkedByHand = row("CUST-1");
+        org.springframework.test.util.ReflectionTestUtils.setField(parkedByHand, "parkedAt", NOW);
+        when(outbox.tryRelayLock(anyLong())).thenReturn(true);
+        when(outbox.findParkedNotCounted()).thenAnswer(invocation ->
+            java.util.stream.Stream.of(parkedByHand).filter(r -> !r.isParkCounted()).toList());
+
+        for (int tick = 0; tick < 3; tick++) {
+            relay.relayOnce();
+        }
+
+        assertThat(parkedByHand.isParkCounted()).isTrue();
+        assertThat(meters.get("outbox.parked.events").tag("exception", "OperatorPark").counter().count()).isEqualTo(1.0);
+        assertThat(meters.get("outbox.parked.events").counters()).hasSize(1);
+    }
+
     /** What KafkaTemplate completes its future with when the producer reports a failure. */
     private static KafkaProducerException producerFailure(Throwable cause) {
         return new KafkaProducerException(new ProducerRecord<>("evt.cus.customer.created.v1", "k", "v"),

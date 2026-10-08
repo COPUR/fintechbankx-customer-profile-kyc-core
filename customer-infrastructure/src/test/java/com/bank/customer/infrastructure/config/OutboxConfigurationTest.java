@@ -32,14 +32,15 @@ class OutboxConfigurationTest {
     }
 
     @Test
-    void parkedGaugeIsExportedAsOutboxParkedEvents() {
+    void parkedGaugeIsExportedAsOutboxParkedRows() {
         SimpleMeterRegistry registry = new SimpleMeterRegistry();
         when(outbox.countByPublishedAtIsNullAndParkedAtIsNotNull()).thenReturn(2L);
 
         configuration.customerOutboxParkedGauge(registry, outbox);
 
-        Gauge gauge = registry.get("outbox.parked.events").gauge();
+        Gauge gauge = registry.get("outbox.parked.rows").gauge();
         assertThat(gauge.value()).isEqualTo(2.0);
+        assertThat(registry.find("outbox.parked.events").gauge()).as("the counter's name, not a gauge").isNull();
     }
 
     @Test
