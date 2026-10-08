@@ -44,7 +44,34 @@ class CustomerEventEnvelopeFactoryTest {
             "Customer.Customer.CreditReleased.v1", "Customer.Customer.CreditScoreUpdated.v1");
         assertThat(CustomerEventEnvelopeFactory.map(events.get(2)).data()).containsKeys("oldCreditLimit", "newCreditLimit");
         assertThat(CustomerEventEnvelopeFactory.map(events.get(4)).data()).containsKey("releasedAmount");
-        assertThat(CustomerEventEnvelopeFactory.map(events.get(5)).data()).containsEntry("newCreditScore", 760);
+        assertThat(CustomerEventEnvelopeFactory.map(events.get(5)).data()).containsOnlyKeys("customerId", "updatedAt");
+    }
+
+    /**
+     * The score value never leaves on the event (restricted data); consumers
+     * read it through GET /credit under the azp allow-list. The event says
+     * only that the score changed, and when. Limit events keep their amounts.
+     */
+    @Test
+    void aCreditScoreUpdateCarriesNoScoreValue() throws Exception {
+        Customer customer = customer("CUST-ENV-S");
+        customer.updateCreditScore(760);
+        DomainEvent updated = customer.getDomainEvents().get(1);
+
+        var mapped = CustomerEventEnvelopeFactory.map(updated);
+        String payload = factory.toOutboxRow(customer, updated, "corr-score").getPayload();
+
+        assertThat(mapped.topic()).isEqualTo("evt.cus.customer.credit-score-updated.v1");
+        assertThat(mapped.data()).containsExactly(
+            java.util.Map.entry("customerId", "CUST-ENV-S"),
+            java.util.Map.entry("updatedAt", ((com.bank.customer.domain.CustomerCreditScoreUpdatedEvent) updated)
+                .getOccurredOn().toString()));
+        assertThat(json.readTree(payload).get("data").fieldNames()).toIterable()
+            .containsExactly("customerId", "updatedAt")
+            .noneMatch(name -> name.toLowerCase(java.util.Locale.ROOT).contains("score"));
+        assertThat(payload).doesNotContain("newCreditScore", "760");
+        assertThat(java.nio.file.Files.readString(java.nio.file.Path.of("..", "api", "asyncapi", "svc-cus-profile-kyc.yaml")))
+            .as("contract").doesNotContain("newCreditScore");
     }
 
     /** Staff KYC decisions: status, previous status, source and verifiedAt; never who decided or personal data. */
