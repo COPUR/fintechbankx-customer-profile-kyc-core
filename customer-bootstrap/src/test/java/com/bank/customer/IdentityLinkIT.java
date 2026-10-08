@@ -40,7 +40,9 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
  * Onboarding links a customer to the end user's Keycloak account through the
  * real Keycloak admin adapter, against a stand-in Keycloak (token endpoint and
  * users resource) on a local port, so the customer_id user attribute ends up
- * on the user the way the platform realm expects it.
+ * on the user the way the platform realm expects it. The stand-in enforces the
+ * scoped permission (Keycloak FGAP v2, identity 8f9024b): users in group
+ * /customers only, 403 for any other user; no realm-management manage-users.
  */
 @SpringBootTest(properties = "customer.outbox.relay.enabled=false")
 @AutoConfigureMockMvc
@@ -51,6 +53,9 @@ class IdentityLinkIT {
     private static final ObjectMapper JSON = new ObjectMapper();
     private static final Map<String, ObjectNode> USERS = new ConcurrentHashMap<>();
     private static final List<String> REQUESTS = new CopyOnWriteArrayList<>();
+    /** Keycloak FGAP v2 (identity 8f9024b): the service may GET and PUT only users in group /customers. */
+    private static final java.util.Set<String> CUSTOMERS_GROUP = ConcurrentHashMap.newKeySet();
+    private static final String STAFF_USER = "0a1b2c3d-4e5f-4061-8a7b-9c0d1e2f3a4b";
     private static HttpServer keycloak;
 
     @BeforeAll
@@ -69,6 +74,8 @@ class IdentityLinkIT {
             ObjectNode user = USERS.get(id);
             if (!authorised) {
                 respond(exchange, 401, "");
+            } else if (user != null && !CUSTOMERS_GROUP.contains(id)) {
+                respond(exchange, 403, "{\"error\":\"HTTP 403 Forbidden\"}");
             } else if (user == null) {
                 respond(exchange, 404, "{\"error\":\"User not found\"}");
             } else if ("GET".equals(exchange.getRequestMethod())) {
@@ -110,6 +117,9 @@ class IdentityLinkIT {
         jdbc.update("delete from sc_cus_profile_kyc.customer");
         USERS.clear();
         USERS.put(USER, (ObjectNode) JSON.readTree("{\"id\":\"" + USER + "\",\"username\":\"noor\",\"attributes\":{\"locale\":[\"ar\"]}}"));
+        USERS.put(STAFF_USER, (ObjectNode) JSON.readTree("{\"id\":\"" + STAFF_USER + "\",\"username\":\"banker\"}"));
+        CUSTOMERS_GROUP.clear();
+        CUSTOMERS_GROUP.add(USER);
         REQUESTS.clear();
     }
 
@@ -152,6 +162,20 @@ class IdentityLinkIT {
         link(customerId, "no-such-user").andExpect(status().isUnprocessableEntity())
             .andExpect(jsonPath("$.code").value("IDENTITY_USER_NOT_FOUND"));
 
+        assertThat(jdbc.queryForObject("select identity_user_id from sc_cus_profile_kyc.customer where customer_id = ?",
+            String.class, customerId)).as("rolled back").isNull();
+    }
+
+    /** A user outside /customers (a staff account) answers 403: not a customer user, 422 and nothing written. */
+    @Test
+    void aUserOutsideTheCustomersGroupIsNotACustomerUser() throws Exception {
+        String customerId = create("staffuser@example.com");
+
+        link(customerId, STAFF_USER).andExpect(status().isUnprocessableEntity())
+            .andExpect(jsonPath("$.code").value("IDENTITY_USER_NOT_FOUND"));
+
+        assertThat(REQUESTS).containsExactly("POST token true", "GET user " + STAFF_USER + " true");
+        assertThat(USERS.get(STAFF_USER).has("attributes")).as("staff user untouched").isFalse();
         assertThat(jdbc.queryForObject("select identity_user_id from sc_cus_profile_kyc.customer where customer_id = ?",
             String.class, customerId)).as("rolled back").isNull();
     }

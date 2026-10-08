@@ -115,6 +115,21 @@ class KeycloakIdentityDirectoryAdapterTest {
         assertThatThrownBy(() -> adapter.linkCustomer(USER_ID, CUSTOMER)).isInstanceOf(IdentityUserNotFoundException.class);
     }
 
+    /**
+     * Keycloak FGAP v2 (identity 8f9024b) lets this client read and update
+     * users in group /customers only; a 403 on reading the user means "not a
+     * customer user", the same outcome as an unknown user, never a 503.
+     */
+    @Test
+    void aUserOutsideTheCustomersGroupIsNotFound() {
+        expectToken();
+        keycloak.expect(once(), requestTo(USER_URL)).andExpect(method(HttpMethod.GET))
+            .andRespond(withStatus(HttpStatus.FORBIDDEN));
+
+        assertThatThrownBy(() -> adapter.linkCustomer(USER_ID, CUSTOMER)).isInstanceOf(IdentityUserNotFoundException.class);
+        keycloak.verify();
+    }
+
     @Test
     void directoryErrorsAndRefusedCredentialsFailClosed() {
         keycloak.expect(once(), requestTo(TOKEN_URL)).andRespond(withStatus(HttpStatus.UNAUTHORIZED));
