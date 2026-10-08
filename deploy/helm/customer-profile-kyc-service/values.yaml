@@ -59,7 +59,11 @@ config:
   OIDC_AUDIENCE: svc-cus-profile-kyc   # token aud must contain the service id
   SERVICE_CALLERS: svc-ln-loan-lifecycle   # token azp values allowed to read and move credit
   SERVICE_CALLERS_KYC: svc-pay-initiation-settlement   # token azp values allowed to read the KYC status
-  OUTBOX_RELAY_ENABLED: "true"
+  # Off in the chart (the application default is on): the relay cannot reach
+  # MSK until mesh #11's egress is applied. Turn it on with
+  # --set config.OUTBOX_RELAY_ENABLED=true (runbook step 6). Events wait in the
+  # outbox meanwhile; nothing is lost.
+  OUTBOX_RELAY_ENABLED: "false"
   # Onboarding sets the Keycloak user attribute customer_id (identity link).
   # Off until the service client holds the scoped FGAP v2 permission (users in
   # group /customers, identity 8f9024b) and externalSecret.oidcClientSecretName
@@ -88,15 +92,17 @@ topologySpread:
 # Settings the pod cannot start without; rendering fails while any is empty.
 requiredConfig: [DB_URL, OIDC_ISSUER_URI, OIDC_JWK_SET_URI, OIDC_AUDIENCE, KAFKA_BOOTSTRAP_SERVERS]
 
-# Mesh-wide STRICT mTLS, default deny and the ALLOW rules per caller principal
-# are owned by fintechbankx-platform-mesh-security-service-mesh; this chart
-# ships neither a PeerAuthentication nor an AuthorizationPolicy. The
-# NetworkPolicy below (templates/networkpolicy.yaml) is a CNI-level backstop
-# that admits only the namespaces of those callers.
-networkPolicy:
-  enabled: true
-  monitoringNamespace: observability
-  callerNamespaces:
-    - istio-ingress   # istio-ingressgateway
-    - lending         # loan-lifecycle-service
-    - payments        # payment initiation-settlement (KYC status read)
+# Mesh-wide STRICT mTLS, default deny, the ALLOW rules per caller principal
+# and the ingress NetworkPolicy (mesh #11) are owned by
+# fintechbankx-platform-mesh-security-service-mesh; this chart ships no
+# PeerAuthentication, AuthorizationPolicy or NetworkPolicy.
+
+# Kafka client certificate for the kafka-strimzi profile (local, kind): the
+# Secret holding the PEM files; rendered as KAFKA_TLS_CERT, KAFKA_TLS_KEY and
+# KAFKA_TLS_CA only when config.SPRING_PROFILES_ACTIVE includes kafka-strimzi,
+# and required then.
+kafkaTls:
+  secretName: ""
+  certKey: user.crt
+  keyKey: user.key
+  caKey: ca.crt

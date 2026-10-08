@@ -11,4 +11,7 @@ aurora_instance_count      = 3
 aurora_max_capacity        = 16
 backup_retention_days      = 35
 deletion_protection        = true
-alarm_topic_arn            = "arn:aws:sns:me-central-1:111122223333:lending-oncall"
+alarm_topic_arn            = "arn:aws:sns:me-central-1:111122223333:customer-oncall"
+# Platform MSK cluster. Without it the workload role gets no Kafka write policy
+# (no kafka-cluster:Connect or WriteData on evt.cus.customer.*), so the relay cannot publish.
+msk_cluster_arn            = "arn:aws:kafka:<region>:<account>:cluster/<name>/<uuid>"

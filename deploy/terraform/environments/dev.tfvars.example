@@ -12,3 +12,6 @@ aurora_max_capacity        = 2
 backup_retention_days      = 7
 deletion_protection        = false
 hpa_max_replicas           = 4
+# Platform MSK cluster. Without it the workload role gets no Kafka write policy
+# (no kafka-cluster:Connect or WriteData on evt.cus.customer.*), so the relay cannot publish.
+msk_cluster_arn            = "arn:aws:kafka:<region>:<account>:cluster/<name>/<uuid>"

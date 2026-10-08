@@ -60,6 +60,24 @@ spec:
               containerPort: {{ .Values.service.port }}
             - name: http-management
               containerPort: {{ .Values.service.managementPort }}
+          {{- if has "kafka-strimzi" (splitList "," (.Values.config.SPRING_PROFILES_ACTIVE | toString | nospace)) }}
+          env:
+            - name: KAFKA_TLS_CERT
+              valueFrom:
+                secretKeyRef:
+                  name: {{ required "kafkaTls.secretName is required for the kafka-strimzi profile" .Values.kafkaTls.secretName }}
+                  key: {{ .Values.kafkaTls.certKey }}
+            - name: KAFKA_TLS_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.kafkaTls.secretName }}
+                  key: {{ .Values.kafkaTls.keyKey }}
+            - name: KAFKA_TLS_CA
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.kafkaTls.secretName }}
+                  key: {{ .Values.kafkaTls.caKey }}
+          {{- end }}
           envFrom:
             - configMapRef:
                 name: {{ include "customer.name" . }}

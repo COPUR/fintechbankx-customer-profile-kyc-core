@@ -1,5 +1,6 @@
 # In-cluster Strimzi TLS listener with the KafkaUser client certificate, bound
-# from Secret kafka-client-tls (PEM) as KAFKA_TLS_CERT, KAFKA_TLS_KEY, KAFKA_TLS_CA.
+# from the Secret named by the chart value kafkaTls.secretName (PEM, keys
+# user.crt, user.key, ca.crt by default) as KAFKA_TLS_CERT, KAFKA_TLS_KEY, KAFKA_TLS_CA.
 spring:
   kafka:
     security:
