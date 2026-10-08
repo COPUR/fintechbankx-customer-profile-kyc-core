@@ -1,13 +1,17 @@
 -- Outbox rows that can never be sent are parked instead of blocking every
--- later event. OutboxRelay parks a row when Kafka refuses it permanently
--- (RecordTooLarge, Serialization, InvalidTopic, TopicAuthorization, any error
--- that is not retriable) at once. A retryable failure (RetriableException,
--- timeout) never parks by count: only when the row has kept failing for longer
--- than customer.outbox.relay.retryable-park-after (default 24 h) since
--- first_failed_at, so a broker or egress outage does not need a manual replay. The relay skips parked rows and the later rows of the same
--- customer, keeps relaying other customers, and the outbox_parked_events gauge
--- counts them. Parked rows are never purged and are replayed by hand (runbook
--- "Parked outbox events"). last_error (V2) keeps the reason.
+-- later event. Classification follows ADR-021 decision 4: OutboxRelay parks a
+-- row only for a payload error (RecordTooLarge, Serialization, InvalidTopic)
+-- and continues; every other failure (retriable, authorization, SASL/IAM,
+-- unclassified) stops the batch without marking the row and is retried with
+-- backoff, never parked by the relay. An operator may park a row by hand
+-- (runbook "Parked outbox events"). The relay skips parked rows and the later
+-- rows of the same customer, keeps relaying other customers, and the
+-- outbox_parked_events gauge counts them. Parked rows are never purged and are
+-- replayed by hand. last_error (V2) keeps the reason. first_failed_at is no
+-- longer written (the 24 h park ceiling it served was removed by ADR-021).
+-- Comment-only edit after release: V5 has run only in CI and ephemeral
+-- databases (review 5456301261), so the changed Flyway checksum affects no
+-- persistent environment.
 
 ALTER TABLE outbox_event ADD COLUMN parked_at TIMESTAMPTZ;
 ALTER TABLE outbox_event ADD COLUMN first_failed_at TIMESTAMPTZ;
