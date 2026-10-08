@@ -1,0 +1,79 @@
+{{- if .Values.mesh.enabled }}
+# STRICT mTLS for this workload: the sidecar refuses plaintext, whatever the
+# namespace-wide default is.
+apiVersion: security.istio.io/v1
+kind: PeerAuthentication
+metadata:
+  name: {{ include "customer.name" . }}
+  labels:
+    {{- include "customer.labels" . | nindent 4 }}
+spec:
+  selector:
+    matchLabels:
+      {{- include "customer.selectorLabels" . | nindent 6 }}
+  mtls:
+    mode: STRICT
+---
+# Only the named callers (by mesh identity) reach the API port; only the
+# monitoring namespace reaches the management port. Everything else is denied,
+# because an ALLOW policy denies all traffic it does not match.
+apiVersion: security.istio.io/v1
+kind: AuthorizationPolicy
+metadata:
+  name: {{ include "customer.name" . }}
+  labels:
+    {{- include "customer.labels" . | nindent 4 }}
+spec:
+  selector:
+    matchLabels:
+      {{- include "customer.selectorLabels" . | nindent 6 }}
+  action: ALLOW
+  rules:
+    - from:
+        - source:
+            principals:
+              {{- range .Values.mesh.allowedCallers }}
+              - {{ printf "cluster.local/ns/%s/sa/%s" .namespace .serviceAccount | quote }}
+              {{- end }}
+      to:
+        - operation:
+            ports: [{{ .Values.service.port | quote }}]
+    - from:
+        - source:
+            namespaces: [{{ .Values.mesh.monitoringNamespace | quote }}]
+      to:
+        - operation:
+            ports: [{{ .Values.service.managementPort | quote }}]
+            paths: ["/actuator/health/*", "/actuator/info", "/actuator/prometheus"]
+---
+# Network-level backstop for the same rules, enforced by the CNI even if a
+# sidecar is missing.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: {{ include "customer.name" . }}
+  labels:
+    {{- include "customer.labels" . | nindent 4 }}
+spec:
+  podSelector:
+    matchLabels:
+      {{- include "customer.selectorLabels" . | nindent 6 }}
+  policyTypes: [Ingress]
+  ingress:
+    - from:
+        {{- range .Values.mesh.allowedCallers }}
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: {{ .namespace | quote }}
+        {{- end }}
+      ports:
+        - port: {{ .Values.service.port }}
+          protocol: TCP
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: {{ .Values.mesh.monitoringNamespace | quote }}
+      ports:
+        - port: {{ .Values.service.managementPort }}
+          protocol: TCP
+{{- end }}

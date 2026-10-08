@@ -45,8 +45,8 @@ variable "eks_oidc_provider_url" {
 
 variable "kubernetes_namespace" {
   type        = string
-  description = "Namespace the Helm chart is installed in."
-  default     = "lending"
+  description = "Namespace the Helm chart is installed in. Callers address the service as <name>.customer.svc.cluster.local."
+  default     = "customer"
 }
 
 variable "kubernetes_service_account" {
@@ -116,4 +116,16 @@ variable "tags" {
   type        = map(string)
   description = "Additional tags (cost centre, data classification)."
   default     = {}
+}
+
+variable "hpa_max_replicas" {
+  type        = number
+  description = "autoscaling.maxReplicas of the Helm values for this environment; sizes the connection alarm."
+  default     = 12
+}
+
+variable "db_pool_max" {
+  type        = number
+  description = "DB_POOL_MAX of the Helm values; sizes the connection alarm."
+  default     = 10
 }

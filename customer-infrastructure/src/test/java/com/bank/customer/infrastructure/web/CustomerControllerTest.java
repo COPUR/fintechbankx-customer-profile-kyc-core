@@ -74,13 +74,13 @@ class CustomerControllerTest {
     @Test
     void reserveCreditShouldConvertMoneyAndDelegate() {
         CustomerResponse response = sampleResponse("CUST-WEB-004");
-        when(customerService.reserveCredit(eq("CUST-WEB-004"), eq(Money.aed(new BigDecimal("300.00"))), isNull()))
+        when(customerService.reserveCredit(eq("CUST-WEB-004"), eq(Money.aed(new BigDecimal("300.00"))), eq("key-4"), eq("LOAN-4")))
             .thenReturn(response);
 
         CustomerController.ReserveCreditRequest request =
-            new CustomerController.ReserveCreditRequest(new BigDecimal("300.00"), "AED");
+            new CustomerController.ReserveCreditRequest(new BigDecimal("300.00"), "AED", "LOAN-4");
 
-        ResponseEntity<CustomerResponse> entity = controller.reserveCredit(null, "CUST-WEB-004", request);
+        ResponseEntity<CustomerResponse> entity = controller.reserveCredit("key-4", "CUST-WEB-004", request);
 
         assertThat(entity.getStatusCode()).isEqualTo(HttpStatus.OK);
         assertThat(entity.getBody()).isEqualTo(response);
@@ -89,13 +89,13 @@ class CustomerControllerTest {
     @Test
     void releaseCreditShouldConvertMoneyAndDelegate() {
         CustomerResponse response = sampleResponse("CUST-WEB-005");
-        when(customerService.releaseCredit(eq("CUST-WEB-005"), eq(Money.aed(new BigDecimal("150.00"))), isNull()))
+        when(customerService.releaseCredit(eq("CUST-WEB-005"), eq(Money.aed(new BigDecimal("150.00"))), eq("key-5"), isNull()))
             .thenReturn(response);
 
         CustomerController.ReleaseCreditRequest request =
-            new CustomerController.ReleaseCreditRequest(new BigDecimal("150.00"), "AED");
+            new CustomerController.ReleaseCreditRequest(new BigDecimal("150.00"), "AED", null);
 
-        ResponseEntity<CustomerResponse> entity = controller.releaseCredit(null, "CUST-WEB-005", request);
+        ResponseEntity<CustomerResponse> entity = controller.releaseCredit("key-5", "CUST-WEB-005", request);
 
         assertThat(entity.getStatusCode()).isEqualTo(HttpStatus.OK);
         assertThat(entity.getBody()).isEqualTo(response);
@@ -104,18 +104,27 @@ class CustomerControllerTest {
     @Test
     void reserveCreditShouldPassConvertedMoneyToService() {
         CustomerResponse response = sampleResponse("CUST-WEB-006");
-        when(customerService.reserveCredit(eq("CUST-WEB-006"), eq(Money.aed(new BigDecimal("999.99"))), isNull()))
+        when(customerService.reserveCredit(eq("CUST-WEB-006"), eq(Money.aed(new BigDecimal("999.99"))), eq("key-6"), isNull()))
             .thenReturn(response);
 
         CustomerController.ReserveCreditRequest request =
-            new CustomerController.ReserveCreditRequest(new BigDecimal("999.99"), "AED");
+            new CustomerController.ReserveCreditRequest(new BigDecimal("999.99"), "AED", null);
 
-        controller.reserveCredit(null, "CUST-WEB-006", request);
+        controller.reserveCredit("key-6", "CUST-WEB-006", request);
 
         ArgumentCaptor<Money> captor = ArgumentCaptor.forClass(Money.class);
-        verify(customerService).reserveCredit(eq("CUST-WEB-006"), captor.capture(), isNull());
+        verify(customerService).reserveCredit(eq("CUST-WEB-006"), captor.capture(), eq("key-6"), isNull());
         assertThat(captor.getValue().getAmount()).isEqualByComparingTo("999.99");
         assertThat(captor.getValue().getCurrency().getCurrencyCode()).isEqualTo("AED");
+    }
+
+    @Test
+    void creditPositionDelegatesToTheService() {
+        var credit = new com.bank.customer.application.dto.CustomerCreditResponse(
+            "CUST-WEB-007", "AED", new BigDecimal("10000.00"), new BigDecimal("1000.00"), new BigDecimal("9000.00"));
+        when(customerService.findCreditPosition("CUST-WEB-007")).thenReturn(credit);
+
+        assertThat(controller.getCreditPosition("CUST-WEB-007").getBody()).isEqualTo(credit);
     }
 
     private static CustomerResponse sampleResponse(String id) {

@@ -1,0 +1,118 @@
+package com.bank.customer.infrastructure.persistence;
+
+import com.bank.customer.domain.CreditMovement;
+import com.bank.customer.domain.Customer;
+import com.bank.shared.kernel.domain.CustomerId;
+import com.bank.shared.kernel.domain.Money;
+import org.junit.jupiter.api.BeforeAll;
+import org.junit.jupiter.api.Test;
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.boot.test.autoconfigure.jdbc.AutoConfigureTestDatabase;
+import org.springframework.boot.test.autoconfigure.orm.jpa.DataJpaTest;
+import org.springframework.context.annotation.Import;
+import org.springframework.dao.DataIntegrityViolationException;
+import org.springframework.dao.OptimisticLockingFailureException;
+import org.springframework.jdbc.core.JdbcTemplate;
+import org.springframework.test.context.DynamicPropertyRegistry;
+import org.springframework.test.context.DynamicPropertySource;
+
+import java.math.BigDecimal;
+import java.time.Instant;
+import java.time.temporal.ChronoUnit;
+import java.util.UUID;
+
+import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
+
+/**
+ * The JPA adapters against the real schema: Flyway builds sc_cus_profile_kyc,
+ * Hibernate validates the entities, and the optimistic lock and the
+ * idempotency journal's unique key are exercised on PostgreSQL itself.
+ */
+@DataJpaTest(properties = {
+    "spring.datasource.hikari.schema=sc_cus_profile_kyc",
+    "spring.flyway.schemas=sc_cus_profile_kyc",
+    "spring.flyway.default-schema=sc_cus_profile_kyc",
+    "spring.jpa.hibernate.ddl-auto=validate",
+    "spring.jpa.properties.hibernate.default_schema=sc_cus_profile_kyc"
+})
+@AutoConfigureTestDatabase(replace = AutoConfigureTestDatabase.Replace.NONE)
+@Import({JpaCustomerRepositoryAdapter.class, JpaCreditMovementJournal.class})
+class JpaPersistenceTest {
+
+    @BeforeAll
+    static void requireDatabase() {
+        PostgresTestDatabase.assumeAvailable();
+    }
+
+    @DynamicPropertySource
+    static void database(DynamicPropertyRegistry registry) {
+        PostgresTestDatabase.register(registry);
+    }
+
+    @Autowired JpaCustomerRepositoryAdapter repository;
+    @Autowired JpaCreditMovementJournal journal;
+    @Autowired JdbcTemplate jdbc;
+
+    @Test
+    void savesFindsAndUpdatesACustomer() {
+        Customer customer = newCustomer("CUST-JPA-1", "jpa1@example.com");
+        repository.save(customer);
+
+        Customer loaded = repository.findById(CustomerId.of("CUST-JPA-1")).orElseThrow();
+        loaded.reserveCredit(Money.aed(new BigDecimal("1500.00")));
+        repository.save(loaded);
+
+        assertThat(repository.findByEmail("JPA1@example.com")).get()
+            .satisfies(found -> assertThat(found.getCreditProfile().getUsedCredit().getAmount()).isEqualByComparingTo("1500.00"));
+        assertThat(repository.existsById(CustomerId.of("CUST-JPA-1"))).isTrue();
+        assertThat(repository.existsByEmail("jpa1@example.com")).isTrue();
+        assertThat(repository.existsByEmail(null)).isFalse();
+        assertThat(repository.findByEmail(null)).isEmpty();
+        assertThat(loaded.getVersion()).isEqualTo(1L);
+
+        repository.deleteById(CustomerId.of("CUST-JPA-1"));
+        assertThat(repository.existsById(CustomerId.of("CUST-JPA-1"))).isFalse();
+    }
+
+    @Test
+    void aChangeMadeOnAStaleVersionIsRefused() {
+        repository.save(newCustomer("CUST-JPA-2", "jpa2@example.com"));
+        Customer first = repository.findById(CustomerId.of("CUST-JPA-2")).orElseThrow();
+        Customer stale = repository.findById(CustomerId.of("CUST-JPA-2")).orElseThrow();
+
+        first.reserveCredit(Money.aed(new BigDecimal("100.00")));
+        repository.save(first);
+        stale.reserveCredit(Money.aed(new BigDecimal("100.00")));
+
+        assertThatThrownBy(() -> repository.save(stale)).isInstanceOf(OptimisticLockingFailureException.class);
+    }
+
+    @Test
+    void theJournalFindsAMovementByKeyAndRefusesTheSameKeyTwice() {
+        repository.save(newCustomer("CUST-JPA-3", "jpa3@example.com"));
+        Instant at = Instant.now().truncatedTo(ChronoUnit.MICROS);
+        CreditMovement reserve = new CreditMovement(UUID.randomUUID(), CustomerId.of("CUST-JPA-3"), "LOAN-9:reserve",
+            CreditMovement.Type.RESERVE, Money.aed(new BigDecimal("250.00")), "LOAN-9", at);
+
+        journal.record(reserve);
+
+        assertThat(journal.find(CustomerId.of("CUST-JPA-3"), "LOAN-9:reserve")).get()
+            .satisfies(found -> {
+                assertThat(found.reference()).isEqualTo("LOAN-9");
+                assertThat(found.occurredAt()).isEqualTo(at);
+                assertThat(found.sameInstruction(CreditMovement.Type.RESERVE, Money.aed(new BigDecimal("250")))).isTrue();
+            });
+        assertThat(journal.find(CustomerId.of("CUST-JPA-3"), "unknown")).isEmpty();
+        assertThatThrownBy(() -> journal.record(new CreditMovement(UUID.randomUUID(), CustomerId.of("CUST-JPA-3"),
+                "LOAN-9:reserve", CreditMovement.Type.RESERVE, Money.aed(new BigDecimal("250.00")), "LOAN-9", at)))
+            .isInstanceOf(DataIntegrityViolationException.class);
+    }
+
+    private static Customer newCustomer(String id, String email) {
+        Customer customer = Customer.create(CustomerId.of(id), "Test", "Customer", email, "+971500000000",
+            Money.aed(new BigDecimal("10000.00")));
+        customer.clearDomainEvents();
+        return customer;
+    }
+}

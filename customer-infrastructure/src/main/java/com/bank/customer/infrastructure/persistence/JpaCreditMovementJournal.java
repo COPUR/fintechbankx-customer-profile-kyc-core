@@ -43,6 +43,7 @@ public class JpaCreditMovementJournal implements CreditMovementJournal {
             movement.type().name(),
             movement.amount().getCurrency().getCurrencyCode(),
             movement.amount().getAmount(),
+            movement.reference(),
             movement.occurredAt()));
     }
 
@@ -53,6 +54,7 @@ public class JpaCreditMovementJournal implements CreditMovementJournal {
             row.getIdempotencyKey(),
             CreditMovement.Type.valueOf(row.getMovementType()),
             Money.of(row.getAmount(), Currency.getInstance(row.getCurrency())),
+            row.getReference(),
             row.getOccurredAt());
     }
 }

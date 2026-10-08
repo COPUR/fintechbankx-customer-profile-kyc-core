@@ -14,7 +14,8 @@ serviceAccount:
   roleArn: ""
 
 podLabels:
-  app.kubernetes.io/part-of: fintechbankx-lending
+  app: app-cus-profile-kyc
+  app.kubernetes.io/part-of: fintechbankx-customer
   fintechbankx.io/service-id: svc-cus-profile-kyc
   sidecar.istio.io/inject: "true"
 
@@ -33,8 +34,8 @@ autoscaling:
   enabled: true
   minReplicas: 3
   maxReplicas: 12
+  # CPU only: the JVM keeps committed heap, so a memory target would pin replicas at max.
   targetCPUUtilizationPercentage: 65
-  targetMemoryUtilizationPercentage: 80
 
 podDisruptionBudget:
   minAvailable: 2
@@ -48,17 +49,34 @@ config:
   KAFKA_SECURITY_PROTOCOL: SSL
   OIDC_ISSUER_URI: ""
   OIDC_JWK_SET_URI: ""
+  OIDC_AUDIENCE: customer-profile-kyc-service
+  SERVICE_CALLERS: svc-ln-loan-lifecycle   # token azp values allowed to read and move credit
   OUTBOX_RELAY_ENABLED: "true"
 
 # Database credential, synced from AWS Secrets Manager by External Secrets Operator.
 externalSecret:
   enabled: true
-  secretStoreRef:
-    kind: ClusterSecretStore
-    name: aws-secrets-manager
+  # Namespaced store rendered by this chart (templates/secretstore.yaml); it
+  # authenticates as this service account, so only the IRSA role reads the secret.
+  awsRegion: ""
   # Secrets Manager secret from deploy/terraform output app_db_secret_name.
   remoteSecretName: ""
   refreshInterval: 1h
 
 topologySpread:
   maxSkew: 1
+
+# Settings the pod cannot start without; rendering fails while any is empty.
+requiredConfig: [DB_URL, OIDC_ISSUER_URI, OIDC_JWK_SET_URI, OIDC_AUDIENCE, KAFKA_BOOTSTRAP_SERVERS]
+
+# Istio: STRICT mTLS and an allow-list of callers by mesh identity
+# (templates/mesh-policies.yaml). The namespace must be in the mesh
+# (istio-injection=enabled); onboarding is owned by the mesh-security squad.
+mesh:
+  enabled: true
+  monitoringNamespace: monitoring
+  allowedCallers:
+    - namespace: istio-system
+      serviceAccount: istio-ingressgateway-service-account
+    - namespace: lending
+      serviceAccount: loan-lifecycle-service

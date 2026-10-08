@@ -109,6 +109,49 @@ paths:
               schema:
                 $ref: '#/components/schemas/ErrorResponse'
 
+  /api/v1/customers/{customerId}/credit:
+    get:
+      tags: [CustomerManagement]
+      summary: Get a customer's credit position
+      operationId: getCustomerCredit
+      description: |-
+        Credit limit, used and available credit, without personal data. For
+        services that decide on credit (SERVICE realm role, calling client on
+        the service's allowed list), staff, and the customer themself.
+      security:
+        - bearerAuth: []
+          dpopAuth: []
+      parameters:
+        - $ref: '#/components/parameters/Authorization'
+        - $ref: '#/components/parameters/DPoP'
+        - $ref: '#/components/parameters/InteractionId'
+        - $ref: '#/components/parameters/CustomerId'
+      responses:
+        '200':
+          description: Credit position
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CustomerCreditResponse'
+        '401':
+          description: Unauthorized
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '403':
+          description: Forbidden
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '404':
+          description: Customer not found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
   /api/v1/customers/{customerId}/credit-limit:
     put:
       tags: [CustomerManagement]
@@ -160,10 +203,11 @@ paths:
       summary: Reserve credit
       operationId: reserveCredit
       description: |-
-        Called by other services (SERVICE realm role) and staff. Send
-        x-idempotency-key to make retries safe: a repeat with the same key and
-        amount returns the current position without moving credit again; the
-        same key with a different movement is a 409.
+        Called by other services (SERVICE realm role, calling client on the
+        service's allowed list) and staff. x-idempotency-key is required: a
+        repeat with the same key and amount returns the current position
+        without moving credit again; the same key with a different movement is
+        a 409.
       security:
         - bearerAuth: []
           dpopAuth: []
@@ -186,6 +230,12 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/CustomerResponse'
+        '400':
+          description: Missing x-idempotency-key or invalid request
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
         '401':
           description: Unauthorized
           content:
@@ -223,10 +273,11 @@ paths:
       summary: Release reserved credit
       operationId: releaseCredit
       description: |-
-        Called by other services (SERVICE realm role) and staff. Send
-        x-idempotency-key to make retries safe: a repeat with the same key and
-        amount returns the current position without moving credit again; the
-        same key with a different movement is a 409.
+        Called by other services (SERVICE realm role, calling client on the
+        service's allowed list) and staff. x-idempotency-key is required: a
+        repeat with the same key and amount returns the current position
+        without moving credit again; the same key with a different movement is
+        a 409.
       security:
         - bearerAuth: []
           dpopAuth: []
@@ -249,6 +300,12 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/CustomerResponse'
+        '400':
+          description: Missing x-idempotency-key or invalid request
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
         '401':
           description: Unauthorized
           content:
@@ -315,8 +372,11 @@ components:
     IdempotencyKey:
       name: x-idempotency-key
       in: header
-      required: false
-      description: Caller-chosen key, unique per customer, that makes a credit movement safe to retry.
+      required: true
+      description: |-
+        Caller-chosen key, unique per customer, that makes a credit movement
+        safe to retry. Derive it from what the movement is for (for example
+        "<loanId>:reserve") so a retry resends the same key.
       schema:
         type: string
         maxLength: 128
@@ -332,8 +392,6 @@ components:
         email:
           type: string
           format: email
-          nullable: true
-          description: Absent for customers migrated from the monolith, which never stored an e-mail address.
         phoneNumber:
           type: string
         initialCreditLimit:
@@ -364,6 +422,28 @@ components:
         currency:
           type: string
           example: USD
+        reference:
+          type: string
+          maxLength: 128
+          description: What the credit is moved for, for example the loan id. Stored with the movement for reconciliation.
+
+    CustomerCreditResponse:
+      type: object
+      required: [customerId, currency, creditLimit, usedCredit, availableCredit]
+      properties:
+        customerId:
+          type: string
+        currency:
+          type: string
+        creditLimit:
+          type: number
+          format: double
+        usedCredit:
+          type: number
+          format: double
+        availableCredit:
+          type: number
+          format: double
 
     CustomerResponse:
       type: object

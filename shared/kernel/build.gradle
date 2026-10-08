@@ -1,22 +1,15 @@
 // =================================================================
 // SHARED KERNEL (vendored)
 // =================================================================
-// Minimal subset of the monolith shared-kernel that this context uses,
-// copied unchanged from enterprise-loan-management-system/shared-kernel.
-// Framework dependencies are 'implementation' so they do not leak onto
-// the customer-domain compile classpath.
+// The part of the monolith shared-kernel this context uses (Money,
+// CustomerId, AggregateRoot, Entity, ValueObject, DomainEvent), copied from
+// enterprise-loan-management-system/shared-kernel. Other contexts' events and
+// the web helpers were left out on purpose.
 // =================================================================
 
 description = 'Shared Kernel - vendored subset used by the customer context'
 
 dependencies {
-    implementation 'org.springframework:spring-context'
-    implementation 'org.springframework.security:spring-security-core'
-    implementation 'jakarta.validation:jakarta.validation-api'
-    implementation 'com.fasterxml.jackson.core:jackson-annotations'
-    implementation libs.opentelemetry.api
-    compileOnly 'jakarta.servlet:jakarta.servlet-api'
-
-    compileOnly libs.lombok
-    annotationProcessor libs.lombok
+    // Plain Java: Money, CustomerId and the DDD building blocks. Nothing here
+    // may depend on Spring or the servlet API.
 }

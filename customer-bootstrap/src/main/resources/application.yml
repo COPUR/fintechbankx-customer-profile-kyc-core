@@ -56,6 +56,13 @@ spring:
           issuer-uri: ${OIDC_ISSUER_URI:http://localhost:8180/realms/fintechbankx}
           jwk-set-uri: ${OIDC_JWK_SET_URI:http://localhost:8180/realms/fintechbankx/protocol/openid-connect/certs}
 
+fintechbankx:
+  security:
+    # Tokens must carry this value in "aud" (Keycloak audience mapper on each calling client).
+    audience: ${OIDC_AUDIENCE:customer-profile-kyc-service}
+    # Client ids (token "azp") allowed to read and move credit with the SERVICE role.
+    service-callers: ${SERVICE_CALLERS:svc-ln-loan-lifecycle}
+
 server:
   port: 8080
   shutdown: graceful

@@ -48,6 +48,26 @@ class CustomerEventEnvelopeFactoryTest {
     }
 
     @Test
+    void everyTopicAndEventTypeIsDeclaredInTheAsyncApiContract() throws Exception {
+        java.nio.file.Path contract = java.util.stream.Stream.of("api/asyncapi/svc-cus-profile-kyc.yaml",
+                "../api/asyncapi/svc-cus-profile-kyc.yaml")
+            .map(java.nio.file.Path::of).filter(java.nio.file.Files::exists).findFirst().orElseThrow();
+        String spec = java.nio.file.Files.readString(contract);
+        Customer customer = customer("CUST-ENV-C");
+        customer.updateContactInformation("c@example.com", "+971500000011");
+        customer.updateCreditLimit(Money.aed(new BigDecimal("20000.00")));
+        customer.reserveCredit(Money.aed(new BigDecimal("10.00")));
+        customer.releaseCredit(Money.aed(new BigDecimal("10.00")));
+        customer.updateCreditScore(710);
+
+        for (DomainEvent event : customer.getDomainEvents()) {
+            var mapped = CustomerEventEnvelopeFactory.map(event);
+            assertThat(spec).as("contract declares %s", mapped.topic()).contains("address: " + mapped.topic());
+            assertThat(spec).as("contract declares %s", mapped.eventType()).contains(mapped.eventType());
+        }
+    }
+
+    @Test
     void personalDataNeverLeavesOnEvents() throws Exception {
         Customer customer = customer("CUST-ENV-2");
         customer.updateContactInformation("new@example.com", "+971500000010");

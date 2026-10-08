@@ -1,0 +1,484 @@
+# AsyncAPI contract for svc-cus-profile-kyc.
+# Status: Proposed. The provider repository owns this contract; this catalog mirrors it.
+# Naming: docs/NAMING_CONVENTION_DDD_EDA_BUSINESS_CONTEXT.md
+# Validate: npx -y @asyncapi/cli@2.13.0 validate asyncapi/svc-cus-profile-kyc.yaml
+asyncapi: 3.0.0
+id: urn:fintechbankx:asyncapi:svc-cus-profile-kyc
+info:
+  title: svc-cus-profile-kyc events
+  version: 1.0.0
+  description: |-
+    Event contract for svc-cus-profile-kyc (repository fintechbankx-customer-profile-kyc-core, canonical name fintechbankx-customer-profile-kyc-service).
+
+    Status: Proposed. Owner: Customer and KYC Squad, Lending and Money Movement Tribe. Event namespace: `evt.cus.customer`.
+
+    Implementation status: Events are raised on the Customer aggregate and passed to DomainEventPublisher.publishAll after save in JpaCustomerRepository. The publisher implementation is not in this repository and there is no outbox yet.
+
+    Every message uses the standard envelope (common/event-envelope.yaml). Record key is the aggregateId. Topics use cleanup.policy=delete. Adding an optional field is a minor change; any removal, rename or type change is a new major version on a new topic with dual-publish.
+  tags:
+  - name: customer
+  - name: evt.cus.customer
+  x-service-id: svc-cus-profile-kyc
+  x-event-namespace: evt.cus.customer
+  x-owning-squad: Customer and KYC Squad
+defaultContentType: application/json
+servers:
+  kafka:
+    host: '{bootstrapServers}'
+    protocol: kafka-secure
+    description: FinTechBankX event platform cluster (svc-evt-streaming). mTLS required.
+    variables:
+      bootstrapServers:
+        description: Bootstrap servers, injected per environment by the platform.
+    security:
+    - $ref: '#/components/securitySchemes/mtls'
+channels:
+  created:
+    address: evt.cus.customer.created.v1
+    title: evt.cus.customer.created.v1
+    description: Customer.Customer.Created.v1. A customer profile was created.
+    messages:
+      CustomerCreated:
+        $ref: '#/components/messages/CustomerCreated'
+    bindings:
+      kafka:
+        topic: evt.cus.customer.created.v1
+        partitions: 3
+        replicas: 3
+        topicConfiguration:
+          cleanup.policy:
+          - delete
+          retention.ms: 604800000
+          max.message.bytes: 1048576
+        bindingVersion: 0.5.0
+  contactUpdated:
+    address: evt.cus.customer.contact-updated.v1
+    title: evt.cus.customer.contact-updated.v1
+    description: Customer.Customer.ContactUpdated.v1. The customer's contact details changed.
+    messages:
+      CustomerContactUpdated:
+        $ref: '#/components/messages/CustomerContactUpdated'
+    bindings:
+      kafka:
+        topic: evt.cus.customer.contact-updated.v1
+        partitions: 3
+        replicas: 3
+        topicConfiguration:
+          cleanup.policy:
+          - delete
+          retention.ms: 604800000
+          max.message.bytes: 1048576
+        bindingVersion: 0.5.0
+  creditLimitUpdated:
+    address: evt.cus.customer.credit-limit-updated.v1
+    title: evt.cus.customer.credit-limit-updated.v1
+    description: Customer.Customer.CreditLimitUpdated.v1. The customer's credit limit changed.
+    messages:
+      CustomerCreditLimitUpdated:
+        $ref: '#/components/messages/CustomerCreditLimitUpdated'
+    bindings:
+      kafka:
+        topic: evt.cus.customer.credit-limit-updated.v1
+        partitions: 3
+        replicas: 3
+        topicConfiguration:
+          cleanup.policy:
+          - delete
+          retention.ms: 604800000
+          max.message.bytes: 1048576
+        bindingVersion: 0.5.0
+  creditReserved:
+    address: evt.cus.customer.credit-reserved.v1
+    title: evt.cus.customer.credit-reserved.v1
+    description: Customer.Customer.CreditReserved.v1. Credit was reserved against the customer's limit.
+    messages:
+      CustomerCreditReserved:
+        $ref: '#/components/messages/CustomerCreditReserved'
+    bindings:
+      kafka:
+        topic: evt.cus.customer.credit-reserved.v1
+        partitions: 3
+        replicas: 3
+        topicConfiguration:
+          cleanup.policy:
+          - delete
+          retention.ms: 604800000
+          max.message.bytes: 1048576
+        bindingVersion: 0.5.0
+  creditReleased:
+    address: evt.cus.customer.credit-released.v1
+    title: evt.cus.customer.credit-released.v1
+    description: Customer.Customer.CreditReleased.v1. Previously reserved credit was released.
+    messages:
+      CustomerCreditReleased:
+        $ref: '#/components/messages/CustomerCreditReleased'
+    bindings:
+      kafka:
+        topic: evt.cus.customer.credit-released.v1
+        partitions: 3
+        replicas: 3
+        topicConfiguration:
+          cleanup.policy:
+          - delete
+          retention.ms: 604800000
+          max.message.bytes: 1048576
+        bindingVersion: 0.5.0
+  creditScoreUpdated:
+    address: evt.cus.customer.credit-score-updated.v1
+    title: evt.cus.customer.credit-score-updated.v1
+    description: Customer.Customer.CreditScoreUpdated.v1. The customer's credit score changed.
+    messages:
+      CustomerCreditScoreUpdated:
+        $ref: '#/components/messages/CustomerCreditScoreUpdated'
+    bindings:
+      kafka:
+        topic: evt.cus.customer.credit-score-updated.v1
+        partitions: 3
+        replicas: 3
+        topicConfiguration:
+          cleanup.policy:
+          - delete
+          retention.ms: 604800000
+          max.message.bytes: 1048576
+        bindingVersion: 0.5.0
+  deadLetter:
+    address: evt.cus.customer.dlq.v1
+    title: evt.cus.customer.dlq.v1
+    description: Dead-letter topic for the evt.cus.customer namespace. Written by consumers (not by svc-cus-profile-kyc)
+      after bounded retries; replayed by the owning consumer squad.
+    messages:
+      DeadLetter:
+        $ref: '#/components/messages/DeadLetter'
+    bindings:
+      kafka:
+        topic: evt.cus.customer.dlq.v1
+        partitions: 3
+        replicas: 3
+        topicConfiguration:
+          cleanup.policy:
+          - delete
+          retention.ms: 1209600000
+          max.message.bytes: 1048576
+        bindingVersion: 0.5.0
+operations:
+  publishCustomerCreated:
+    action: send
+    title: Publish Customer.Customer.Created.v1
+    summary: svc-cus-profile-kyc publishes Customer.Customer.Created.v1 through its transactional outbox.
+    channel:
+      $ref: '#/channels/created'
+    messages:
+    - $ref: '#/channels/created/messages/CustomerCreated'
+  publishCustomerContactUpdated:
+    action: send
+    title: Publish Customer.Customer.ContactUpdated.v1
+    summary: svc-cus-profile-kyc publishes Customer.Customer.ContactUpdated.v1 through its transactional outbox.
+    channel:
+      $ref: '#/channels/contactUpdated'
+    messages:
+    - $ref: '#/channels/contactUpdated/messages/CustomerContactUpdated'
+  publishCustomerCreditLimitUpdated:
+    action: send
+    title: Publish Customer.Customer.CreditLimitUpdated.v1
+    summary: svc-cus-profile-kyc publishes Customer.Customer.CreditLimitUpdated.v1 through its transactional outbox.
+    channel:
+      $ref: '#/channels/creditLimitUpdated'
+    messages:
+    - $ref: '#/channels/creditLimitUpdated/messages/CustomerCreditLimitUpdated'
+  publishCustomerCreditReserved:
+    action: send
+    title: Publish Customer.Customer.CreditReserved.v1
+    summary: svc-cus-profile-kyc publishes Customer.Customer.CreditReserved.v1 through its transactional outbox.
+    channel:
+      $ref: '#/channels/creditReserved'
+    messages:
+    - $ref: '#/channels/creditReserved/messages/CustomerCreditReserved'
+  publishCustomerCreditReleased:
+    action: send
+    title: Publish Customer.Customer.CreditReleased.v1
+    summary: svc-cus-profile-kyc publishes Customer.Customer.CreditReleased.v1 through its transactional outbox.
+    channel:
+      $ref: '#/channels/creditReleased'
+    messages:
+    - $ref: '#/channels/creditReleased/messages/CustomerCreditReleased'
+  publishCustomerCreditScoreUpdated:
+    action: send
+    title: Publish Customer.Customer.CreditScoreUpdated.v1
+    summary: svc-cus-profile-kyc publishes Customer.Customer.CreditScoreUpdated.v1 through its transactional outbox.
+    channel:
+      $ref: '#/channels/creditScoreUpdated'
+    messages:
+    - $ref: '#/channels/creditScoreUpdated/messages/CustomerCreditScoreUpdated'
+components:
+  schemas:
+    EventEnvelope:
+      $ref: ./common/event-envelope.yaml#/EventEnvelope
+    EventHeaders:
+      $ref: ./common/event-envelope.yaml#/EventHeaders
+    DeadLetterHeaders:
+      $ref: ./common/event-envelope.yaml#/DeadLetterHeaders
+    MonetaryAmount:
+      $ref: ./common/event-envelope.yaml#/MonetaryAmount
+    DecimalAmount:
+      $ref: ./common/event-envelope.yaml#/DecimalAmount
+    CustomerCreatedData:
+      type: object
+      description: 'Payload of Customer.Customer.Created.v1. Omitted from the source class: customerName (personal
+        data; consumers read it through the customer API).'
+      properties:
+        customerId:
+          type: string
+          description: Customer id (same as aggregateId).
+          minLength: 1
+      required:
+      - customerId
+    CustomerContactUpdatedData:
+      type: object
+      description: 'Payload of Customer.Customer.ContactUpdated.v1. Omitted from the source class: newEmail (personal
+        data); newPhoneNumber (personal data).'
+      properties:
+        customerId:
+          type: string
+          description: Customer id.
+          minLength: 1
+      required:
+      - customerId
+    CustomerCreditLimitUpdatedData:
+      type: object
+      description: Payload of Customer.Customer.CreditLimitUpdated.v1.
+      properties:
+        customerId:
+          type: string
+          description: Customer id.
+          minLength: 1
+        oldCreditLimit:
+          allOf:
+          - $ref: '#/components/schemas/MonetaryAmount'
+          description: Limit before the change.
+        newCreditLimit:
+          allOf:
+          - $ref: '#/components/schemas/MonetaryAmount'
+          description: Limit after the change.
+      required:
+      - customerId
+      - oldCreditLimit
+      - newCreditLimit
+    CustomerCreditReservedData:
+      type: object
+      description: Payload of Customer.Customer.CreditReserved.v1.
+      properties:
+        customerId:
+          type: string
+          description: Customer id.
+          minLength: 1
+        reservedAmount:
+          allOf:
+          - $ref: '#/components/schemas/MonetaryAmount'
+          description: Reserved amount.
+      required:
+      - customerId
+      - reservedAmount
+    CustomerCreditReleasedData:
+      type: object
+      description: Payload of Customer.Customer.CreditReleased.v1.
+      properties:
+        customerId:
+          type: string
+          description: Customer id.
+          minLength: 1
+        releasedAmount:
+          allOf:
+          - $ref: '#/components/schemas/MonetaryAmount'
+          description: Released amount.
+      required:
+      - customerId
+      - releasedAmount
+    CustomerCreditScoreUpdatedData:
+      type: object
+      description: Payload of Customer.Customer.CreditScoreUpdated.v1.
+      properties:
+        customerId:
+          type: string
+          description: Customer id.
+          minLength: 1
+        newCreditScore:
+          type: integer
+          description: 'New credit score. Restricted data: consumers must be entitled to read it.'
+      required:
+      - customerId
+      - newCreditScore
+  messages:
+    CustomerCreated:
+      name: CustomerCreated
+      title: Customer.Customer.Created.v1
+      summary: A customer profile was created.
+      contentType: application/json
+      headers:
+        $ref: '#/components/schemas/EventHeaders'
+      payload:
+        allOf:
+        - $ref: '#/components/schemas/EventEnvelope'
+        - type: object
+          properties:
+            eventType:
+              const: Customer.Customer.Created.v1
+            producer:
+              const: svc-cus-profile-kyc
+            data:
+              $ref: '#/components/schemas/CustomerCreatedData'
+      bindings:
+        kafka:
+          key:
+            type: string
+            description: aggregateId (customerId).
+          bindingVersion: 0.5.0
+      x-source-class: com.bank.customer.domain.CustomerCreatedEvent
+      x-omitted-fields:
+      - customerName (personal data; consumers read it through the customer API)
+    CustomerContactUpdated:
+      name: CustomerContactUpdated
+      title: Customer.Customer.ContactUpdated.v1
+      summary: The customer's contact details changed.
+      contentType: application/json
+      headers:
+        $ref: '#/components/schemas/EventHeaders'
+      payload:
+        allOf:
+        - $ref: '#/components/schemas/EventEnvelope'
+        - type: object
+          properties:
+            eventType:
+              const: Customer.Customer.ContactUpdated.v1
+            producer:
+              const: svc-cus-profile-kyc
+            data:
+              $ref: '#/components/schemas/CustomerContactUpdatedData'
+      bindings:
+        kafka:
+          key:
+            type: string
+            description: aggregateId (customerId).
+          bindingVersion: 0.5.0
+      x-source-class: com.bank.customer.domain.CustomerContactUpdatedEvent
+      x-omitted-fields:
+      - newEmail (personal data)
+      - newPhoneNumber (personal data)
+    CustomerCreditLimitUpdated:
+      name: CustomerCreditLimitUpdated
+      title: Customer.Customer.CreditLimitUpdated.v1
+      summary: The customer's credit limit changed.
+      contentType: application/json
+      headers:
+        $ref: '#/components/schemas/EventHeaders'
+      payload:
+        allOf:
+        - $ref: '#/components/schemas/EventEnvelope'
+        - type: object
+          properties:
+            eventType:
+              const: Customer.Customer.CreditLimitUpdated.v1
+            producer:
+              const: svc-cus-profile-kyc
+            data:
+              $ref: '#/components/schemas/CustomerCreditLimitUpdatedData'
+      bindings:
+        kafka:
+          key:
+            type: string
+            description: aggregateId (customerId).
+          bindingVersion: 0.5.0
+      x-source-class: com.bank.customer.domain.CustomerCreditLimitUpdatedEvent
+    CustomerCreditReserved:
+      name: CustomerCreditReserved
+      title: Customer.Customer.CreditReserved.v1
+      summary: Credit was reserved against the customer's limit.
+      contentType: application/json
+      headers:
+        $ref: '#/components/schemas/EventHeaders'
+      payload:
+        allOf:
+        - $ref: '#/components/schemas/EventEnvelope'
+        - type: object
+          properties:
+            eventType:
+              const: Customer.Customer.CreditReserved.v1
+            producer:
+              const: svc-cus-profile-kyc
+            data:
+              $ref: '#/components/schemas/CustomerCreditReservedData'
+      bindings:
+        kafka:
+          key:
+            type: string
+            description: aggregateId (customerId).
+          bindingVersion: 0.5.0
+      x-source-class: com.bank.customer.domain.CustomerCreditReservedEvent
+    CustomerCreditReleased:
+      name: CustomerCreditReleased
+      title: Customer.Customer.CreditReleased.v1
+      summary: Previously reserved credit was released.
+      contentType: application/json
+      headers:
+        $ref: '#/components/schemas/EventHeaders'
+      payload:
+        allOf:
+        - $ref: '#/components/schemas/EventEnvelope'
+        - type: object
+          properties:
+            eventType:
+              const: Customer.Customer.CreditReleased.v1
+            producer:
+              const: svc-cus-profile-kyc
+            data:
+              $ref: '#/components/schemas/CustomerCreditReleasedData'
+      bindings:
+        kafka:
+          key:
+            type: string
+            description: aggregateId (customerId).
+          bindingVersion: 0.5.0
+      x-source-class: com.bank.customer.domain.CustomerCreditReleasedEvent
+    CustomerCreditScoreUpdated:
+      name: CustomerCreditScoreUpdated
+      title: Customer.Customer.CreditScoreUpdated.v1
+      summary: The customer's credit score changed.
+      contentType: application/json
+      headers:
+        $ref: '#/components/schemas/EventHeaders'
+      payload:
+        allOf:
+        - $ref: '#/components/schemas/EventEnvelope'
+        - type: object
+          properties:
+            eventType:
+              const: Customer.Customer.CreditScoreUpdated.v1
+            producer:
+              const: svc-cus-profile-kyc
+            data:
+              $ref: '#/components/schemas/CustomerCreditScoreUpdatedData'
+      bindings:
+        kafka:
+          key:
+            type: string
+            description: aggregateId (customerId).
+          bindingVersion: 0.5.0
+      x-source-class: com.bank.customer.domain.CustomerCreditScoreUpdatedEvent
+    DeadLetter:
+      name: DeadLetter
+      title: Dead letter for evt.cus.customer
+      summary: A message from this namespace that a consumer could not process after bounded retries.
+      contentType: application/json
+      headers:
+        $ref: '#/components/schemas/DeadLetterHeaders'
+      payload:
+        $ref: '#/components/schemas/EventEnvelope'
+      bindings:
+        kafka:
+          key:
+            type: string
+            description: Original record key (aggregateId).
+          bindingVersion: 0.5.0
+  securitySchemes:
+    mtls:
+      type: X509
+      description: Mutual TLS with platform-issued client certificates.

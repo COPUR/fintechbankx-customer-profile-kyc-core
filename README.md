@@ -56,6 +56,17 @@ Bu repository, FinTechBankX DDD/EDA dönüşümünde **svc-cus-profile-kyc** ser
 | Data split from the monolith | [RUNBOOK-EXTRACT-cus-profile-kyc](docs/migration/RUNBOOK-EXTRACT-cus-profile-kyc.md) |
 | Deployment and Well-Architected mapping | [DEPLOYMENT_AND_WELL_ARCHITECTED](docs/architecture/DEPLOYMENT_AND_WELL_ARCHITECTED.md) |
 
+Published events (contract: [`api/asyncapi/svc-cus-profile-kyc.yaml`](api/asyncapi/svc-cus-profile-kyc.yaml), written through the transactional outbox):
+
+| Topic | When |
+|---|---|
+| `evt.cus.customer.created.v1` | A customer is registered |
+| `evt.cus.customer.contact-updated.v1` | Contact details change |
+| `evt.cus.customer.credit-limit-updated.v1` | The credit limit changes |
+| `evt.cus.customer.credit-reserved.v1` | Credit is reserved (for example for a loan) |
+| `evt.cus.customer.credit-released.v1` | Reserved credit is released |
+| `evt.cus.customer.credit-score-updated.v1` | The credit score changes |
+
 Module layout: `customer-domain` (aggregate, events, ports) ← `customer-application` (use cases) ← `customer-infrastructure` (JPA, outbox, web, security) ← `customer-bootstrap` (Spring Boot app).
 
 ## Dokümantasyon ve Referanslar

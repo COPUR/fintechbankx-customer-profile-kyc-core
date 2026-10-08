@@ -36,6 +36,9 @@ public class CreditMovementJpaEntity {
     @Column(name = "amount", nullable = false, precision = 19, scale = 4, updatable = false)
     private BigDecimal amount;
 
+    @Column(name = "reference", length = 128, updatable = false)
+    private String reference;
+
     @Column(name = "occurred_at", nullable = false, updatable = false)
     private Instant occurredAt;
 
@@ -43,13 +46,14 @@ public class CreditMovementJpaEntity {
     }
 
     CreditMovementJpaEntity(UUID movementId, String customerId, String idempotencyKey, String movementType,
-                            String currency, BigDecimal amount, Instant occurredAt) {
+                            String currency, BigDecimal amount, String reference, Instant occurredAt) {
         this.movementId = movementId;
         this.customerId = customerId;
         this.idempotencyKey = idempotencyKey;
         this.movementType = movementType;
         this.currency = currency;
         this.amount = amount;
+        this.reference = reference;
         this.occurredAt = occurredAt;
     }
 
@@ -59,5 +63,6 @@ public class CreditMovementJpaEntity {
     public String getMovementType() { return movementType; }
     public String getCurrency() { return currency; }
     public BigDecimal getAmount() { return amount; }
+    public String getReference() { return reference; }
     public Instant getOccurredAt() { return occurredAt; }
 }

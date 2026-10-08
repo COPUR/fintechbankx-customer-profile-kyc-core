@@ -37,10 +37,16 @@ jobs:
       - name: Lint and render chart
         run: |
           chart=deploy/helm/customer-profile-kyc-service
-          args="--set image.repository=ci/customer-profile-kyc-service --set image.tag=${{ github.sha }} --set externalSecret.remoteSecretName=ci/db-app"
+          base="--set image.repository=ci/customer-profile-kyc-service --set image.tag=${{ github.sha }} --set externalSecret.remoteSecretName=ci/db-app --set externalSecret.awsRegion=me-central-1"
+          args="$base --set config.DB_URL=ci-db-url --set config.OIDC_ISSUER_URI=ci-oidc-issuer-uri --set config.OIDC_JWK_SET_URI=ci-oidc-jwk-set-uri --set config.OIDC_AUDIENCE=ci-oidc-audience --set config.KAFKA_BOOTSTRAP_SERVERS=ci-kafka-bootstrap-servers"
           helm lint "$chart" $args
           helm template ci "$chart" $args > /dev/null
           helm template ci "$chart" -f "$chart/values-dev.yaml" $args > /dev/null
+          helm template ci "$chart" $args | grep -q "kind: PeerAuthentication"
+          if helm template ci "$chart" $base > /dev/null 2>&1; then
+            echo "chart rendered without its required runtime config" >&2
+            exit 1
+          fi
 
   terraform:
     name: deploy/terraform

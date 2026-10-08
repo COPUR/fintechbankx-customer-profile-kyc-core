@@ -2,6 +2,7 @@ package com.bank.customer.application;
 
 import com.bank.customer.application.dto.CreateCustomerRequest;
 import com.bank.customer.application.dto.CreateCustomerRequestWithCreditScore;
+import com.bank.customer.application.dto.CustomerCreditResponse;
 import com.bank.customer.application.dto.CustomerResponse;
 import com.bank.customer.domain.CreditMovement;
 import com.bank.customer.domain.Customer;
@@ -114,7 +115,15 @@ public class CustomerManagementService {
      * again; the same key with a different instruction is a conflict.
      */
     public CustomerResponse reserveCredit(String customerId, Money amount, String idempotencyKey) {
-        return moveCredit(customerId, CreditMovement.Type.RESERVE, amount, idempotencyKey);
+        return reserveCredit(customerId, amount, idempotencyKey, null);
+    }
+
+    /**
+     * FR-003: Reserve credit once per idempotency key, recording what it was
+     * reserved for (for example the loan id) when the caller says.
+     */
+    public CustomerResponse reserveCredit(String customerId, Money amount, String idempotencyKey, String reference) {
+        return moveCredit(customerId, CreditMovement.Type.RESERVE, amount, idempotencyKey, reference);
     }
     
     /**
@@ -128,10 +137,29 @@ public class CustomerManagementService {
      * FR-003: Release reserved credit, applied once per idempotency key.
      */
     public CustomerResponse releaseCredit(String customerId, Money amount, String idempotencyKey) {
-        return moveCredit(customerId, CreditMovement.Type.RELEASE, amount, idempotencyKey);
+        return releaseCredit(customerId, amount, idempotencyKey, null);
+    }
+
+    /**
+     * FR-003: Release reserved credit once per idempotency key, with an
+     * optional reference to what it was reserved for.
+     */
+    public CustomerResponse releaseCredit(String customerId, Money amount, String idempotencyKey, String reference) {
+        return moveCredit(customerId, CreditMovement.Type.RELEASE, amount, idempotencyKey, reference);
+    }
+
+    /**
+     * Credit position only, for service callers that must not see the
+     * customer's personal data.
+     */
+    public CustomerCreditResponse findCreditPosition(String customerId) {
+        return customerRepository.findById(CustomerId.of(customerId))
+            .map(CustomerCreditResponse::from)
+            .orElseThrow(() -> CustomerNotFoundException.withId(customerId));
     }
     
-    private CustomerResponse moveCredit(String customerId, CreditMovement.Type type, Money amount, String idempotencyKey) {
+    private CustomerResponse moveCredit(String customerId, CreditMovement.Type type, Money amount,
+                                        String idempotencyKey, String reference) {
         CustomerId id = CustomerId.of(customerId);
         Customer customer = customerRepository.findById(id)
             .orElseThrow(() -> CustomerNotFoundException.withId(customerId));
@@ -153,7 +181,7 @@ public class CustomerManagementService {
         }
         Customer savedCustomer = saveAndPublish(customer);
         if (idempotencyKey != null) {
-            creditMovements.record(new CreditMovement(UUID.randomUUID(), id, idempotencyKey, type, amount, clock.instant()));
+            creditMovements.record(new CreditMovement(UUID.randomUUID(), id, idempotencyKey, type, amount, reference, clock.instant()));
         }
         
         return CustomerResponse.from(savedCustomer);

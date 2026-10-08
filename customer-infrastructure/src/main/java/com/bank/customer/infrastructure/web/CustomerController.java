@@ -2,6 +2,7 @@ package com.bank.customer.infrastructure.web;
 
 import com.bank.customer.application.CustomerManagementService;
 import com.bank.customer.application.dto.CreateCustomerRequest;
+import com.bank.customer.application.dto.CustomerCreditResponse;
 import com.bank.customer.application.dto.CustomerResponse;
 import com.bank.shared.kernel.domain.Money;
 import jakarta.validation.Valid;
@@ -18,14 +19,21 @@ import java.util.Currency;
  * Implements Hexagonal Architecture - Adapter for HTTP requests
  * Functional Requirements: FR-001 through FR-004
  *
- * Credit reserve and release are called by other services (loan lifecycle)
- * with a SERVICE-role client-credentials token and an x-idempotency-key, so a
- * retried call never reserves twice.
+ * Credit reserve, release and the credit-position read are called by other
+ * services (loan lifecycle) with a SERVICE-role client-credentials token whose
+ * client is on the allowed list (ServiceCallerPolicy). Services never get the
+ * full customer record: personal data stays with staff and the customer.
+ * Every credit movement needs an x-idempotency-key, so a retried call never
+ * moves credit twice.
  */
 @RestController
 @RequestMapping("/api/v1/customers")
 public class CustomerController {
     
+    static final String IDEMPOTENCY_KEY = "x-idempotency-key";
+    static final String CREDIT_CALLERS =
+        "hasAnyRole('BANKER', 'ADMIN') or (hasRole('SERVICE') and @serviceCallers.allowed(authentication))";
+
     private final CustomerManagementService customerService;
     
     public CustomerController(CustomerManagementService customerService) {
@@ -46,10 +54,19 @@ public class CustomerController {
      * FR-002: Get customer by ID
      */
     @GetMapping("/{customerId}")
-    @PreAuthorize("hasAnyRole('CUSTOMER', 'BANKER', 'ADMIN', 'SERVICE') and (#customerId == authentication.name or hasAnyRole('BANKER', 'ADMIN', 'SERVICE'))")
+    @PreAuthorize("hasAnyRole('BANKER', 'ADMIN') or (hasRole('CUSTOMER') and #customerId == authentication.name)")
     public ResponseEntity<CustomerResponse> getCustomer(@PathVariable String customerId) {
         CustomerResponse response = customerService.findCustomerById(customerId);
         return ResponseEntity.ok(response);
+    }
+
+    /**
+     * Credit position only (limit, used, available), without personal data.
+     */
+    @GetMapping("/{customerId}/credit")
+    @PreAuthorize(CREDIT_CALLERS + " or (hasRole('CUSTOMER') and #customerId == authentication.name)")
+    public ResponseEntity<CustomerCreditResponse> getCreditPosition(@PathVariable String customerId) {
+        return ResponseEntity.ok(customerService.findCreditPosition(customerId));
     }
     
     /**
@@ -70,14 +87,14 @@ public class CustomerController {
      * FR-003: Reserve credit for customer
      */
     @PostMapping("/{customerId}/credit/reserve")
-    @PreAuthorize("hasAnyRole('BANKER', 'ADMIN', 'SERVICE')")
+    @PreAuthorize(CREDIT_CALLERS)
     public ResponseEntity<CustomerResponse> reserveCredit(
-            @RequestHeader(value = "x-idempotency-key", required = false) String idempotencyKey,
+            @RequestHeader(IDEMPOTENCY_KEY) String idempotencyKey,
             @PathVariable String customerId,
             @RequestBody ReserveCreditRequest request) {
         
         Money amount = Money.of(request.amount(), Currency.getInstance(request.currency()));
-        CustomerResponse response = customerService.reserveCredit(customerId, amount, idempotencyKey);
+        CustomerResponse response = customerService.reserveCredit(customerId, amount, idempotencyKey, request.reference());
         return ResponseEntity.ok(response);
     }
     
@@ -85,19 +102,20 @@ public class CustomerController {
      * FR-003: Release reserved credit
      */
     @PostMapping("/{customerId}/credit/release")
-    @PreAuthorize("hasAnyRole('BANKER', 'ADMIN', 'SERVICE')")
+    @PreAuthorize(CREDIT_CALLERS)
     public ResponseEntity<CustomerResponse> releaseCredit(
-            @RequestHeader(value = "x-idempotency-key", required = false) String idempotencyKey,
+            @RequestHeader(IDEMPOTENCY_KEY) String idempotencyKey,
             @PathVariable String customerId,
             @RequestBody ReleaseCreditRequest request) {
         
         Money amount = Money.of(request.amount(), Currency.getInstance(request.currency()));
-        CustomerResponse response = customerService.releaseCredit(customerId, amount, idempotencyKey);
+        CustomerResponse response = customerService.releaseCredit(customerId, amount, idempotencyKey, request.reference());
         return ResponseEntity.ok(response);
     }
     
     // Request DTOs for credit operations
     public record UpdateCreditLimitRequest(java.math.BigDecimal amount, String currency) {}
-    public record ReserveCreditRequest(java.math.BigDecimal amount, String currency) {}
-    public record ReleaseCreditRequest(java.math.BigDecimal amount, String currency) {}
+    /** reference: what the credit is reserved for, for example the loan id. */
+    public record ReserveCreditRequest(java.math.BigDecimal amount, String currency, String reference) {}
+    public record ReleaseCreditRequest(java.math.BigDecimal amount, String currency, String reference) {}
 }

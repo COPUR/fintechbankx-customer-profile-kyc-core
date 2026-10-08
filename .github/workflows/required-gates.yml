@@ -73,6 +73,8 @@ jobs:
       TEST_DB_URL: jdbc:postgresql://localhost:5432/db_cus_profile_kyc_test
       TEST_DB_USERNAME: customer_test
       TEST_DB_PASSWORD: customer_test
+      # Fail, never skip, the PostgreSQL tests if the database is missing.
+      REQUIRE_TEST_DB: 'true'
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -96,7 +98,8 @@ jobs:
           if [ -f build.gradle ] || [ -f settings.gradle ] || [ -f gradlew ]; then
             GRADLE=gradle
             if [ -x ./gradlew ]; then GRADLE=./gradlew; fi
-            if ! $GRADLE --no-daemon test; then
+            # check = tests plus the per-module JaCoCo coverage gates.
+            if ! $GRADLE --no-daemon check; then
               if [ -f .ci/allow-gradle-fail ]; then
                 echo "Gradle test failed but .ci/allow-gradle-fail is present; continuing."
               else

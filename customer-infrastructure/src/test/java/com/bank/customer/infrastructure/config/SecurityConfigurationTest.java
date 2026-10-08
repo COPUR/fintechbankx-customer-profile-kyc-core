@@ -27,6 +27,41 @@ class SecurityConfigurationTest {
         assertThat(SecurityConfiguration.realmRoles(jwt(Map.of("realm_access", Map.of())))).isEmpty();
     }
 
+    @Test
+    void tokensMustNameThisServiceInTheirAudience() {
+        var validator = SecurityConfiguration.audienceValidator("customer-profile-kyc-service");
+
+        assertThat(validator.validate(jwt(Map.of("aud", List.of("account", "customer-profile-kyc-service")))).hasErrors()).isFalse();
+        assertThat(validator.validate(jwt(Map.of("aud", List.of("loan-frontend")))).hasErrors()).isTrue();
+        assertThat(validator.validate(jwt(Map.of("scope", "openid"))).hasErrors()).isTrue();
+    }
+
+    @Test
+    void theDecoderUsesTheConfiguredKeySetWithoutCallingItAtStartup() {
+        var properties = new org.springframework.boot.autoconfigure.security.oauth2.resource.OAuth2ResourceServerProperties();
+        properties.getJwt().setIssuerUri("https://keycloak.example/realms/fintechbankx");
+        properties.getJwt().setJwkSetUri("https://keycloak.example/realms/fintechbankx/protocol/openid-connect/certs");
+
+        assertThat(new SecurityConfiguration().jwtDecoder(properties, "customer-profile-kyc-service"))
+            .isInstanceOf(org.springframework.security.oauth2.jwt.NimbusJwtDecoder.class);
+    }
+
+    @Test
+    void anEmptyAudienceSettingStopsStartup() {
+        org.assertj.core.api.Assertions.assertThatThrownBy(() -> SecurityConfiguration.audienceValidator(" "))
+            .isInstanceOf(IllegalStateException.class);
+    }
+
+    @Test
+    void onlyListedClientsPassTheServiceCallerPolicy() {
+        var policy = new ServiceCallerPolicy("svc-ln-loan-lifecycle, svc-pay-initiation-settlement");
+
+        assertThat(policy.allowed(SecurityConfiguration.keycloakRealmRoles().convert(jwt(Map.of("azp", "svc-ln-loan-lifecycle"))))).isTrue();
+        assertThat(policy.allowed(SecurityConfiguration.keycloakRealmRoles().convert(jwt(Map.of("azp", "svc-rsk-decisioning"))))).isFalse();
+        assertThat(policy.allowed(SecurityConfiguration.keycloakRealmRoles().convert(jwt(Map.of())))).isFalse();
+        assertThat(policy.allowed(null)).isFalse();
+    }
+
     private static Jwt jwt(Map<String, Object> claims) {
         Jwt.Builder builder = Jwt.withTokenValue("token").header("alg", "RS256").subject("user-1")
             .issuedAt(Instant.now()).expiresAt(Instant.now().plusSeconds(60));

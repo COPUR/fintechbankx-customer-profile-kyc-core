@@ -35,18 +35,21 @@ dependencies {
     // Testing
     testImplementation 'org.springframework.boot:spring-boot-starter-test'
     testImplementation 'org.springframework.security:spring-security-test'
+    testImplementation 'org.testcontainers:junit-jupiter'
+    testImplementation 'org.testcontainers:postgresql'
 }
 
 jacoco {
     toolVersion = "0.8.14"
 }
 
-// JPA adapters and Spring configuration are covered by customer-bootstrap's
-// integration tests against Postgres; this module gates the unit-testable code.
-def customerInfrastructureCoverageIncludes = [
-    'com/bank/customer/infrastructure/outbox/**',
-    'com/bank/customer/infrastructure/persistence/CustomerPersistenceMapper*',
-    'com/bank/customer/infrastructure/web/**'
+// The whole module is gated except SecurityConfiguration's filter-chain and
+// JwtDecoder beans and the outbox Kafka wiring, which need a running context and
+// are exercised by customer-bootstrap's integration tests. JpaPersistenceTest
+// runs the JPA adapters against PostgreSQL (TEST_DB_URL or Docker; CI sets
+// REQUIRE_TEST_DB so it cannot skip).
+def customerInfrastructureCoverageExcludes = [
+    'com/bank/customer/infrastructure/config/OutboxConfiguration*'
 ]
 
 jacocoTestReport {
@@ -58,7 +61,7 @@ jacocoTestReport {
     }
     afterEvaluate {
         classDirectories.setFrom(files(classDirectories.files.collect { dir ->
-            fileTree(dir: dir, include: customerInfrastructureCoverageIncludes)
+            fileTree(dir: dir, exclude: customerInfrastructureCoverageExcludes)
         }))
     }
 }
@@ -67,7 +70,7 @@ jacocoTestCoverageVerification {
     dependsOn jacocoTestReport
     afterEvaluate {
         classDirectories.setFrom(files(classDirectories.files.collect { dir ->
-            fileTree(dir: dir, include: customerInfrastructureCoverageIncludes)
+            fileTree(dir: dir, exclude: customerInfrastructureCoverageExcludes)
         }))
     }
     violationRules {

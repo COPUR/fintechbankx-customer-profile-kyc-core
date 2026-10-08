@@ -74,7 +74,7 @@ class CustomerManagementServiceTest {
         when(creditMovements.find(CustomerId.of("CUST-IDEM"), "key-1")).thenReturn(Optional.empty());
         when(customerRepository.save(any(Customer.class))).thenAnswer(invocation -> invocation.getArgument(0));
 
-        CustomerResponse response = service.reserveCredit("CUST-IDEM", Money.aed(new BigDecimal("1000.00")), "key-1");
+        CustomerResponse response = service.reserveCredit("CUST-IDEM", Money.aed(new BigDecimal("1000.00")), "key-1", "LOAN-7");
 
         assertThat(response.usedCredit()).isEqualByComparingTo("1000.00");
         @SuppressWarnings("unchecked")
@@ -86,6 +86,7 @@ class CustomerManagementServiceTest {
         assertThat(movement.getValue().type()).isEqualTo(CreditMovement.Type.RESERVE);
         assertThat(movement.getValue().idempotencyKey()).isEqualTo("key-1");
         assertThat(movement.getValue().occurredAt()).isEqualTo(NOW);
+        assertThat(movement.getValue().reference()).isEqualTo("LOAN-7");
         assertThat(customer.getDomainEvents()).isEmpty();
     }
 
@@ -95,7 +96,7 @@ class CustomerManagementServiceTest {
         Money amount = Money.aed(new BigDecimal("1000.00"));
         when(customerRepository.findById(CustomerId.of("CUST-IDEM"))).thenReturn(Optional.of(customer));
         when(creditMovements.find(CustomerId.of("CUST-IDEM"), "key-1")).thenReturn(Optional.of(
-            new CreditMovement(UUID.randomUUID(), CustomerId.of("CUST-IDEM"), "key-1", CreditMovement.Type.RESERVE, amount, NOW)));
+            new CreditMovement(UUID.randomUUID(), CustomerId.of("CUST-IDEM"), "key-1", CreditMovement.Type.RESERVE, amount, null, NOW)));
 
         CustomerResponse response = service.reserveCredit("CUST-IDEM", amount, "key-1");
 
@@ -111,7 +112,7 @@ class CustomerManagementServiceTest {
         when(customerRepository.findById(CustomerId.of("CUST-IDEM"))).thenReturn(Optional.of(customer));
         when(creditMovements.find(CustomerId.of("CUST-IDEM"), "key-1")).thenReturn(Optional.of(
             new CreditMovement(UUID.randomUUID(), CustomerId.of("CUST-IDEM"), "key-1", CreditMovement.Type.RESERVE,
-                Money.aed(new BigDecimal("1000.00")), NOW)));
+                Money.aed(new BigDecimal("1000.00")), null, NOW)));
 
         assertThatThrownBy(() -> service.releaseCredit("CUST-IDEM", Money.aed(new BigDecimal("1000.00")), "key-1"))
             .isInstanceOf(IdempotencyKeyConflictException.class);
@@ -256,6 +257,30 @@ class CustomerManagementServiceTest {
         assertThatThrownBy(() -> service.findCustomerByEmail("missing@example.com"))
             .isInstanceOf(CustomerNotFoundException.class)
             .hasMessageContaining("missing@example.com");
+    }
+
+    @Test
+    void creditPositionCarriesNoPersonalData() {
+        Customer customer = existingCustomer();
+        customer.reserveCredit(Money.aed(new BigDecimal("1000.00")));
+        when(customerRepository.findById(CustomerId.of("CUST-IDEM"))).thenReturn(Optional.of(customer));
+
+        var credit = service.findCreditPosition("CUST-IDEM");
+
+        assertThat(credit.customerId()).isEqualTo("CUST-IDEM");
+        assertThat(credit.currency()).isEqualTo("AED");
+        assertThat(credit.usedCredit()).isEqualByComparingTo("1000.00");
+        assertThat(credit.availableCredit()).isEqualByComparingTo(credit.creditLimit().subtract(credit.usedCredit()));
+        assertThat(com.bank.customer.application.dto.CustomerCreditResponse.class.getRecordComponents())
+            .extracting(java.lang.reflect.RecordComponent::getName)
+            .containsExactly("customerId", "currency", "creditLimit", "usedCredit", "availableCredit");
+    }
+
+    @Test
+    void creditPositionOfAnUnknownCustomerIsNotFound() {
+        when(customerRepository.findById(CustomerId.of("CUST-NONE"))).thenReturn(Optional.empty());
+
+        assertThatThrownBy(() -> service.findCreditPosition("CUST-NONE")).isInstanceOf(CustomerNotFoundException.class);
     }
 
     @Test

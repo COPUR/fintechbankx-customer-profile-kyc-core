@@ -10,7 +10,9 @@ import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.dao.OptimisticLockingFailureException;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
+import org.springframework.http.converter.HttpMessageNotReadableException;
 import org.springframework.web.bind.MethodArgumentNotValidException;
+import org.springframework.web.bind.MissingRequestHeaderException;
 import org.springframework.web.bind.annotation.ExceptionHandler;
 import org.springframework.web.bind.annotation.RestControllerAdvice;
 
@@ -55,12 +57,16 @@ public class ApiExceptionHandler {
         return error(HttpStatus.CONFLICT, "DUPLICATE_REQUEST", "A conflicting request was already processed; retry");
     }
 
-    @ExceptionHandler({IllegalArgumentException.class, MethodArgumentNotValidException.class})
+    @ExceptionHandler({IllegalArgumentException.class, MethodArgumentNotValidException.class,
+            MissingRequestHeaderException.class, HttpMessageNotReadableException.class})
     ResponseEntity<ErrorResponse> badRequest(Exception ex) {
-        String message = ex instanceof MethodArgumentNotValidException invalid
-            ? invalid.getBindingResult().getAllErrors().stream()
-                .map(e -> e.getDefaultMessage()).findFirst().orElse("Invalid request")
-            : ex.getMessage();
+        String message = switch (ex) {
+            case MethodArgumentNotValidException invalid -> invalid.getBindingResult().getAllErrors().stream()
+                .map(e -> e.getDefaultMessage()).findFirst().orElse("Invalid request");
+            case MissingRequestHeaderException missing -> missing.getHeaderName() + " header is required";
+            case HttpMessageNotReadableException unreadable -> "Malformed request body";
+            default -> ex.getMessage();
+        };
         return error(HttpStatus.BAD_REQUEST, "INVALID_REQUEST", message);
     }
 

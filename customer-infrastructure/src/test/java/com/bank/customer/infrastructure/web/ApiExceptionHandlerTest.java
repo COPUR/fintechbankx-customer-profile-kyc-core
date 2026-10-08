@@ -54,4 +54,19 @@ class ApiExceptionHandlerTest {
             .extracting(ResponseEntity::getStatusCode, r -> r.getBody().message())
             .containsExactly(HttpStatus.BAD_REQUEST, "Email must be valid");
     }
+
+    @Test
+    void aMissingHeaderOrUnreadableBodyIsAStable400() throws Exception {
+        var parameter = new org.springframework.core.MethodParameter(
+            CustomerController.class.getMethod("reserveCredit", String.class, String.class, CustomerController.ReserveCreditRequest.class), 0);
+
+        assertThat(handler.badRequest(new org.springframework.web.bind.MissingRequestHeaderException("x-idempotency-key", parameter))
+            .getBody().message()).isEqualTo("x-idempotency-key header is required");
+        assertThat(handler.badRequest(new org.springframework.http.converter.HttpMessageNotReadableException(
+                "bad", new org.springframework.mock.http.MockHttpInputMessage(new byte[0])))
+            .getBody()).satisfies(body -> {
+                assertThat(body.code()).isEqualTo("INVALID_REQUEST");
+                assertThat(body.message()).isEqualTo("Malformed request body");
+            });
+    }
 }

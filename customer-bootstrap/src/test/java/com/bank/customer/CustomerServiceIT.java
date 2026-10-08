@@ -133,33 +133,49 @@ class CustomerServiceIT {
     void retriedReservationFromTheLoanServiceMovesCreditOnce() throws Exception {
         String customerId = create("retry@example.com", "10000.00");
 
-        reserve(customerId, "2500.00", "loan-key-1").andExpect(status().isOk())
+        // The loan service derives the key from the loan id, so its retry resends the same key.
+        reserve(customerId, "2500.00", "LOAN-1:reserve").andExpect(status().isOk())
             .andExpect(jsonPath("$.availableCredit").value(7500.00));
-        reserve(customerId, "2500.00", "loan-key-1").andExpect(status().isOk())
+        reserve(customerId, "2500.00", "LOAN-1:reserve").andExpect(status().isOk())
             .andExpect(jsonPath("$.availableCredit").value(7500.00));
 
         assertThat(jdbc.queryForObject("select used_credit from sc_cus_profile_kyc.customer where customer_id = ?", BigDecimal.class, customerId))
             .isEqualByComparingTo("2500.00");
         assertThat(jdbc.queryForObject("select count(*) from sc_cus_profile_kyc.credit_movement", Integer.class)).isEqualTo(1);
+        assertThat(jdbc.queryForObject("select reference from sc_cus_profile_kyc.credit_movement", String.class)).isEqualTo("LOAN-1");
         assertThat(jdbc.queryForList("select event_type from sc_cus_profile_kyc.outbox_event where aggregate_id = ? order by created_seq", String.class, customerId))
             .containsExactly("Customer.Customer.Created.v1", "Customer.Customer.CreditReserved.v1");
 
-        reserve(customerId, "2600.00", "loan-key-1")
+        reserve(customerId, "2600.00", "LOAN-1:reserve")
             .andExpect(status().isConflict())
             .andExpect(jsonPath("$.code").value("IDEMPOTENCY_KEY_REUSED"));
         mvc.perform(asService(post("/api/v1/customers/{id}/credit/release", customerId))
-                .header("x-idempotency-key", "loan-key-2")
+                .header("x-idempotency-key", "LOAN-1:release")
                 .contentType(MediaType.APPLICATION_JSON)
-                .content("{\"amount\": 2500.00, \"currency\": \"AED\"}"))
+                .content("{\"amount\": 2500.00, \"currency\": \"AED\", \"reference\": \"LOAN-1\"}"))
             .andExpect(status().isOk())
             .andExpect(jsonPath("$.usedCredit").value(0));
+    }
+
+    @Test
+    void aCreditMovementWithoutAnIdempotencyKeyIsRefused() throws Exception {
+        String customerId = create("nokey@example.com", "10000.00");
+
+        mvc.perform(asService(post("/api/v1/customers/{id}/credit/reserve", customerId))
+                .contentType(MediaType.APPLICATION_JSON)
+                .content("{\"amount\": 10.00, \"currency\": \"AED\"}"))
+            .andExpect(status().isBadRequest())
+            .andExpect(jsonPath("$.code").value("INVALID_REQUEST"))
+            .andExpect(jsonPath("$.message").value("x-idempotency-key header is required"));
+        assertThat(jdbc.queryForObject("select used_credit from sc_cus_profile_kyc.customer where customer_id = ?", BigDecimal.class, customerId))
+            .isEqualByComparingTo("0");
     }
 
     @Test
     void insufficientCreditIsA422ThatDoesNotDiscloseTheLimit() throws Exception {
         String customerId = create("small@example.com", "1000.00");
 
-        reserve(customerId, "1000.01", "loan-key-3")
+        reserve(customerId, "1000.01", "LOAN-3:reserve")
             .andExpect(status().isUnprocessableEntity())
             .andExpect(jsonPath("$.code").value("INSUFFICIENT_CREDIT"))
             .andExpect(jsonPath("$.message").value(not(containsString("1000"))));
@@ -167,7 +183,7 @@ class CustomerServiceIT {
     }
 
     @Test
-    void customersReadOnlyTheirOwnProfileWhileStaffAndServicesReadAny() throws Exception {
+    void servicesReadOnlyTheCreditPositionAndOnlyListedServicesMayUseIt() throws Exception {
         String customerId = create("self@example.com", "3000.00");
 
         mvc.perform(get("/api/v1/customers/{id}", customerId).with(jwt().jwt(j -> j.subject(customerId))
@@ -177,10 +193,23 @@ class CustomerServiceIT {
                 .authorities(new SimpleGrantedAuthority("ROLE_CUSTOMER"))))
             .andExpect(status().isForbidden());
         mvc.perform(asService(get("/api/v1/customers/{id}", customerId)))
+            .andExpect(status().isForbidden());
+        mvc.perform(asService(get("/api/v1/customers/{id}/credit", customerId)))
             .andExpect(status().isOk())
-            .andExpect(jsonPath("$.availableCredit").value(3000.00));
+            .andExpect(jsonPath("$.availableCredit").value(3000.00))
+            .andExpect(jsonPath("$.currency").value("AED"))
+            .andExpect(jsonPath("$.email").doesNotExist())
+            .andExpect(jsonPath("$.firstName").doesNotExist());
+        mvc.perform(asUnlistedService(get("/api/v1/customers/{id}/credit", customerId)))
+            .andExpect(status().isForbidden());
+        mvc.perform(asUnlistedService(post("/api/v1/customers/{id}/credit/reserve", customerId))
+                .header("x-idempotency-key", "other-1")
+                .contentType(MediaType.APPLICATION_JSON)
+                .content("{\"amount\": 10.00, \"currency\": \"AED\"}"))
+            .andExpect(status().isForbidden());
         mvc.perform(post("/api/v1/customers/{id}/credit/reserve", customerId)
                 .with(jwt().jwt(j -> j.subject(customerId)).authorities(new SimpleGrantedAuthority("ROLE_CUSTOMER")))
+                .header("x-idempotency-key", "self-1")
                 .contentType(MediaType.APPLICATION_JSON)
                 .content("{\"amount\": 10.00, \"currency\": \"AED\"}"))
             .andExpect(status().isForbidden());
@@ -194,11 +223,13 @@ class CustomerServiceIT {
             values ('42', 'Legacy', 'Customer', 'AED', 50000, 20000, 42, timestamp '2024-01-01 10:00', timestamp '2024-06-01 10:00', 3)
             """);
 
-        mvc.perform(asService(get("/api/v1/customers/{id}", "42")))
+        mvc.perform(asBanker(get("/api/v1/customers/{id}", "42")))
             .andExpect(status().isOk())
-            .andExpect(jsonPath("$.email").doesNotExist())
+            .andExpect(jsonPath("$.email").doesNotExist());
+        mvc.perform(asService(get("/api/v1/customers/{id}/credit", "42")))
+            .andExpect(status().isOk())
             .andExpect(jsonPath("$.availableCredit").value(30000.00));
-        reserve("42", "30000.00", "loan-key-legacy").andExpect(status().isOk());
+        reserve("42", "30000.00", "LOAN-42:reserve").andExpect(status().isOk());
 
         assertThat(jdbc.queryForMap("select used_credit, version from sc_cus_profile_kyc.customer where customer_id = '42'"))
             .containsEntry("version", 4L)
@@ -266,7 +297,7 @@ class CustomerServiceIT {
         return mvc.perform(asService(post("/api/v1/customers/{id}/credit/reserve", customerId))
             .header("x-idempotency-key", key)
             .contentType(MediaType.APPLICATION_JSON)
-            .content("{\"amount\": %s, \"currency\": \"AED\"}".formatted(amount)));
+            .content("{\"amount\": %s, \"currency\": \"AED\", \"reference\": \"%s\"}".formatted(amount, key.split(":")[0])));
     }
 
     private static String customerJson(String email, String limit) {
@@ -283,6 +314,14 @@ class CustomerServiceIT {
 
     private static MockHttpServletRequestBuilder asService(MockHttpServletRequestBuilder request) {
         return request.header("x-fapi-interaction-id", "it-interaction-3")
-            .with(jwt().jwt(j -> j.subject("svc-ln-loan-lifecycle")).authorities(new SimpleGrantedAuthority("ROLE_SERVICE")));
+            .with(jwt().jwt(j -> j.subject("service-account-loan").claim("azp", "svc-ln-loan-lifecycle"))
+                .authorities(new SimpleGrantedAuthority("ROLE_SERVICE")));
+    }
+
+    /** A client-credentials client that holds SERVICE but is not on SERVICE_CALLERS. */
+    private static MockHttpServletRequestBuilder asUnlistedService(MockHttpServletRequestBuilder request) {
+        return request.header("x-fapi-interaction-id", "it-interaction-4")
+            .with(jwt().jwt(j -> j.subject("service-account-risk").claim("azp", "svc-rsk-decisioning"))
+                .authorities(new SimpleGrantedAuthority("ROLE_SERVICE")));
     }
 }

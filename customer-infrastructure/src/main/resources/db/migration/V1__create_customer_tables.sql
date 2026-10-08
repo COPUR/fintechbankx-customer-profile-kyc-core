@@ -25,6 +25,7 @@ CREATE TABLE customer (
     credit_score        INTEGER,
     monthly_income      NUMERIC(19, 4),
     legacy_customer_id  BIGINT,
+    legacy_synced_version BIGINT,
     created_at          TIMESTAMP      NOT NULL,
     updated_at          TIMESTAMP      NOT NULL,
     version             BIGINT         NOT NULL DEFAULT 0,
@@ -41,10 +42,13 @@ CREATE UNIQUE INDEX uq_customer_email ON customer (lower(email)) WHERE email IS 
 
 COMMENT ON TABLE customer IS 'Customer profile and credit position; personal data, encrypted at rest (KMS).';
 COMMENT ON COLUMN customer.legacy_customer_id IS 'public.customers.id in the monolith, for migrated rows only.';
+COMMENT ON COLUMN customer.legacy_synced_version IS 'Version the backfill last copied; equal to version while the service has not changed the row.';
 
 -- Journal of applied credit reservations and releases. A caller retrying a
 -- reserve or release with the same x-idempotency-key finds its movement here
--- and the credit is not moved twice.
+-- and the credit is not moved twice. reference is what the credit was moved
+-- for (the loan id when the loan service calls), so reservations can be
+-- released and reconciled per loan.
 CREATE TABLE credit_movement (
     movement_id      UUID           PRIMARY KEY,
     customer_id      VARCHAR(64)    NOT NULL REFERENCES customer (customer_id),
@@ -52,6 +56,7 @@ CREATE TABLE credit_movement (
     movement_type    VARCHAR(16)    NOT NULL,
     currency         VARCHAR(3)     NOT NULL,
     amount           NUMERIC(19, 4) NOT NULL,
+    reference        VARCHAR(128),
     occurred_at      TIMESTAMPTZ    NOT NULL,
 
     CONSTRAINT ck_credit_movement_type CHECK (movement_type IN ('RESERVE', 'RELEASE')),
@@ -60,3 +65,4 @@ CREATE TABLE credit_movement (
 );
 
 CREATE INDEX ix_credit_movement_occurred_at ON credit_movement (occurred_at);
+CREATE INDEX ix_credit_movement_reference ON credit_movement (customer_id, reference) WHERE reference IS NOT NULL;

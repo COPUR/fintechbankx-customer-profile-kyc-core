@@ -1,4 +1,4 @@
-package com.bank.customer;
+package com.bank.customer.infrastructure.persistence;
 
 import org.junit.jupiter.api.Assumptions;
 import org.springframework.test.context.DynamicPropertyRegistry;
