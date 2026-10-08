@@ -3,6 +3,8 @@ name: Required Gates
 on:
   pull_request:
     branches: [main, dev, staging]
+    # labeled/unlabeled: adding or removing no-behaviour-change re-runs the TDD guard.
+    types: [opened, synchronize, reopened, labeled, unlabeled]
   push:
     branches: [main, dev, staging]
 
@@ -80,6 +82,28 @@ jobs:
         uses: actions/checkout@v4
         with:
           fetch-depth: 0
+
+      - name: TDD guard - production changes come with test changes (ADR-029)
+        if: github.event_name == 'pull_request'
+        env:
+          BASE_REF: ${{ github.base_ref }}
+          NO_BEHAVIOUR_CHANGE: ${{ contains(github.event.pull_request.labels.*.name, 'no-behaviour-change') }}
+        shell: bash
+        run: |
+          if [ "$NO_BEHAVIOUR_CHANGE" = "true" ]; then
+            echo "Label no-behaviour-change is set; TDD guard skipped."
+            exit 0
+          fi
+          changed="$(git diff --name-only "origin/${BASE_REF}...HEAD")"
+          main_changes="$(grep -E '(^|/)src/main/' <<<"$changed" || true)"
+          test_changes="$(grep -E '(^|/)src/test/' <<<"$changed" || true)"
+          if [ -n "$main_changes" ] && [ -z "$test_changes" ]; then
+            echo "This PR changes production code but no test (ADR-029: tests come with or before the code):"
+            echo "$main_changes"
+            echo "Add or change a test under src/test/, or label the PR no-behaviour-change if it really changes no behaviour."
+            exit 1
+          fi
+          echo "TDD guard passed."
 
       - name: Set up Java 23
         uses: actions/setup-java@v4
