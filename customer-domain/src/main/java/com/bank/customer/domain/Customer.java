@@ -318,12 +318,69 @@ public class Customer extends AggregateRoot<CustomerId> {
         addDomainEvent(new CustomerCreditReservedEvent(customerId, amount));
     }
     
-    public void releaseCredit(Money amount) {
+    /**
+     * Reserves credit for the purpose the reservation names (its reference)
+     * and returns the reservation with the amount added. Nothing changes if
+     * the credit is insufficient.
+     */
+    public CreditReservation reserveCredit(Money amount, CreditReservation reservation) {
+        requireOwn(reservation);
         requirePositive(amount);
+        CreditReservation updated = reservation.reserve(amount);
+        reserveCredit(amount);
+        return updated;
+    }
+
+    /**
+     * Releases credit from the reservation the caller named. Partial releases
+     * are allowed; more than the reservation still holds is refused, even if
+     * used credit would cover it, so a cancel can never free another
+     * reservation's credit.
+     *
+     * @return the reservation with the amount released
+     * @throws ReleaseExceedsReservationException if the amount is more than the reservation still holds
+     */
+    public CreditReservation releaseCredit(Money amount, CreditReservation reservation) {
+        requireOwn(reservation);
+        requirePositive(amount);
+        CreditReservation updated = reservation.release(amount);
+        applyRelease(amount);
+        return updated;
+    }
+
+    /**
+     * Releases credit no reservation accounts for: balances migrated from the
+     * monolith and credit reserved without a reference. At most used credit
+     * minus every open reservation; nothing floors at zero.
+     *
+     * @param openReservations what all this customer's reservations still hold
+     * @throws ReservationNotFoundException if the amount is more than the untracked used credit
+     */
+    public void releaseUntrackedCredit(Money amount, Money openReservations) {
+        requirePositive(amount);
+        Objects.requireNonNull(openReservations, "Open reservations cannot be null");
+        Money untracked = creditProfile.getUsedCredit().subtract(openReservations);
+        if (untracked.isNegative()) {
+            untracked = Money.zero(untracked.getCurrency());
+        }
+        if (amount.compareTo(untracked) > 0) {
+            throw new ReservationNotFoundException(amount, untracked);
+        }
+        applyRelease(amount);
+    }
+
+    private void applyRelease(Money amount) {
         this.creditProfile = this.creditProfile.releaseCredit(amount);
         this.updatedAt = LocalDateTime.now();
-        
+
         addDomainEvent(new CustomerCreditReleasedEvent(customerId, amount));
+    }
+
+    private void requireOwn(CreditReservation reservation) {
+        Objects.requireNonNull(reservation, "Reservation cannot be null");
+        if (!reservation.customerId().equals(customerId)) {
+            throw new IllegalArgumentException("The reservation belongs to another customer");
+        }
     }
     
     private void requirePositive(Money amount) {

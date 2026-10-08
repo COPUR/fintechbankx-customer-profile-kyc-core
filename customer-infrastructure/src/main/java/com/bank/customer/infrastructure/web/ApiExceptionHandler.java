@@ -9,6 +9,8 @@ import com.bank.customer.domain.IdentityDirectoryUnavailableException;
 import com.bank.customer.domain.IdentityLinkConflictException;
 import com.bank.customer.domain.IdentityUserNotFoundException;
 import com.bank.customer.domain.InsufficientCreditException;
+import com.bank.customer.domain.ReleaseExceedsReservationException;
+import com.bank.customer.domain.ReservationNotFoundException;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.slf4j.MDC;
@@ -52,6 +54,22 @@ public class ApiExceptionHandler {
     ResponseEntity<ErrorResponse> currencyMismatch(CreditCurrencyMismatchException ex) {
         return error(HttpStatus.UNPROCESSABLE_ENTITY, "CURRENCY_MISMATCH",
             "The amount is not in the currency the customer's credit is held in");
+    }
+
+    /** A release named a reservation and asked for more than it still holds; nothing was released. */
+    @ExceptionHandler(ReleaseExceedsReservationException.class)
+    ResponseEntity<ErrorResponse> releaseExceedsReservation(ReleaseExceedsReservationException ex) {
+        log.info("Credit release refused: {}", ex.getMessage());
+        return error(HttpStatus.UNPROCESSABLE_ENTITY, "RELEASE_EXCEEDS_RESERVATION",
+            "The release is larger than what is still reserved under this reference");
+    }
+
+    /** A release named no known reservation and asked for more than the untracked used credit. */
+    @ExceptionHandler(ReservationNotFoundException.class)
+    ResponseEntity<ErrorResponse> reservationNotFound(ReservationNotFoundException ex) {
+        log.info("Credit release refused: {}", ex.getMessage());
+        return error(HttpStatus.UNPROCESSABLE_ENTITY, "RESERVATION_NOT_FOUND",
+            "No reservation matches this reference, and the release is larger than the used credit no reservation holds");
     }
 
     @ExceptionHandler(CreditLimitBelowUsedCreditException.class)

@@ -11,11 +11,16 @@
 --
 -- Re-runnable: a reload resets the three credit positions, bumps the version
 -- (so an aggregate loaded before the reset cannot overwrite it) and deletes
--- their credit_movement rows, so a parity run can reuse its idempotency keys.
+-- their credit_movement and credit_reservation rows, so a parity run can reuse
+-- its idempotency keys and references. Their seeded used credit has no
+-- reservation: a release naming no reservation may free it (untracked credit).
 -- Run after Flyway has created sc_cus_profile_kyc (the service has started once):
 --   psql "<customer service conninfo>" -X -1 -v ON_ERROR_STOP=1 -f db/fixtures/parity_seed_customers.sql
 
 DELETE FROM sc_cus_profile_kyc.credit_movement
+ WHERE customer_id IN ('CUST-12345678', 'CUST-87654321', 'CUST-11111111');
+
+DELETE FROM sc_cus_profile_kyc.credit_reservation
  WHERE customer_id IN ('CUST-12345678', 'CUST-87654321', 'CUST-11111111');
 
 INSERT INTO sc_cus_profile_kyc.customer AS c (

@@ -24,6 +24,8 @@ import com.bank.customer.domain.port.in.RegisterCustomerCommand;
 import com.bank.customer.domain.port.in.RegisterCustomerUseCase;
 import com.bank.customer.domain.port.in.UpdateCreditLimitUseCase;
 import com.bank.customer.domain.port.out.CreditMovementJournal;
+import com.bank.customer.domain.port.out.CreditReservationLedger;
+import com.bank.customer.domain.CreditReservation;
 import com.bank.customer.domain.port.out.CustomerEventPublisher;
 import com.bank.customer.domain.port.out.CustomerRepository;
 import com.bank.customer.domain.port.out.IdentityDirectoryPort;
@@ -55,17 +57,20 @@ public class CustomerManagementService implements RegisterCustomerUseCase, GetCu
     private final CustomerRepository customerRepository;
     private final CustomerEventPublisher eventPublisher;
     private final CreditMovementJournal creditMovements;
+    private final CreditReservationLedger creditReservations;
     private final IdentityDirectoryPort identityDirectory;
     private final Clock clock;
 
     public CustomerManagementService(CustomerRepository customerRepository,
                                      CustomerEventPublisher eventPublisher,
                                      CreditMovementJournal creditMovements,
+                                     CreditReservationLedger creditReservations,
                                      IdentityDirectoryPort identityDirectory,
                                      Clock clock) {
         this.customerRepository = customerRepository;
         this.eventPublisher = eventPublisher;
         this.creditMovements = creditMovements;
+        this.creditReservations = creditReservations;
         this.identityDirectory = identityDirectory;
         this.clock = clock;
     }
@@ -149,7 +154,11 @@ public class CustomerManagementService implements RegisterCustomerUseCase, GetCu
         return CreditPosition.of(moveCredit(CreditMovement.Type.RESERVE, command));
     }
 
-    /** FR-003: release reserved credit once per idempotency key. */
+    /**
+     * FR-003: release reserved credit once per idempotency key. A release
+     * whose reference names a reservation takes at most what it still holds;
+     * any other release takes at most the untracked used credit.
+     */
     @Override
     public CreditPosition releaseCredit(CreditMovementCommand command) {
         return CreditPosition.of(moveCredit(CreditMovement.Type.RELEASE, command));
@@ -166,12 +175,28 @@ public class CustomerManagementService implements RegisterCustomerUseCase, GetCu
             return customer;
         }
 
+        Optional<CreditReservation> reservation = command.reference() == null
+            ? Optional.empty()
+            : creditReservations.find(command.customerId(), command.reference());
+        Optional<CreditReservation> changed = Optional.empty();
         if (type == CreditMovement.Type.RESERVE) {
-            customer.reserveCredit(command.amount());
+            if (command.reference() == null) {
+                customer.reserveCredit(command.amount());
+            } else {
+                CreditReservation open = reservation.orElseGet(() ->
+                    CreditReservation.none(command.customerId(), command.reference(), creditCurrency(customer)));
+                changed = Optional.of(customer.reserveCredit(command.amount(), open));
+            }
+        } else if (reservation.isPresent()) {
+            changed = Optional.of(customer.releaseCredit(command.amount(), reservation.get()));
         } else {
-            customer.releaseCredit(command.amount());
+            customer.releaseUntrackedCredit(command.amount(),
+                creditReservations.openAmount(command.customerId(), creditCurrency(customer)));
         }
+        // The customer save checks the optimistic version first, so a reservation is only written by the
+        // transaction that won the race on the customer row.
         Customer saved = saveAndPublish(customer);
+        changed.ifPresent(creditReservations::save);
         creditMovements.record(new CreditMovement(UUID.randomUUID(), command.customerId(), command.idempotencyKey(),
             type, command.amount(), command.reference(), clock.instant()));
         return saved;
@@ -223,6 +248,10 @@ public class CustomerManagementService implements RegisterCustomerUseCase, GetCu
         Customer customer = load(CustomerId.of(customerId));
         customer.updateContactInformation(newEmail, newPhoneNumber);
         return CustomerProfile.of(saveAndPublish(customer));
+    }
+
+    private static java.util.Currency creditCurrency(Customer customer) {
+        return customer.getCreditProfile().getCreditLimit().getCurrency();
     }
 
     private Customer load(CustomerId customerId) {

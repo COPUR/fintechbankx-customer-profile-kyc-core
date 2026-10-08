@@ -8,7 +8,7 @@ steps of `fbx-monolith-extraction`.
 |---|---|
 | Context / service | `cus` / `svc-cus-profile-kyc` |
 | Slice | Customer aggregate: profile, contact details, credit limit and credit reservations |
-| Owned data | `db_cus_profile_kyc_<env>`, schema `sc_cus_profile_kyc`: `customer`, `credit_movement`, `outbox_event` |
+| Owned data | `db_cus_profile_kyc_<env>`, schema `sc_cus_profile_kyc`: `customer`, `credit_movement`, `credit_reservation`, `outbox_event` |
 | Events | `evt.cus.customer.{created,contact-updated,credit-limit-updated,credit-reserved,credit-released,credit-score-updated}.v1` (contract in this repo, `api/asyncapi/svc-cus-profile-kyc.yaml`; proposed to the catalog in fintechbankx-governance-api-contracts-asyncapi-catalog PR #9, which must merge before the relay is switched on) |
 | Called by | `svc-ln-loan-lifecycle`: `GET /api/v1/customers/{id}/credit` (no personal data), `POST .../credit/reserve` and `.../credit/release` with a required `x-idempotency-key` and the loan id as `reference` |
 | Caller identity | Client-credentials token with the `SERVICE` realm role, `aud` containing `svc-cus-profile-kyc` (Keycloak audience mapper) and `azp` on `SERVICE_CALLERS` (credit) or `SERVICE_CALLERS_KYC` (KYC status read) |
@@ -21,11 +21,13 @@ steps of `fbx-monolith-extraction`.
 | `update_customers_updated_at` trigger | removed | `Customer` keeps `updated_at` |
 | `customer_management` schema (V1__Create_customer_management_schema) | not migrated | parallel schema never used by the running application; confirm it has no rows before the cutover |
 | `loans` (V2) | `svc-ln-loan-lifecycle` | loans keep `customer_id`; no foreign key across services |
-| Credit reservations | this service, `credit_movement` | new: the monolith reserved credit in-process, so it had no journal |
+| Credit reservations | this service, `credit_movement` (journal per idempotency key) and `credit_reservation` (V10, open amount per reference) | new: the monolith reserved credit in-process, so it had neither; migrated `used_credit` has no reservation and counts as untracked credit |
 
 Flyway migrations for the owned tables: `customer-infrastructure/src/main/resources/db/migration/V1__create_customer_tables.sql`, `V2__create_outbox.sql`. The service never reads monolith tables and the monolith must not read `sc_cus_profile_kyc`.
 
 **Identity of migrated customers.** A migrated customer keeps the monolith id as text as its customer id (monolith `customers.id = 1` becomes `customer_id = '1'`), the id the loans and payments migrated by their own backfills already carry. The identity-link step (`PUT /api/v1/customers/{id}/identity-link`) sets the end user's Keycloak attribute `customer_id` to exactly that value, so the `customer_id` claim in the user's tokens equals the customer id, and the ownership checks here, in the loan service and in the payment service match the same id. `Customer.linkIdentity` accepts any id of 1 to 64 letters, digits or hyphens, so plain numeric ids such as `1` link (`CustomerIdentityLinkTest.aMigratedCustomerWithAPlainNumericIdCanBeLinked`). The parity seed customers (`CUST-12345678`, `CUST-87654321`, `CUST-11111111`, `db/fixtures/parity_seed_customers.sql`) are not monolith rows; the parity realm users' `customer_id` attributes must be exactly those ids.
+
+**Release by reference (V10).** A release whose `reference` names one of the customer's reservations releases at most what that reservation still holds (`reserved_amount - released_amount`); partial releases are allowed, more is 422 `RELEASE_EXCEEDS_RESERVATION`. A release without a reference, or whose reference matches no reservation, releases at most the untracked used credit: `used_credit` minus the sum of open reservations. That covers balances migrated by the backfill (they have no reservation) without letting a release take another loan's reservation; more is 422 `RESERVATION_NOT_FOUND`. The monolith floored used credit at zero instead (parity CU-09, an intended change). Reserves the loan service makes before step 5 go to the monolith, so after the final backfill they are untracked here: the loan service's release for such a loan names a reference this service has no reservation for and is served from untracked credit, which is correct as long as the backfilled `used_credit` includes it (step 4 checks the totals). Races are decided by the customer row's optimistic version, as for reserve. To inspect a customer: `SELECT reference, reserved_amount, released_amount FROM sc_cus_profile_kyc.credit_reservation WHERE customer_id = '<id>'`; untracked credit is `used_credit` minus the sum of `reserved_amount - released_amount`.
 
 The in-process `CustomerCreditSaga` (Spring `@EventListener` on loan and payment events) is removed. The loan service now reserves and releases credit synchronously over HTTP, idempotently, so a second asynchronous reservation path would double-count.
 
@@ -173,6 +175,7 @@ customer's held events. Record each replay or discard (event ids, cause, operato
 - [x] Credit reserve and release are idempotent on this side: `x-idempotency-key` is required and unique per customer in the database
 - [ ] Idempotent end to end: `svc-ln-loan-lifecycle` derives the key from the loan id so its retries resend it (loan PR)
 - [x] Optimistic locking on the customer, so concurrent reservations cannot overdraw credit
+- [x] A release takes at most its reservation (by `reference`) or, naming none, only untracked used credit; concurrent releases cannot exceed either (`CreditConcurrencyIT`)
 - [x] Backfill rehearsed with reconciliation in CI, including re-runs before cut-over
 - [x] Service callers get the credit position only; the full record (name, e-mail, phone, income, score) is for staff and the customer
 - [x] Tokens must name this service in `aud`; service calls must come from a client on `SERVICE_CALLERS` (credit) or `SERVICE_CALLERS_KYC` (KYC status read)
