@@ -300,6 +300,44 @@ class CustomerServiceIT {
             .hasEntrySatisfying("used_credit", v -> assertThat((BigDecimal) v).isEqualByComparingTo("50000.00"));
     }
 
+    /**
+     * db/fixtures/parity_seed_customers.sql gives the regression parity runs the three customers the
+     * monolith's CustomerCreditServiceAdapter hard-codes; loading it again resets them.
+     */
+    @Test
+    void paritySeedLoadsTheMonolithAdapterCustomersAndResetsThemOnReload() throws Exception {
+        loadParitySeed();
+        reserve("CUST-11111111", "5000.00", "PARITY-1:reserve", "USD").andExpect(status().isOk())
+            .andExpect(jsonPath("$.availableCredit").value(0));
+        reserve("CUST-11111111", "0.01", "PARITY-2:reserve", "USD").andExpect(status().isUnprocessableEntity());
+
+        loadParitySeed();
+
+        for (String[] expected : List.of(
+                new String[] {"CUST-12345678", "100000.0", "0.0", "100000.0"},
+                new String[] {"CUST-87654321", "50000.0", "10000.0", "40000.0"},
+                new String[] {"CUST-11111111", "25000.0", "20000.0", "5000.0"})) {
+            mvc.perform(asService(get("/api/v1/customers/{id}/credit", expected[0])))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.currency").value("USD"))
+                .andExpect(jsonPath("$.creditLimit").value(Double.parseDouble(expected[1])))
+                .andExpect(jsonPath("$.usedCredit").value(Double.parseDouble(expected[2])))
+                .andExpect(jsonPath("$.availableCredit").value(Double.parseDouble(expected[3])));
+        }
+        assertThat(jdbc.queryForObject("select count(*) from sc_cus_profile_kyc.credit_movement", Integer.class)).isZero();
+        reserve("CUST-11111111", "5000.00", "PARITY-1:reserve", "USD").andExpect(status().isOk());
+    }
+
+    private void loadParitySeed() {
+        java.nio.file.Path seed = java.util.stream.Stream.of("db/fixtures/parity_seed_customers.sql",
+                "../db/fixtures/parity_seed_customers.sql")
+            .map(java.nio.file.Path::of).filter(java.nio.file.Files::exists).findFirst()
+            .orElseThrow(() -> new IllegalStateException("db/fixtures/parity_seed_customers.sql not found"));
+        new org.springframework.jdbc.datasource.init.ResourceDatabasePopulator(
+                new org.springframework.core.io.FileSystemResource(seed))
+            .execute(jdbc.getDataSource());
+    }
+
     @Test
     void staleAggregateCannotOverwriteANewerVersion() throws Exception {
         String customerId = create("stale@example.com", "8000.00");
@@ -358,10 +396,15 @@ class CustomerServiceIT {
     }
 
     private org.springframework.test.web.servlet.ResultActions reserve(String customerId, String amount, String key) throws Exception {
+        return reserve(customerId, amount, key, "AED");
+    }
+
+    private org.springframework.test.web.servlet.ResultActions reserve(String customerId, String amount, String key,
+                                                                       String currency) throws Exception {
         return mvc.perform(asService(post("/api/v1/customers/{id}/credit/reserve", customerId))
             .header("x-idempotency-key", key)
             .contentType(MediaType.APPLICATION_JSON)
-            .content("{\"amount\": %s, \"currency\": \"AED\", \"reference\": \"%s\"}".formatted(amount, key.split(":")[0])));
+            .content("{\"amount\": %s, \"currency\": \"%s\", \"reference\": \"%s\"}".formatted(amount, currency, key.split(":")[0])));
     }
 
     private static String customerJson(String email, String limit) {
