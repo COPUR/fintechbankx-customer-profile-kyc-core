@@ -6,7 +6,7 @@
 //   through a reader function, so the same code works on the working tree and on
 //   a git revision (git show <rev>:<path>).
 // - flattenPayload: turn a message payload (allOf, $ref, properties, items) into a
-//   map of property paths -> { types, required, enum, const, constraints } used by the breaking check.
+//   map of property paths -> { types, required, enum, const, constraints, additionalProperties } used by the breaking check.
 import path from 'node:path';
 import { parse } from 'yaml';
 
@@ -130,9 +130,10 @@ function mergedView(entries, resolver, depth) {
 }
 
 /**
- * Flattens a payload schema into Map<path, { types, required, enum, const, constraints }>.
+ * Flattens a payload schema into Map<path, { types, required, enum, const, constraints, additionalProperties }>.
  * const is the JSON text of the declared const (undefined when none); constraints maps each
- * CONSTRAINT_KEYWORDS keyword present to its JSON text.
+ * CONSTRAINT_KEYWORDS keyword present to its JSON text; additionalProperties is the JSON text of
+ * that keyword (undefined when absent).
  * Root path is '$'; properties are dotted ('$.data.amount'); array items are '[]'.
  */
 export function flattenPayload(payload, ctx, resolver) {
@@ -146,6 +147,7 @@ export function flattenPayload(payload, ctx, resolver) {
       enum: view.enum ? [...new Set(view.enum.map((v) => JSON.stringify(v)))].sort() : null,
       const: view.const,
       constraints: view.constraints,
+      additionalProperties: view.additionalProperties === undefined ? undefined : JSON.stringify(view.additionalProperties),
     });
     for (const [name, subs] of view.properties) {
       walk(subs, `${p}.${name}`, view.required.has(name), depth + 1);

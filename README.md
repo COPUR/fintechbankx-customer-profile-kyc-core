@@ -56,7 +56,7 @@ Bu repository, FinTechBankX DDD/EDA dönüşümünde **svc-cus-profile-kyc** ser
 | Data split from the monolith | [RUNBOOK-EXTRACT-cus-profile-kyc](docs/migration/RUNBOOK-EXTRACT-cus-profile-kyc.md) |
 | Deployment and Well-Architected mapping | [DEPLOYMENT_AND_WELL_ARCHITECTED](docs/architecture/DEPLOYMENT_AND_WELL_ARCHITECTED.md) |
 
-AsyncAPI breaking-change gate (ADR-019 section 5): `scripts/ci/asyncapi/asyncapi-breaking.mjs` and `lib/asyncapi-model.mjs` are copied unchanged from the asyncapi catalog (a7b9b9d) until platform adds the gate to the shared CI template; `scripts/ci/asyncapi/run-breaking.sh` stages `api/asyncapi` in the layout the script expects and runs it against `origin/main` in ci/test (`(cd scripts/ci/asyncapi && npm ci) && bash scripts/ci/asyncapi/run-breaking.sh` locally).
+AsyncAPI breaking-change gate (ADR-019 section 5): `scripts/ci/asyncapi/asyncapi-breaking.mjs` and `lib/asyncapi-model.mjs` are copied unchanged from the asyncapi catalog (b0e31ee) until platform adds the gate to the shared CI template. ci/test runs the script from the repository root with `ASYNCAPI_DIR=api/asyncapi` and `BASE_REF=origin/main`, as the catalog's `scripts/ci/asyncapi-breaking.sh` does (locally: `(cd scripts/ci/asyncapi && npm ci) && ASYNCAPI_DIR=api/asyncapi BASE_REF=origin/main node scripts/ci/asyncapi/asyncapi-breaking.mjs`).
 
 Published events (contract: [`api/asyncapi/svc-cus-profile-kyc.yaml`](api/asyncapi/svc-cus-profile-kyc.yaml), written through the transactional outbox):
 
