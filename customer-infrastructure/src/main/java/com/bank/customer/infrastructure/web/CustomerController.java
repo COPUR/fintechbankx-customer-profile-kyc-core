@@ -28,7 +28,8 @@ import java.util.Currency;
  * Credit reserve, release and the credit-position read are called by other
  * services (loan lifecycle) with a SERVICE-role client-credentials token whose
  * client is on the allowed list (ServiceCallerPolicy). Services never get the
- * full customer record: personal data stays with staff and the customer.
+ * full customer record: all three answer with the credit position only, and
+ * personal data stays with staff and the customer.
  * Every credit movement needs an x-idempotency-key, so a retried call never
  * moves credit twice.
  */
@@ -106,13 +107,13 @@ public class CustomerController {
      */
     @PostMapping("/{customerId}/credit/reserve")
     @PreAuthorize(CREDIT_CALLERS)
-    public ResponseEntity<CustomerResponse> reserveCredit(
+    public ResponseEntity<CustomerCreditResponse> reserveCredit(
             @RequestHeader(IDEMPOTENCY_KEY) String idempotencyKey,
             @PathVariable String customerId,
             @RequestBody ReserveCreditRequest request) {
         
         Money amount = Money.of(request.amount(), Currency.getInstance(request.currency()));
-        CustomerResponse response = CustomerResponse.from(moveCredit.reserveCredit(
+        CustomerCreditResponse response = CustomerCreditResponse.from(moveCredit.reserveCredit(
             new CreditMovementCommand(CustomerId.of(customerId), amount, idempotencyKey, request.reference())));
         return ResponseEntity.ok(response);
     }
@@ -122,13 +123,13 @@ public class CustomerController {
      */
     @PostMapping("/{customerId}/credit/release")
     @PreAuthorize(CREDIT_CALLERS)
-    public ResponseEntity<CustomerResponse> releaseCredit(
+    public ResponseEntity<CustomerCreditResponse> releaseCredit(
             @RequestHeader(IDEMPOTENCY_KEY) String idempotencyKey,
             @PathVariable String customerId,
             @RequestBody ReleaseCreditRequest request) {
         
         Money amount = Money.of(request.amount(), Currency.getInstance(request.currency()));
-        CustomerResponse response = CustomerResponse.from(moveCredit.releaseCredit(
+        CustomerCreditResponse response = CustomerCreditResponse.from(moveCredit.releaseCredit(
             new CreditMovementCommand(CustomerId.of(customerId), amount, idempotencyKey, request.reference())));
         return ResponseEntity.ok(response);
     }

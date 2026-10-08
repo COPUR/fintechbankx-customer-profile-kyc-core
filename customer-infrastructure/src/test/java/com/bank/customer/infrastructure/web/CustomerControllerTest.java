@@ -92,7 +92,7 @@ class CustomerControllerTest {
 
     @Test
     void reserveCreditShouldBuildTheMovementCommand() {
-        when(moveCredit.reserveCredit(any(CreditMovementCommand.class))).thenReturn(profile("CUST-WEB-004"));
+        when(moveCredit.reserveCredit(any(CreditMovementCommand.class))).thenReturn(profile("CUST-WEB-004").credit());
 
         ResponseEntity<?> entity = controller.reserveCredit("key-4", "CUST-WEB-004",
             new CustomerController.ReserveCreditRequest(new BigDecimal("300.00"), "AED", "LOAN-4"));
@@ -106,7 +106,7 @@ class CustomerControllerTest {
 
     @Test
     void releaseCreditShouldBuildTheMovementCommand() {
-        when(moveCredit.releaseCredit(any(CreditMovementCommand.class))).thenReturn(profile("CUST-WEB-005"));
+        when(moveCredit.releaseCredit(any(CreditMovementCommand.class))).thenReturn(profile("CUST-WEB-005").credit());
 
         ResponseEntity<?> entity = controller.releaseCredit("key-5", "CUST-WEB-005",
             new CustomerController.ReleaseCreditRequest(new BigDecimal("150.00"), "AED", null));

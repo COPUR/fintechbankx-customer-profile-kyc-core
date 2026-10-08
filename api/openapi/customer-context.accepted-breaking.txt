@@ -16,3 +16,29 @@ POST /api/v1/customers/{customerId}/credit/release the response property 'email'
 POST /api/v1/customers/{customerId}/credit/release the response property 'email' became optional for the status '200'
 POST /api/v1/customers/{customerId}/credit/reserve added the new required 'header' request parameter 'x-idempotency-key'
 POST /api/v1/customers/{customerId}/credit/release added the new required 'header' request parameter 'x-idempotency-key'
+# Also accepted 2026-10-08: reserve and release answer with CustomerCreditResponse instead of CustomerResponse.
+# Reason for every entry below: service callers get credit position only (PII minimisation, review finding).
+# reason: service callers get credit position only (PII minimisation, review finding)
+POST /api/v1/customers/{customerId}/credit/reserve removed the required property 'firstName' from the response with the '200' status
+# reason: service callers get credit position only (PII minimisation, review finding)
+POST /api/v1/customers/{customerId}/credit/reserve removed the required property 'lastName' from the response with the '200' status
+# reason: service callers get credit position only (PII minimisation, review finding)
+POST /api/v1/customers/{customerId}/credit/reserve removed the required property 'email' from the response with the '200' status
+# reason: service callers get credit position only (PII minimisation, review finding)
+POST /api/v1/customers/{customerId}/credit/reserve removed the required property 'status' from the response with the '200' status
+# reason: service callers get credit position only (PII minimisation, review finding)
+POST /api/v1/customers/{customerId}/credit/reserve removed the required property 'createdAt' from the response with the '200' status
+# reason: service callers get credit position only (PII minimisation, review finding)
+POST /api/v1/customers/{customerId}/credit/reserve removed the required property 'lastModifiedAt' from the response with the '200' status
+# reason: service callers get credit position only (PII minimisation, review finding)
+POST /api/v1/customers/{customerId}/credit/release removed the required property 'firstName' from the response with the '200' status
+# reason: service callers get credit position only (PII minimisation, review finding)
+POST /api/v1/customers/{customerId}/credit/release removed the required property 'lastName' from the response with the '200' status
+# reason: service callers get credit position only (PII minimisation, review finding)
+POST /api/v1/customers/{customerId}/credit/release removed the required property 'email' from the response with the '200' status
+# reason: service callers get credit position only (PII minimisation, review finding)
+POST /api/v1/customers/{customerId}/credit/release removed the required property 'status' from the response with the '200' status
+# reason: service callers get credit position only (PII minimisation, review finding)
+POST /api/v1/customers/{customerId}/credit/release removed the required property 'createdAt' from the response with the '200' status
+# reason: service callers get credit position only (PII minimisation, review finding)
+POST /api/v1/customers/{customerId}/credit/release removed the required property 'lastModifiedAt' from the response with the '200' status

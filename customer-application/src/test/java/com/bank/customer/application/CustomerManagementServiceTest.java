@@ -78,9 +78,9 @@ class CustomerManagementServiceTest {
         when(creditMovements.find(CustomerId.of("CUST-IDEM"), "key-1")).thenReturn(Optional.empty());
         when(customerRepository.save(any(Customer.class))).thenAnswer(invocation -> invocation.getArgument(0));
 
-        CustomerProfile response = service.reserveCredit(move("CUST-IDEM", "1000.00", "key-1", "LOAN-7"));
+        CreditPosition response = service.reserveCredit(move("CUST-IDEM", "1000.00", "key-1", "LOAN-7"));
 
-        assertThat(response.credit().usedCredit()).isEqualTo(aed("1000.00"));
+        assertThat(response.usedCredit()).isEqualTo(aed("1000.00"));
         @SuppressWarnings("unchecked")
         ArgumentCaptor<List<com.bank.shared.kernel.domain.DomainEvent>> events = ArgumentCaptor.forClass(List.class);
         verify(eventPublisher).publish(eq(customer), events.capture());
@@ -102,9 +102,9 @@ class CustomerManagementServiceTest {
         when(creditMovements.find(CustomerId.of("CUST-IDEM"), "key-1")).thenReturn(Optional.of(
             new CreditMovement(UUID.randomUUID(), CustomerId.of("CUST-IDEM"), "key-1", CreditMovement.Type.RESERVE, amount, null, NOW)));
 
-        CustomerProfile response = service.reserveCredit(move("CUST-IDEM", "1000.00", "key-1", null));
+        CreditPosition response = service.reserveCredit(move("CUST-IDEM", "1000.00", "key-1", null));
 
-        assertThat(response.credit().usedCredit().isZero()).isTrue();
+        assertThat(response.usedCredit().isZero()).isTrue();
         verify(customerRepository, never()).save(any(Customer.class));
         verify(creditMovements, never()).record(any());
         verifyNoInteractions(eventPublisher);
@@ -132,9 +132,9 @@ class CustomerManagementServiceTest {
         when(creditMovements.find(CustomerId.of("CUST-IDEM"), "key-2")).thenReturn(Optional.empty());
         when(customerRepository.save(any(Customer.class))).thenAnswer(invocation -> invocation.getArgument(0));
 
-        CustomerProfile response = service.releaseCredit(move("CUST-IDEM", "500.00", "key-2", "LOAN-7"));
+        CreditPosition response = service.releaseCredit(move("CUST-IDEM", "500.00", "key-2", "LOAN-7"));
 
-        assertThat(response.credit().usedCredit()).isEqualTo(aed("1500.00"));
+        assertThat(response.usedCredit()).isEqualTo(aed("1500.00"));
         ArgumentCaptor<CreditMovement> movement = ArgumentCaptor.forClass(CreditMovement.class);
         verify(creditMovements).record(movement.capture());
         assertThat(movement.getValue().type()).isEqualTo(CreditMovement.Type.RELEASE);

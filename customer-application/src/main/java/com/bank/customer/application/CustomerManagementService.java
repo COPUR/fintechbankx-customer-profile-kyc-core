@@ -96,14 +96,14 @@ public class CustomerManagementService implements RegisterCustomerUseCase, GetCu
 
     /** FR-003: reserve credit once per idempotency key. */
     @Override
-    public CustomerProfile reserveCredit(CreditMovementCommand command) {
-        return CustomerProfile.of(moveCredit(CreditMovement.Type.RESERVE, command));
+    public CreditPosition reserveCredit(CreditMovementCommand command) {
+        return CreditPosition.of(moveCredit(CreditMovement.Type.RESERVE, command));
     }
 
     /** FR-003: release reserved credit once per idempotency key. */
     @Override
-    public CustomerProfile releaseCredit(CreditMovementCommand command) {
-        return CustomerProfile.of(moveCredit(CreditMovement.Type.RELEASE, command));
+    public CreditPosition releaseCredit(CreditMovementCommand command) {
+        return CreditPosition.of(moveCredit(CreditMovement.Type.RELEASE, command));
     }
 
     private Customer moveCredit(CreditMovement.Type type, CreditMovementCommand command) {

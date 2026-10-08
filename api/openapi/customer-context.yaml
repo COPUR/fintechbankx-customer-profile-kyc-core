@@ -207,7 +207,7 @@ paths:
         service's allowed list) and staff. x-idempotency-key is required: a
         repeat with the same key and amount returns the current position
         without moving credit again; the same key with a different movement is
-        a 409.
+        a 409. The answer is the credit position only (no personal data).
       security:
         - bearerAuth: []
           dpopAuth: []
@@ -225,11 +225,11 @@ paths:
               $ref: '#/components/schemas/CreditMovementRequest'
       responses:
         '200':
-          description: Credit reserved
+          description: Credit reserved; the credit position only, without personal data
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/CustomerResponse'
+                $ref: '#/components/schemas/CustomerCreditResponse'
         '400':
           description: Missing x-idempotency-key or invalid request
           content:
@@ -277,7 +277,7 @@ paths:
         service's allowed list) and staff. x-idempotency-key is required: a
         repeat with the same key and amount returns the current position
         without moving credit again; the same key with a different movement is
-        a 409.
+        a 409. The answer is the credit position only (no personal data).
       security:
         - bearerAuth: []
           dpopAuth: []
@@ -295,11 +295,11 @@ paths:
               $ref: '#/components/schemas/CreditMovementRequest'
       responses:
         '200':
-          description: Credit released
+          description: Credit released; the credit position only, without personal data
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/CustomerResponse'
+                $ref: '#/components/schemas/CustomerCreditResponse'
         '400':
           description: Missing x-idempotency-key or invalid request
           content:
