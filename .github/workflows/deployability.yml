@@ -78,6 +78,8 @@ jobs:
           for annotation in 'prometheus.io/scrape: "true"' 'prometheus.io/port: "8081"' 'prometheus.io/path: /actuator/prometheus'; do
             grep -qF "$annotation" <<<"$rendered" || { echo "missing pod annotation $annotation" >&2; exit 1; }
           done
+          # Platform component label (cicd-templates 335a345) on pods and the Service, PDB and spread selectors.
+          python3 scripts/ci/component-label.py <<<"$rendered"
           # Platform outbox alerts select on service_id, taken from this pod label.
           python3 scripts/ci/pod-service-id.py --expect svc-cus-profile-kyc <<<"$rendered"
           if helm template ci "$chart" $args --set 'podLabels.fintechbankx\.io/service-id=wrong' \
