@@ -11,7 +11,7 @@ steps of `fbx-monolith-extraction`.
 | Owned data | `db_cus_profile_kyc_<env>`, schema `sc_cus_profile_kyc`: `customer`, `credit_movement`, `outbox_event` |
 | Events | `evt.cus.customer.{created,contact-updated,credit-limit-updated,credit-reserved,credit-released,credit-score-updated}.v1` (contract in this repo, `api/asyncapi/svc-cus-profile-kyc.yaml`; proposed to the catalog in fintechbankx-governance-api-contracts-asyncapi-catalog PR #9, which must merge before the relay is switched on) |
 | Called by | `svc-ln-loan-lifecycle`: `GET /api/v1/customers/{id}/credit` (no personal data), `POST .../credit/reserve` and `.../credit/release` with a required `x-idempotency-key` and the loan id as `reference` |
-| Caller identity | Client-credentials token with the `SERVICE` realm role, `aud` containing `svc-cus-profile-kyc` (Keycloak audience mapper) and `azp` on `SERVICE_CALLERS` |
+| Caller identity | Client-credentials token with the `SERVICE` realm role, `aud` containing `svc-cus-profile-kyc` (Keycloak audience mapper) and `azp` on `SERVICE_CALLERS` (credit) or `SERVICE_CALLERS_KYC` (KYC status read) |
 
 ## 1. Data ownership split
 
@@ -123,7 +123,7 @@ customer's held events. Record each replay or discard (event ids, cause, operato
 - [x] Optimistic locking on the customer, so concurrent reservations cannot overdraw credit
 - [x] Backfill rehearsed with reconciliation in CI, including re-runs before cut-over
 - [x] Service callers get the credit position only; the full record (name, e-mail, phone, income, score) is for staff and the customer
-- [x] Tokens must name this service in `aud`; service calls must come from a client on `SERVICE_CALLERS`
+- [x] Tokens must name this service in `aud`; service calls must come from a client on `SERVICE_CALLERS` (credit) or `SERVICE_CALLERS_KYC` (KYC status read)
 - [x] Container image, Helm chart, Terraform validate in CI (`Deployability` workflow)
 - [ ] `svc-ln-loan-lifecycle` calls with a client-credentials token (`SERVICE` role) instead of forwarding the end user's token
 - [ ] Keycloak: audience mapper for `svc-cus-profile-kyc` on each calling client (fintechbankx-platform-identity-iam-keycloak-ldap)

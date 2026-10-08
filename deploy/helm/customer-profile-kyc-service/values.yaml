@@ -55,6 +55,7 @@ config:
   OIDC_JWK_SET_URI: ""
   OIDC_AUDIENCE: svc-cus-profile-kyc   # token aud must contain the service id
   SERVICE_CALLERS: svc-ln-loan-lifecycle   # token azp values allowed to read and move credit
+  SERVICE_CALLERS_KYC: svc-pay-initiation-settlement   # token azp values allowed to read the KYC status
   OUTBOX_RELAY_ENABLED: "true"
   # Onboarding sets the Keycloak user attribute customer_id (identity link).
   # Off until the service client has manage-users in the realm and
@@ -94,3 +95,4 @@ networkPolicy:
   callerNamespaces:
     - istio-ingress   # istio-ingressgateway
     - lending         # loan-lifecycle-service
+    - payments        # payment initiation-settlement (KYC status read)
