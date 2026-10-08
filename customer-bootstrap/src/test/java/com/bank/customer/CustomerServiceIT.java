@@ -197,7 +197,9 @@ class CustomerServiceIT {
             "{\"amount\": 0, \"currency\": \"AED\", \"reference\": \"LOAN-5\"}",
             "{\"amount\": -10.00, \"currency\": \"AED\", \"reference\": \"LOAN-5\"}",
             "{\"amount\": 10.00, \"currency\": \"ZZZ\", \"reference\": \"LOAN-5\"}",
-            "{\"amount\": 10.00, \"currency\": \"dirham\", \"reference\": \"LOAN-5\"}");
+            "{\"amount\": 10.00, \"currency\": \"dirham\", \"reference\": \"LOAN-5\"}",
+            // More decimals than AED allows: refused, never silently rounded to 2500.01.
+            "{\"amount\": 2500.005, \"currency\": \"AED\", \"reference\": \"LOAN-5\"}");
 
         int key = 0;
         for (String body : invalidBodies) {
@@ -222,6 +224,17 @@ class CustomerServiceIT {
             .hasEntrySatisfying("credit_limit", v -> assertThat((BigDecimal) v).isEqualByComparingTo("10000.00"))
             .hasEntrySatisfying("used_credit", v -> assertThat((BigDecimal) v).isEqualByComparingTo("0"));
         assertThat(jdbc.queryForObject("select count(*) from sc_cus_profile_kyc.credit_movement", Integer.class)).isZero();
+    }
+
+    @Test
+    void aCreditLimitWithMoreDecimalsThanTheCurrencyAllowsIsA400() throws Exception {
+        mvc.perform(asBanker(post("/api/v1/customers"))
+                .contentType(MediaType.APPLICATION_JSON)
+                .content(customerJson("scale@example.com", "10000.005")))
+            .andExpect(status().isBadRequest())
+            .andExpect(jsonPath("$.code").value("INVALID_REQUEST"))
+            .andExpect(jsonPath("$.message").value("AED amounts allow at most 2 decimal places"));
+        assertThat(jdbc.queryForObject("select count(*) from sc_cus_profile_kyc.customer", Integer.class)).isZero();
     }
 
     @Test
