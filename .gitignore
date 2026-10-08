@@ -12,3 +12,6 @@ build/
 **/.terraform.lock.hcl
 *.tfstate
 *.tfstate.*
+
+# npm dependencies of scripts/ci/asyncapi (installed by npm ci in CI)
+node_modules/

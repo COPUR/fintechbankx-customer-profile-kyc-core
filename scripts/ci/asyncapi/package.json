@@ -1,0 +1,13 @@
+{
+  "name": "customer-asyncapi-breaking-gate",
+  "version": "0.1.0",
+  "private": true,
+  "description": "AsyncAPI breaking-change gate, copied unchanged from the asyncapi catalog (a7b9b9d) until the shared CI template carries it.",
+  "type": "module",
+  "engines": {
+    "node": ">=22"
+  },
+  "devDependencies": {
+    "yaml": "2.9.1"
+  }
+}

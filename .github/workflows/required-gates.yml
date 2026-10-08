@@ -183,6 +183,18 @@ jobs:
             npx -y @asyncapi/cli@2.13.0 validate "$spec"
           done
 
+      - name: AsyncAPI breaking-change gate (ADR-019 section 5)
+        if: ${{ hashFiles('api/asyncapi/*.yaml') != '' }}
+        env:
+          NPM_CONFIG_CACHE: /tmp/.npm
+          BASE_REF: origin/main
+        shell: bash
+        run: |
+          # Catalog script copied unchanged (asyncapi catalog a7b9b9d) until the shared CI template carries it.
+          # A spec not yet on main is reported "new file (not at base)" and skipped.
+          (cd scripts/ci/asyncapi && npm ci --no-audit --no-fund)
+          bash scripts/ci/asyncapi/run-breaking.sh
+
       - name: Guardrail - disallow generic map request payloads
         shell: bash
         run: |
