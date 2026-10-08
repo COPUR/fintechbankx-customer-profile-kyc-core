@@ -1,5 +1,7 @@
 package com.bank.customer.infrastructure.outbox;
 
+import io.micrometer.core.instrument.Counter;
+import io.micrometer.core.instrument.MeterRegistry;
 import org.apache.kafka.clients.producer.ProducerRecord;
 import org.apache.kafka.common.errors.InvalidTopicException;
 import org.apache.kafka.common.errors.RecordTooLargeException;
@@ -47,6 +49,12 @@ import java.util.concurrent.TimeoutException;
  * query) so a customer's events stay in order; other customers' events flow.
  * Parked rows are counted by the outbox.parked.events gauge and replayed by
  * hand (runbook "Parked outbox events").
+ *
+ * After a stopped batch the relay backs off ({@link RelayBackoff}): it waits
+ * the poll interval, doubling per stopped batch up to backoff-max, and resets
+ * after a completed batch. Every failed send increments
+ * outbox.publish.failures tagged with the exception's simple class name; the
+ * alert signal is outbox.oldest.pending.age.seconds (ADR-021 decision 4).
  */
 public class OutboxRelay {
 
@@ -61,10 +69,13 @@ public class OutboxRelay {
     private final Duration sendTimeout;
     private final Duration retention;
     private final Duration retryableParkAfter;
+    private final RelayBackoff backoff;
+    private final MeterRegistry meters;
 
     public OutboxRelay(SpringDataOutboxRepository outbox, KafkaTemplate<String, String> kafka,
                        TransactionTemplate transactions, Clock clock, int batchSize,
-                       Duration sendTimeout, Duration retention, Duration retryableParkAfter) {
+                       Duration sendTimeout, Duration retention, Duration retryableParkAfter,
+                       Duration pollInterval, Duration backoffMax, MeterRegistry meters) {
         if (retryableParkAfter == null || retryableParkAfter.isNegative() || retryableParkAfter.isZero()) {
             throw new IllegalArgumentException("customer.outbox.relay.retryable-park-after must be positive");
         }
@@ -76,6 +87,12 @@ public class OutboxRelay {
         this.sendTimeout = sendTimeout;
         this.retention = retention;
         this.retryableParkAfter = retryableParkAfter;
+        this.backoff = new RelayBackoff(pollInterval, backoffMax);
+        this.meters = meters;
+    }
+
+    public RelayBackoff backoff() {
+        return backoff;
     }
 
     public Duration retryableParkAfter() {
@@ -86,10 +103,16 @@ public class OutboxRelay {
      * @return number of events published in this run
      */
     public int relayOnce() {
+        if (!backoff.ready(clock.instant())) {
+            return 0;
+        }
+        boolean[] stopped = {false};
+        boolean[] ran = {false};
         Integer published = transactions.execute(status -> {
             if (!outbox.tryRelayLock(RELAY_LOCK_KEY)) {
                 return 0;
             }
+            ran[0] = true;
             List<OutboxEventJpaEntity> batch = outbox.findUnpublishedBatch(batchSize);
             int sent = 0;
             Set<String> heldAggregates = new HashSet<>();
@@ -104,13 +127,17 @@ public class OutboxRelay {
                 } catch (InterruptedException e) {
                     Thread.currentThread().interrupt();
                     row.markFailed("interrupted", clock.instant());
+                    countFailure(e);
+                    stopped[0] = true;
                     break;
                 } catch (Exception e) {
+                    countFailure(e);
                     Instant now = clock.instant();
                     row.markFailed(describe(e), now);
                     if (!isPayloadFailure(e) && !now.isAfter(row.getFirstFailedAt().plus(retryableParkAfter))) {
                         log.warn("Outbox relay could not publish event {} to {} (attempt {}, failing since {}); will retry",
                             row.getEventId(), row.getTopic(), row.getAttempts(), row.getFirstFailedAt(), e);
+                        stopped[0] = true;
                         break;
                     }
                     row.park(clock.instant());
@@ -121,7 +148,20 @@ public class OutboxRelay {
             }
             return sent;
         });
+        if (stopped[0]) {
+            backoff.batchStopped(clock.instant());
+        } else if (ran[0]) {
+            backoff.batchCompleted();
+        }
         return published == null ? 0 : published;
+    }
+
+    private void countFailure(Throwable failure) {
+        Counter.builder("outbox.publish.failures")
+            .description("Failed outbox sends to Kafka, by exception class")
+            .tag("exception", rootClass(failure).getSimpleName())
+            .register(meters)
+            .increment();
     }
 
     public int purgePublished() {
@@ -150,14 +190,23 @@ public class OutboxRelay {
 
     /** The underlying failure, without the future and KafkaTemplate wrappers, for last_error. */
     static String describe(Throwable failure) {
+        Throwable cause = unwrap(failure);
+        return cause.getMessage() == null
+            ? cause.getClass().getSimpleName()
+            : cause.getClass().getSimpleName() + ": " + cause.getMessage();
+    }
+
+    private static Class<?> rootClass(Throwable failure) {
+        return unwrap(failure).getClass();
+    }
+
+    private static Throwable unwrap(Throwable failure) {
         Throwable cause = failure;
         while ((cause instanceof ExecutionException || cause instanceof CompletionException
                 || cause instanceof KafkaProducerException) && cause.getCause() != null) {
             cause = cause.getCause();
         }
-        return cause.getMessage() == null
-            ? cause.getClass().getSimpleName()
-            : cause.getClass().getSimpleName() + ": " + cause.getMessage();
+        return cause;
     }
 
     static ProducerRecord<String, String> toRecord(OutboxEventJpaEntity row) {

@@ -194,10 +194,10 @@ class OutboxRelayTest {
         clock.advance(PARK_AFTER);
         relay.relayOnce();
         assertThat(stuck.getParkedAt()).as("at the ceiling: still retried").isNull();
-        clock.advance(Duration.ofSeconds(1));
+        clock.advance(Duration.ofSeconds(2));          // past the ceiling and the 2 s backoff
         relay.relayOnce();
 
-        assertThat(stuck.getParkedAt()).isEqualTo(NOW.plus(PARK_AFTER).plusSeconds(1));
+        assertThat(stuck.getParkedAt()).isEqualTo(NOW.plus(PARK_AFTER).plusSeconds(2));
         assertThat(stuck.getAttempts()).isEqualTo(3);
     }
 
@@ -289,10 +289,10 @@ class OutboxRelayTest {
         clock.advance(PARK_AFTER);
         relay.relayOnce();                                   // exactly at the ceiling: still retried
         assertThat(stuck.getParkedAt()).isNull();
-        clock.advance(Duration.ofSeconds(1));
+        clock.advance(Duration.ofSeconds(2));          // past the ceiling and the 2 s backoff
         assertThat(relay.relayOnce()).isEqualTo(1);          // past the ceiling: parked, batch goes on
 
-        assertThat(stuck.getParkedAt()).isEqualTo(NOW.plus(PARK_AFTER).plusSeconds(1));
+        assertThat(stuck.getParkedAt()).isEqualTo(NOW.plus(PARK_AFTER).plusSeconds(2));
         assertThat(stuck.getFirstFailedAt()).isEqualTo(NOW);
         assertThat(next.getPublishedAt()).isNotNull();
     }

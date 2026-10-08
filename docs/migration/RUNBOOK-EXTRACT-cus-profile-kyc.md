@@ -90,9 +90,19 @@ flowing. Metrics (all tagged `service="svc-cus-profile-kyc"`):
 
 - `outbox_parked_events`: rows parked; alert on any value above zero, because consumers are missing that customer's
   events until the replay.
-- `outbox_oldest_pending_age_seconds`: age of the oldest row waiting for the relay (0 when none); alert when it stays
-  above 300, which means the relay or Kafka is down. Rows that keep failing park once they pass the 24 h ceiling.
+- `outbox_oldest_pending_age_seconds`: age of the oldest row waiting for the relay (0 when none). This is the alert
+  signal (ADR-021 decision 4): above 900 (15 minutes) the relay or Kafka is down or a row keeps failing. The chart
+  ships no PrometheusRule, so the platform monitoring stack carries the rule:
+  `max(outbox_oldest_pending_age_seconds{service="svc-cus-profile-kyc"}) > 900` for 5 minutes, severity page.
+  Rows that keep failing park once they pass the 24 h ceiling.
 - `outbox_pending_events`: rows waiting for the relay.
+- `outbox_publish_failures_total{exception="<simple class name>"}`: failed sends by exception class (no ids or
+  topics); use it to tell an authorization failure (`TopicAuthorizationException`, `SaslAuthenticationException`) from
+  an outage (`NetworkException`, `TimeoutException`).
+
+After a stopped batch the relay backs off: it waits the poll interval (`customer.outbox.relay.interval`, 1 s), doubling
+per stopped batch up to `customer.outbox.relay.backoff-max` (`OUTBOX_RELAY_BACKOFF_MAX`, default `PT5M`), and resets
+after a completed batch. The backoff is per replica and in memory; a restart starts from the poll interval again.
 
 Un-park (replay), after fixing the cause (topic created, IAM policy fixed, payload size limit raised):
 
