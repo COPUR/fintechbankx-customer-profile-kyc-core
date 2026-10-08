@@ -48,7 +48,7 @@ Bu repository, FinTechBankX DDD/EDA dönüşümünde **svc-cus-profile-kyc** ser
 | What | Command / path |
 |---|---|
 | Unit and integration tests | `./gradlew test` (integration tests need `TEST_DB_URL` or Docker) |
-| Run locally | `SPRING_DATASOURCE_PASSWORD=... ./gradlew :customer-bootstrap:bootRun` |
+| Run locally | `SPRING_DATASOURCE_PASSWORD=... OUTBOX_RELAY_ENABLED=true ./gradlew :customer-bootstrap:bootRun` (the relay is off unless `OUTBOX_RELAY_ENABLED=true`; leave it unset to run without Kafka) |
 | Database migrations | `customer-infrastructure/src/main/resources/db/migration` (schema `sc_cus_profile_kyc`) |
 | Container image | `docker build -t customer-profile-kyc-service .` |
 | Kubernetes | `deploy/helm/customer-profile-kyc-service` |

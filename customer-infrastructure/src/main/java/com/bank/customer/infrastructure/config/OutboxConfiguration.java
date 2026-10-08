@@ -76,12 +76,12 @@ public class OutboxConfiguration {
 
     /**
      * The relay runs in every replica; the advisory lock lets only one of
-     * them publish at a time. Disable with customer.outbox.relay.enabled=false
-     * (tests, or a dedicated relay deployment).
+     * them publish at a time. Off unless customer.outbox.relay.enabled=true
+     * (OUTBOX_RELAY_ENABLED): events wait in the outbox until it is switched on.
      */
     @Configuration
     @EnableScheduling
-    @ConditionalOnProperty(name = "customer.outbox.relay.enabled", havingValue = "true", matchIfMissing = true)
+    @ConditionalOnProperty(name = "customer.outbox.relay.enabled", havingValue = "true", matchIfMissing = false)
     static class RelayConfiguration {
 
         @Bean

@@ -59,7 +59,7 @@ config:
   OIDC_AUDIENCE: svc-cus-profile-kyc   # token aud must contain the service id
   SERVICE_CALLERS: svc-ln-loan-lifecycle   # token azp values allowed to read and move credit
   SERVICE_CALLERS_KYC: svc-pay-initiation-settlement   # token azp values allowed to read the KYC status
-  # Off in the chart (the application default is on): the relay cannot reach
+  # Off (as the application default): the relay cannot reach
   # MSK until mesh #11's egress is applied. Turn it on with
   # --set config.OUTBOX_RELAY_ENABLED=true (runbook step 6). Events wait in the
   # outbox meanwhile; nothing is lost.
