@@ -60,6 +60,10 @@ spring:
         delivery.timeout.ms: 30000
         request.timeout.ms: 20000
         linger.ms: 5
+        # How long send() may block on metadata (missing topic, unreachable
+        # cluster). Kafka's 60 s default would hold the relay's transaction,
+        # DB connection and advisory lock for over a minute per tick.
+        max.block.ms: 10000
   security:
     oauth2:
       resourceserver:
