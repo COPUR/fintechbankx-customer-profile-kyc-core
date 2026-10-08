@@ -41,8 +41,11 @@ check() {
   echo "ok   $label"
 }
 
-echo "--- monolith reserves more credit for customer 2 before cut-over, backfill run 3"
-psql_q -d "$src_db" -c "UPDATE customers SET used_credit_limit = used_credit_limit + 1000, version = version + 1 WHERE id = 2"
+# The monolith never bumps customers.version (no @Version on its CustomerEntity,
+# only an updated_at trigger), so every monolith change below leaves it as is,
+# except the last case, which proves a bumped version is caught too.
+echo "--- monolith reserves 1000 for customer 2 without bumping version, backfill run 3"
+psql_q -d "$src_db" -c "UPDATE customers SET used_credit_limit = used_credit_limit + 1000, updated_at = updated_at + interval '1 minute' WHERE id = 2"
 "$root/db/backfill/run-backfill.sh" "dbname=$src_db" "dbname=$dst_db" AED
 
 echo "--- the service changes customers 1 and 3 (as JPA would: version + 1), backfill run 4"
@@ -50,14 +53,26 @@ psql_q -d "$dst_db" -c "UPDATE $schema.customer SET email = 'amina@example.com',
   -c "UPDATE $schema.customer SET used_credit = used_credit - 500, version = version + 1 WHERE customer_id = '3'"
 "$root/db/backfill/run-backfill.sh" "dbname=$src_db" "dbname=$dst_db" AED
 
-echo "--- the monolith also moves credit for customer 3: two ledgers, run 5 must fail"
+report="$(mktemp)"
+trap 'rm -f "$report"' EXIT
+
+expect_two_ledgers() {
+  local run="$1" customer="$2"
+  if "$root/db/backfill/run-backfill.sh" "dbname=$src_db" "dbname=$dst_db" AED > "$report" 2>&1; then
+    cat "$report"; echo "FAIL run $run: backfill accepted customer $customer changed on both sides" >&2; exit 1
+  fi
+  grep -q "^$customer monolith changed it after the service did" "$report" \
+    || { cat "$report"; echo "FAIL run $run: reconcile did not name customer $customer" >&2; exit 1; }
+  echo "ok   run $run: customer $customer changed on both sides fails reconciliation"
+}
+
+echo "--- the monolith reserves 900 for customer 1, which the service changed, without bumping version: run 5 must fail"
+psql_q -d "$src_db" -c "UPDATE customers SET used_credit_limit = used_credit_limit + 900, updated_at = updated_at + interval '1 minute' WHERE id = 1"
+expect_two_ledgers 5 1
+
+echo "--- the monolith also moves credit for customer 3 and bumps version: run 6 must fail"
 psql_q -d "$src_db" -c "UPDATE customers SET used_credit_limit = used_credit_limit - 1, version = version + 1 WHERE id = 3"
-if "$root/db/backfill/run-backfill.sh" "dbname=$src_db" "dbname=$dst_db" AED > "$dst_db.out" 2>&1; then
-  cat "$dst_db.out"; echo "FAIL backfill accepted a customer changed on both sides" >&2; exit 1
-fi
-grep -q "^3 monolith changed it after the service did" "$dst_db.out" || { cat "$dst_db.out"; echo "FAIL wrong reconcile report" >&2; exit 1; }
-rm -f "$dst_db.out"
-echo "ok   a customer changed on both sides fails reconciliation"
+expect_two_ledgers 6 3
 
 check "customers loaded once despite repeated runs" \
   "SELECT count(*) FROM $schema.customer" "3"
@@ -68,9 +83,11 @@ check "names, credit position, currency and version carried" \
 check "contact, score and income stay empty unless the service set them" \
   "SELECT count(*) FROM $schema.customer WHERE email IS NULL AND phone_number IS NULL AND credit_score IS NULL AND monthly_income IS NULL" "2"
 check "a monolith credit change before cut-over is picked up by a re-run" \
-  "SELECT used_credit::numeric(19,2) || ' ' || version FROM $schema.customer WHERE customer_id = '2'" "1000.00 1"
+  "SELECT used_credit::numeric(19,2) || ' ' || version FROM $schema.customer WHERE customer_id = '2'" "1000.00 0"
 check "a re-run never overwrites a customer the service changed" \
   "SELECT used_credit::numeric(19,2) FROM $schema.customer WHERE customer_id = '3'" "999500.00"
+check "the conflicting monolith change did not reach the service copy" \
+  "SELECT used_credit::numeric(19,2) FROM $schema.customer WHERE customer_id = '1'" "20000.00"
 check "no loan or payment tables in the customer schema" \
   "SELECT count(*) FROM information_schema.tables WHERE table_schema = '$schema' AND (table_name LIKE 'loan%' OR table_name LIKE 'payment%')" "0"
 
