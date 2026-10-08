@@ -34,6 +34,16 @@ jobs:
       - uses: azure/setup-helm@v4
         with:
           version: v3.16.3
+      - name: Install kubeconform
+        shell: bash
+        run: |
+          tmpdir="$(mktemp -d)"
+          curl -sSfL -o "$tmpdir/kubeconform.tar.gz" \
+            https://github.com/yannh/kubeconform/releases/download/v0.6.7/kubeconform-linux-amd64.tar.gz
+          echo "95f14e87aa28c09d5941f11bd024c1d02fdc0303ccaa23f61cef67bc92619d73  $tmpdir/kubeconform.tar.gz" | sha256sum -c -
+          tar -xz -C "$tmpdir" -f "$tmpdir/kubeconform.tar.gz"
+          sudo install "$tmpdir/kubeconform" /usr/local/bin/kubeconform
+          rm -rf "$tmpdir"
       - name: Lint and render chart
         run: |
           chart=deploy/helm/customer-profile-kyc-service
@@ -43,6 +53,13 @@ jobs:
           helm template ci "$chart" $args > /dev/null
           helm template ci "$chart" -f "$chart/values-dev.yaml" $args > /dev/null
           rendered="$(helm template ci "$chart" $args)"
+          # Strict schema validation of every rendered resource (unknown fields fail); CRDs from the CRDs catalog.
+          kubeconform_args=(-strict -summary -kubernetes-version 1.30.0 -schema-location default
+            -schema-location 'https://raw.githubusercontent.com/datreeio/CRDs-catalog/main/{{.Group}}/{{.ResourceKind}}_{{.ResourceAPIVersion}}.json')
+          kubeconform "${kubeconform_args[@]}" - <<<"$rendered"
+          helm template ci "$chart" -f "$chart/values-dev.yaml" $args | kubeconform "${kubeconform_args[@]}" -
+          helm template ci "$chart" $args --set config.SPRING_PROFILES_ACTIVE=kafka-strimzi --set kafkaTls.secretName=kafka-client-tls \
+            | kubeconform "${kubeconform_args[@]}" -
           # Platform contract: mesh policy and the ingress NetworkPolicy (mesh #11) belong to the service-mesh repo,
           # secrets to the one ClusterSecretStore.
           if grep -qE "kind: (PeerAuthentication|AuthorizationPolicy|SecretStore|NetworkPolicy)$" <<<"$rendered"; then
