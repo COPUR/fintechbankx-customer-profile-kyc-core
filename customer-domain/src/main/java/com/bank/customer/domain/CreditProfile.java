@@ -77,7 +77,7 @@ public final class CreditProfile implements ValueObject {
     
     public CreditProfile updateCreditLimit(Money newCreditLimit) {
         if (newCreditLimit.compareTo(usedCredit) < 0) {
-            throw new IllegalArgumentException("New credit limit cannot be less than used credit");
+            throw new CreditLimitBelowUsedCreditException("New credit limit cannot be less than used credit");
         }
         return new CreditProfile(newCreditLimit, usedCredit);
     }

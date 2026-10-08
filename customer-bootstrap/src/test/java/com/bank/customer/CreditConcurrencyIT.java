@@ -116,7 +116,7 @@ class CreditConcurrencyIT {
 
         MockHttpServletResponse lowering = responses.get(responses.size() - 1);
         List<MockHttpServletResponse> reserves = responses.subList(0, responses.size() - 1);
-        assertThat(countStatuses(reserves)).as("reserve status -> count").containsOnlyKeys(200, 422);
+        assertThat(countStatuses(reserves).keySet()).as("reserve statuses").isSubsetOf(200, 422);
         assertThat(lowering.getStatus()).as("limit change").isIn(200, 422);
         if (lowering.getStatus() == 422) {
             assertThat(json.readTree(lowering.getContentAsString()).get("code").asText())

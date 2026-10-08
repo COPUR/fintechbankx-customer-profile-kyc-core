@@ -1,5 +1,6 @@
 package com.bank.customer.infrastructure.web;
 
+import com.bank.customer.domain.CreditLimitBelowUsedCreditException;
 import com.bank.customer.domain.CustomerNotFoundException;
 import com.bank.customer.domain.IdempotencyKeyConflictException;
 import com.bank.customer.domain.CustomerAlreadyExistsException;
@@ -45,6 +46,13 @@ public class ApiExceptionHandler {
             "The customer does not have enough available credit");
     }
 
+    @ExceptionHandler(CreditLimitBelowUsedCreditException.class)
+    ResponseEntity<ErrorResponse> limitBelowUsedCredit(CreditLimitBelowUsedCreditException ex) {
+        log.info("Credit limit change refused: {}", ex.getMessage());
+        return error(HttpStatus.UNPROCESSABLE_ENTITY, "CREDIT_LIMIT_BELOW_USED_CREDIT",
+            "The new credit limit is below the credit the customer already uses");
+    }
+
     @ExceptionHandler(IdempotencyKeyConflictException.class)
     ResponseEntity<ErrorResponse> idempotencyConflict(IdempotencyKeyConflictException ex) {
         return error(HttpStatus.CONFLICT, "IDEMPOTENCY_KEY_REUSED", ex.getMessage());
@@ -79,10 +87,29 @@ public class ApiExceptionHandler {
         return error(HttpStatus.CONFLICT, "CUSTOMER_ALREADY_EXISTS", ex.getMessage());
     }
 
-    /** Two concurrent first calls with one idempotency key, or another unique key: the database lets one through. */
+    /** V1__create_customer_tables.sql: used_credit <= credit_limit, the database's own guard. */
+    static final String CREDIT_CHECK_CONSTRAINT = "ck_customer_credit";
+
+    /**
+     * Two concurrent first calls with one idempotency key, or another unique key: the database lets one through.
+     * The credit check constraint means a write raced past the aggregate's rule; the row was not changed.
+     */
     @ExceptionHandler(DataIntegrityViolationException.class)
     ResponseEntity<ErrorResponse> duplicate(DataIntegrityViolationException ex) {
+        if (mentions(ex, CREDIT_CHECK_CONSTRAINT)) {
+            log.warn("Credit check constraint refused a write: {}", ex.getMostSpecificCause().getMessage());
+            return concurrentUpdate(new OptimisticLockingFailureException(CREDIT_CHECK_CONSTRAINT, ex));
+        }
         return error(HttpStatus.CONFLICT, "DUPLICATE_REQUEST", "A conflicting request was already processed; retry");
+    }
+
+    private static boolean mentions(Throwable e, String constraint) {
+        for (Throwable t = e; t != null; t = t.getCause()) {
+            if (t.getMessage() != null && t.getMessage().contains(constraint)) {
+                return true;
+            }
+        }
+        return false;
     }
 
     @ExceptionHandler({IllegalArgumentException.class, MethodArgumentNotValidException.class,

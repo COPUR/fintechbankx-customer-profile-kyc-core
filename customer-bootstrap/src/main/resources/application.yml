@@ -122,6 +122,12 @@ management:
       service: svc-cus-profile-kyc
 
 customer:
+  credit:
+    # A reserve, release or limit change that loses an optimistic race on the
+    # customer row is run again on the fresh row up to this many times
+    # (jittered pause growing by retry-backoff), then answered 409.
+    max-attempts: 10
+    retry-backoff: PT0.01S
   outbox:
     retention: P7D
     relay:
