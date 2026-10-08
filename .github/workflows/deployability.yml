@@ -48,7 +48,9 @@ jobs:
         run: |
           chart=deploy/helm/customer-profile-kyc-service
           base="--set image.repository=ci/customer-profile-kyc-service --set image.tag=${{ github.sha }} --set externalSecret.remoteSecretName=ci/customer-profile-kyc-service/db-app"
-          args="$base --set config.DB_URL=ci-db-url --set config.OIDC_ISSUER_URI=ci-oidc-issuer-uri --set config.OIDC_JWK_SET_URI=ci-oidc-jwk-set-uri --set config.OIDC_AUDIENCE=ci-oidc-audience --set config.KAFKA_BOOTSTRAP_SERVERS=ci-kafka-bootstrap-servers"
+          # Aurora verify-full (cicd-templates 4f0f266): the chart refuses a jdbc:postgresql DB_URL without it.
+          db_url='jdbc:postgresql://ci-db:5432/db_cus_profile_kyc_ci?sslmode=verify-full&sslrootcert=/etc/fintechbankx/rds-ca/global-bundle.pem'
+          args="$base --set-string config.DB_URL=$db_url --set config.OIDC_ISSUER_URI=ci-oidc-issuer-uri --set config.OIDC_JWK_SET_URI=ci-oidc-jwk-set-uri --set config.OIDC_AUDIENCE=ci-oidc-audience --set config.KAFKA_BOOTSTRAP_SERVERS=ci-kafka-bootstrap-servers"
           helm lint "$chart" $args
           helm template ci "$chart" $args > /dev/null
           helm template ci "$chart" -f "$chart/values-dev.yaml" $args > /dev/null
@@ -92,6 +94,24 @@ jobs:
             | python3 scripts/ci/strimzi-tls-env.py --expect-secret kafka-client-tls
           if helm template ci "$chart" $args $strimzi > /dev/null 2>&1; then
             echo "chart rendered the kafka-strimzi profile without kafkaTls.secretName" >&2
+            exit 1
+          fi
+          # RDS CA bundle (cicd-templates 4f0f266): ConfigMap rds-ca-bundle mounted read-only, not optional,
+          # exported as DB_SSL_ROOT_CERT; a PostgreSQL DB_URL without sslmode=verify-full must not render.
+          python3 scripts/ci/database-ca.py <<<"$rendered"
+          helm template ci "$chart" -f "$chart/values-dev.yaml" $args | python3 scripts/ci/database-ca.py
+          for weak in 'jdbc:postgresql://ci-db:5432/db_cus_profile_kyc_ci?sslmode=require' \
+                      'jdbc:postgresql://ci-db:5432/db_cus_profile_kyc_ci'; do
+            if helm template ci "$chart" $base --set-string "config.DB_URL=$weak" --set config.OIDC_ISSUER_URI=ci-oidc-issuer-uri \
+                --set config.OIDC_JWK_SET_URI=ci-oidc-jwk-set-uri --set config.OIDC_AUDIENCE=ci-oidc-audience \
+                --set config.KAFKA_BOOTSTRAP_SERVERS=ci-kafka-bootstrap-servers > /dev/null 2>&1; then
+              echo "chart rendered a DB_URL without sslmode=verify-full: $weak" >&2
+              exit 1
+            fi
+          done
+          # The check itself must catch a render without the mount.
+          if sed '/rds-ca-bundle/d' <<<"$rendered" | python3 scripts/ci/database-ca.py 2>/dev/null; then
+            echo "database-ca accepted a render without the rds-ca-bundle volume" >&2
             exit 1
           fi
           grep -q "name: aws-secrets-manager" <<<"$rendered"
