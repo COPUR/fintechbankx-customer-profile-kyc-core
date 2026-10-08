@@ -11,6 +11,7 @@ import io.micrometer.core.instrument.MeterRegistry;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.core.ParameterizedTypeReference;
+import org.springframework.http.HttpHeaders;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.MediaType;
 import org.springframework.util.LinkedMultiValueMap;
@@ -19,8 +20,11 @@ import org.springframework.web.client.RestClient;
 import org.springframework.web.client.RestClientException;
 import org.springframework.web.client.RestClientResponseException;
 
+import java.net.URLEncoder;
+import java.nio.charset.StandardCharsets;
 import java.time.Clock;
 import java.time.Instant;
+import java.util.Base64;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
@@ -34,7 +38,8 @@ import java.util.Map;
  * permission (Keycloak FGAP v2, identity 8f9024b) covers users in group
  * /customers only, so a 403 on reading the user is the same outcome as an
  * unknown user. This service only links existing users; it never creates
- * Keycloak users. Every other failure
+ * Keycloak users. The admin token is fetched with client_secret_basic (the
+ * secret is never in a request body). Every other failure
  * fails closed with {@link IdentityDirectoryUnavailableException}.
  */
 public class KeycloakIdentityDirectoryAdapter implements IdentityDirectoryPort {
@@ -139,11 +144,12 @@ public class KeycloakIdentityDirectoryAdapter implements IdentityDirectoryPort {
         if (current != null && clock.instant().isBefore(current.refreshAt())) {
             return current.value();
         }
+        // client_secret_basic: the credential is only in the Authorization header, never in the body,
+        // so nothing that logs request bodies can capture it (observability masking does not cover it).
         MultiValueMap<String, String> form = new LinkedMultiValueMap<>();
         form.add("grant_type", "client_credentials");
-        form.add("client_id", settings.clientId());
-        form.add("client_secret", settings.clientSecret());
         Map<String, Object> response = http.post().uri(settings.tokenUrl())
+            .header(HttpHeaders.AUTHORIZATION, basicCredentials(settings.clientId(), settings.clientSecret()))
             .contentType(MediaType.APPLICATION_FORM_URLENCODED)
             .body(form)
             .retrieve()
@@ -157,6 +163,13 @@ public class KeycloakIdentityDirectoryAdapter implements IdentityDirectoryPort {
         return value;
     }
 
-    private record AccessToken(String value, Instant refreshAt) {
+    /** RFC 6749 section 2.3.1: form-urlencode id and secret, then base64 "id:secret". */
+    static String basicCredentials(String clientId, String clientSecret) {
+        String pair = URLEncoder.encode(clientId, StandardCharsets.UTF_8) + ":"
+            + URLEncoder.encode(clientSecret, StandardCharsets.UTF_8);
+        return "Basic " + Base64.getEncoder().encodeToString(pair.getBytes(StandardCharsets.UTF_8));
+    }
+
+        private record AccessToken(String value, Instant refreshAt) {
     }
 }

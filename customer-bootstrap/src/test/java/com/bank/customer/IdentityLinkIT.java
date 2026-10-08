@@ -64,7 +64,11 @@ class IdentityLinkIT {
         keycloak = HttpServer.create(new InetSocketAddress("127.0.0.1", 0), 0);
         keycloak.createContext("/realms/" + REALM + "/protocol/openid-connect/token", exchange -> {
             String form = new String(exchange.getRequestBody().readAllBytes(), StandardCharsets.UTF_8);
-            REQUESTS.add("POST token " + (form.contains("grant_type=client_credentials") && form.contains("client_id=svc-cus-profile-kyc")));
+            // client_secret_basic: credential in the Authorization header only, body is grant_type alone.
+            String basic = "Basic " + java.util.Base64.getEncoder().encodeToString(
+                "svc-cus-profile-kyc:it-client-credential".getBytes(StandardCharsets.UTF_8));
+            REQUESTS.add("POST token " + (form.equals("grant_type=client_credentials")
+                && basic.equals(exchange.getRequestHeaders().getFirst("Authorization"))));
             respond(exchange, 200, "{\"access_token\":\"admin-token\",\"expires_in\":300}");
         });
         keycloak.createContext("/admin/realms/" + REALM + "/users/", exchange -> {
