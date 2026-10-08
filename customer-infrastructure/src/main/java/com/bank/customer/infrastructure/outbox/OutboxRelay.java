@@ -11,6 +11,7 @@ import org.springframework.transaction.support.TransactionTemplate;
 import java.nio.charset.StandardCharsets;
 import java.time.Clock;
 import java.time.Duration;
+import java.time.Instant;
 import java.util.HashSet;
 import java.util.List;
 import java.util.Set;
@@ -30,10 +31,13 @@ import java.util.concurrent.TimeoutException;
  * <ul>
  *   <li>retryable (a Kafka {@link RetriableException}, including the producer's
  *   own timeouts, or the relay's send timeout): the batch stops and the row is
- *   retried on the next run, so later events cannot overtake it;</li>
+ *   retried on the next run, so later events cannot overtake it. Retryable
+ *   failures never park by count, so a broker or egress outage does not turn
+ *   into manual replays;</li>
  *   <li>permanent (RecordTooLarge, Serialization, InvalidTopic,
  *   TopicAuthorization, anything else that is not retriable), or a retryable
- *   failure on the row's {@code maxAttempts}-th attempt: the row is parked
+ *   failure when the row has kept failing for longer than
+ *   {@code retryableParkAfter} since its first failure: the row is parked
  *   (parked_at set, reason in last_error) and the batch continues. The parked
  *   customer's later events wait behind it (here and in the batch query) so a
  *   customer's events stay in order; other customers' events flow. Parked rows
@@ -53,13 +57,13 @@ public class OutboxRelay {
     private final int batchSize;
     private final Duration sendTimeout;
     private final Duration retention;
-    private final int maxAttempts;
+    private final Duration retryableParkAfter;
 
     public OutboxRelay(SpringDataOutboxRepository outbox, KafkaTemplate<String, String> kafka,
                        TransactionTemplate transactions, Clock clock, int batchSize,
-                       Duration sendTimeout, Duration retention, int maxAttempts) {
-        if (maxAttempts < 1) {
-            throw new IllegalArgumentException("customer.outbox.relay.max-attempts must be at least 1");
+                       Duration sendTimeout, Duration retention, Duration retryableParkAfter) {
+        if (retryableParkAfter == null || retryableParkAfter.isNegative() || retryableParkAfter.isZero()) {
+            throw new IllegalArgumentException("customer.outbox.relay.retryable-park-after must be positive");
         }
         this.outbox = outbox;
         this.kafka = kafka;
@@ -68,11 +72,11 @@ public class OutboxRelay {
         this.batchSize = batchSize;
         this.sendTimeout = sendTimeout;
         this.retention = retention;
-        this.maxAttempts = maxAttempts;
+        this.retryableParkAfter = retryableParkAfter;
     }
 
-    public int maxAttempts() {
-        return maxAttempts;
+    public Duration retryableParkAfter() {
+        return retryableParkAfter;
     }
 
     /**
@@ -96,13 +100,14 @@ public class OutboxRelay {
                     sent++;
                 } catch (InterruptedException e) {
                     Thread.currentThread().interrupt();
-                    row.markFailed("interrupted");
+                    row.markFailed("interrupted", clock.instant());
                     break;
                 } catch (Exception e) {
-                    row.markFailed(describe(e));
-                    if (isRetryable(e) && row.getAttempts() < maxAttempts) {
-                        log.warn("Outbox relay could not publish event {} to {} (attempt {} of {}); will retry",
-                            row.getEventId(), row.getTopic(), row.getAttempts(), maxAttempts, e);
+                    Instant now = clock.instant();
+                    row.markFailed(describe(e), now);
+                    if (isRetryable(e) && !now.isAfter(row.getFirstFailedAt().plus(retryableParkAfter))) {
+                        log.warn("Outbox relay could not publish event {} to {} (attempt {}, failing since {}); will retry",
+                            row.getEventId(), row.getTopic(), row.getAttempts(), row.getFirstFailedAt(), e);
                         break;
                     }
                     row.park(clock.instant());

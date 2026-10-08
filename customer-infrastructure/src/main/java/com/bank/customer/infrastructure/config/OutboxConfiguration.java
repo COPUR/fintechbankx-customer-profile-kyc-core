@@ -18,6 +18,7 @@ import org.springframework.transaction.support.TransactionTemplate;
 
 import java.time.Clock;
 import java.time.Duration;
+import java.time.Instant;
 
 @Configuration
 public class OutboxConfiguration {
@@ -57,6 +58,23 @@ public class OutboxConfiguration {
     }
 
     /**
+     * Age of the oldest event waiting for the relay, 0 when none waits
+     * (Prometheus outbox_oldest_pending_age_seconds). Alert when it keeps
+     * growing past a few minutes: the relay or Kafka is down, and rows that
+     * keep failing retryably park once they pass retryable-park-after.
+     */
+    @Bean
+    Gauge customerOutboxOldestPendingAgeGauge(MeterRegistry registry, SpringDataOutboxRepository outbox, Clock clock) {
+        return Gauge.builder("outbox.oldest.pending.age.seconds", outbox, repository -> {
+                Instant oldest = repository.oldestPendingOccurredAt();
+                return oldest == null ? 0.0 : Math.max(0, Duration.between(oldest, clock.instant()).toSeconds());
+            })
+            .description("Age in seconds of the oldest customer event waiting for the outbox relay")
+            .baseUnit("seconds")
+            .register(registry);
+    }
+
+    /**
      * The relay runs in every replica; the advisory lock lets only one of
      * them publish at a time. Disable with customer.outbox.relay.enabled=false
      * (tests, or a dedicated relay deployment).
@@ -74,9 +92,9 @@ public class OutboxConfiguration {
                                 @Value("${customer.outbox.relay.batch-size:100}") int batchSize,
                                 @Value("${customer.outbox.relay.send-timeout:PT35S}") Duration sendTimeout,
                                 @Value("${customer.outbox.retention:P7D}") Duration retention,
-                                @Value("${customer.outbox.relay.max-attempts:10}") int maxAttempts) {
+                                @Value("${customer.outbox.relay.retryable-park-after:PT24H}") Duration retryableParkAfter) {
             return new OutboxRelay(outbox, kafka, new TransactionTemplate(transactionManager), clock, batchSize,
-                sendTimeout, retention, maxAttempts);
+                sendTimeout, retention, retryableParkAfter);
         }
 
         @Bean

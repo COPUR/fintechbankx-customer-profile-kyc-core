@@ -56,7 +56,7 @@ Owners: **monolith squad** (enterprise-loan-management-system flags and anti-cor
 | 3 | Final backfill under the freeze: `run-backfill.sh ... USD` | migration lead | exits 0; staged totals equal the monolith totals of the same snapshot; zero `monolith changed it after the service did`; zero `missing in the service` | any non-zero exit or any reported customer | lift the freeze (as step 2); fix the cause, start again from step 2 |
 | 4 | Reconcile and verify: re-run `03_reconcile.sql` alone and the parity checks against the frozen monolith | migration lead, customer squad | zero problem rows; `count(*)`, `sum(credit_limit)` and `sum(used_credit)` of migrated rows equal the monolith's; zero rows with `used_credit > credit_limit` on either side; 20 random customers read through `GET /api/v1/customers/{id}/credit` equal their monolith rows | any discrepancy | lift the freeze (as step 2) |
 | 5 | Route writes to the service and lift the freeze: the monolith flag sends credit writes, customer creation and profile edits through the anti-corruption client to this API, and reads too; switch `svc-ln-loan-lifecycle` to this service (`CUSTOMER_CREDIT_ADAPTER=http`, client-credentials token). This step is the precondition for loan runbook step 2 | monolith squad, lending squad | for 30 minutes: 5xx below 0.5 % of `http_server_requests_seconds_count{uri=~"/api/v1/customers.*"}`; p99 below 800 ms; `max(updated_at)` of `public.customers` unchanged (no write bypasses the flag); zero customers with `used_credit > credit_limit` | 5xx at or above 0.5 % for 5 minutes, any write landing in `public.customers`, any customer over their limit, or any 5xx on credit reserve/release that the loan service cannot replay | freeze again; copy every row changed here since step 5 (`version <> legacy_synced_version`, plus customers created here) back to `public.customers` (reverse sync, to be written and rehearsed before step 5 is scheduled); then route writes back to the monolith. Flipping the flag back without the reverse sync loses every write made here |
-| 6 | Merge asyncapi-catalog PR #9 and create the topics (fintechbankx-platform-event-streaming-kafka); enable the outbox relay; consumers move to `evt.cus.customer.*.v1` | customer squad, event-streaming squad | `outbox_pending_events` drains to below 100 within 10 minutes; `outbox_parked_events` is 0 | `outbox_parked_events` above 0, or pending still growing after 10 minutes | relay off; events stay in the outbox (nothing lost) |
+| 6 | Merge asyncapi-catalog PR #9 and create the topics (fintechbankx-platform-event-streaming-kafka); enable the outbox relay; consumers move to `evt.cus.customer.*.v1` | customer squad, event-streaming squad | `outbox_pending_events` drains to below 100 and `outbox_oldest_pending_age_seconds` to below 60 within 10 minutes; `outbox_parked_events` is 0 | `outbox_parked_events` above 0, or pending still growing after 10 minutes | relay off; events stay in the outbox (nothing lost) |
 | 7 | Remove the monolith's dead customer write code and the flag | monolith squad | monolith regression suite green; no write path to `public.customers` left in `src/main` | monolith regression failures | revert the removal; the flag still routes to this service |
 | 8 | After the loan and payment cut-overs are complete and one full month-end cycle has passed: drop the monolith foreign keys that reference `customers` (`loans.customer_id` and any other), then drop `customers` | monolith squad, migration lead | month-end figures from this service equal the finance report | any month-end discrepancy before the drop | restore from snapshot |
 
@@ -71,17 +71,25 @@ Owners: **monolith squad** (enterprise-loan-management-system flags and anti-cor
 
 ## 4. Parked outbox events
 
-`OutboxRelay` parks a row (sets `parked_at`, keeps the reason in `last_error`) when Kafka refuses it permanently
-(`RecordTooLargeException`, `SerializationException`, `InvalidTopicException`, `TopicAuthorizationException`, any
-error that is not a Kafka `RetriableException`) or when it has failed `customer.outbox.relay.max-attempts` times
-(`OUTBOX_RELAY_MAX_ATTEMPTS`, default 10). Retryable failures below the cap stop the batch and are retried on the
-next run, as before. Parked rows are skipped and never purged. The same customer's later events wait behind a parked
-row (they stay in `outbox_pending_events`), so a consumer never sees a customer's events out of order; other customers'
-events keep flowing. `outbox_parked_events{service="svc-cus-profile-kyc"}` counts parked rows: alert on any value
-above zero, because consumers are missing that customer's events until the replay.
+`OutboxRelay` parks a row (sets `parked_at`, keeps the reason in `last_error`) in two cases:
 
-A long broker or network outage also parks rows: each head-of-queue row parks after the cap, then the next one
-becomes the head. After such an outage, replay everything that was parked during it.
+- at once when Kafka refuses it permanently (`RecordTooLargeException`, `SerializationException`,
+  `InvalidTopicException`, `TopicAuthorizationException`, any error that is not a Kafka `RetriableException`);
+- for a retryable failure (`RetriableException`, a producer or relay timeout) only when the row has kept failing for
+  longer than `customer.outbox.relay.retryable-park-after` (`OUTBOX_RELAY_RETRYABLE_PARK_AFTER`, default `PT24H`)
+  since its first failure (`first_failed_at`). Retryable failures never park by count: until then they stop the batch
+  and are retried every run, so a broker or egress outage shorter than the ceiling needs no replay; the backlog drains
+  by itself when Kafka is back.
+
+Parked rows are skipped and never purged. The same customer's later events wait behind a parked row (they stay in
+`outbox_pending_events`), so a consumer never sees a customer's events out of order; other customers' events keep
+flowing. Metrics (all tagged `service="svc-cus-profile-kyc"`):
+
+- `outbox_parked_events`: rows parked; alert on any value above zero, because consumers are missing that customer's
+  events until the replay.
+- `outbox_oldest_pending_age_seconds`: age of the oldest row waiting for the relay (0 when none); alert when it stays
+  above 300, which means the relay or Kafka is down. Rows that keep failing park once they pass the 24 h ceiling.
+- `outbox_pending_events`: rows waiting for the relay.
 
 Un-park (replay), after fixing the cause (topic created, IAM policy fixed, payload size limit raised):
 
@@ -93,9 +101,9 @@ WHERE published_at IS NULL AND parked_at IS NOT NULL
 ORDER BY created_seq;
 
 -- Un-park one row (or drop the event_id filter to replay all; the relay sends them in created_seq order).
--- attempts must be reset, otherwise the cap parks the row again on its first failure.
+-- first_failed_at must be reset, otherwise the 24 h ceiling parks the row again on its first retryable failure.
 UPDATE sc_cus_profile_kyc.outbox_event
-SET parked_at = NULL, attempts = 0, last_error = NULL
+SET parked_at = NULL, first_failed_at = NULL, attempts = 0, last_error = NULL
 WHERE event_id = '<event id>' AND published_at IS NULL AND parked_at IS NOT NULL;
 ```
 
