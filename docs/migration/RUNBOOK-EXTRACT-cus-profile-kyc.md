@@ -53,6 +53,15 @@ Credit must have one ledger at any time: the monolith's `public.customers` until
 | 6 | Monolith stops writing `customers` altogether | flag off, monolith table is still intact |
 | 7 | After the loan and payment cut-overs are complete and one full month-end cycle has passed: drop the monolith foreign keys that reference `customers` (`loans.customer_id` and any other), then drop `customers` | restore from snapshot |
 
+**Dependency on the loan extraction.** Step 2 of the loan runbook (`svc-ln-loan-lifecycle` taking traffic with its HTTP customer adapter) has the precondition **steps 2 and 3 here are done**: the monolith moves credit only through this service and the re-run has reconciled. Before that the monolith still reserves and releases credit in `customers.used_credit_limit` while the loan service would use this service's `customer.used_credit`: two credit ledgers for the same customer, which can overdraw the limit and drift apart.
+
+**Deletion order for step 7.** In the monolith, `customers` is referenced by `fk_loans_customer` (`loans.customer_id`, V2), `fk_loan_applications_customer` (V12), `fk_credit_reports_customer` (V14) and `fk_risk_assessments_customer` (V15), all `ON DELETE RESTRICT`. `payments` references `loans` (`fk_payments_loan`, V4), not `customers`. So the table goes last:
+
+1. Payment extraction finishes and drops `fk_payments_loan` (or `payments` itself), so the loan tables can change.
+2. Loan extraction drops `fk_loans_customer` and `fk_loan_applications_customer` (or the loan tables with its own final step).
+3. The risk extraction drops `fk_credit_reports_customer` and `fk_risk_assessments_customer` (or those tables).
+4. Only then: step 7 here, drop `customers`. Before 2 and 3 a plain `DROP TABLE customers` fails on the foreign keys; never use `DROP ... CASCADE`, which would silently remove the other contexts' constraints.
+
 ## 4. Acceptance checklist
 
 - [x] Service builds and tests standalone (`ci/build`, `ci/test`, including PostgreSQL integration tests)
