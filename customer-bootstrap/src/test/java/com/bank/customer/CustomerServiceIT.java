@@ -33,10 +33,12 @@ import org.springframework.test.web.servlet.request.MockHttpServletRequestBuilde
 import org.springframework.transaction.PlatformTransactionManager;
 import org.springframework.transaction.support.TransactionTemplate;
 
+import java.nio.charset.StandardCharsets;
 import java.math.BigDecimal;
 import java.time.Clock;
 import java.time.Duration;
 import java.util.List;
+import java.util.UUID;
 import java.util.concurrent.CompletableFuture;
 
 import static org.assertj.core.api.Assertions.assertThat;
@@ -251,9 +253,9 @@ class CustomerServiceIT {
     void servicesReadOnlyTheCreditPositionAndOnlyListedServicesMayUseIt() throws Exception {
         String customerId = create("self@example.com", "3000.00");
 
-        mvc.perform(asCustomerToken(get("/api/v1/customers/{id}", customerId), "kc-user-1", customerId))
+        mvc.perform(asIdentityCustomer(get("/api/v1/customers/{id}", customerId), "kc-user-1", customerId))
             .andExpect(status().isOk());
-        mvc.perform(asCustomerToken(get("/api/v1/customers/{id}", customerId), "kc-user-2", "someone-else"))
+        mvc.perform(asIdentityCustomer(get("/api/v1/customers/{id}", customerId), "kc-user-2", "someone-else"))
             .andExpect(status().isForbidden());
         mvc.perform(asService(get("/api/v1/customers/{id}", customerId)))
             .andExpect(status().isForbidden());
@@ -270,7 +272,7 @@ class CustomerServiceIT {
                 .contentType(MediaType.APPLICATION_JSON)
                 .content("{\"amount\": 10.00, \"currency\": \"AED\"}"))
             .andExpect(status().isForbidden());
-        mvc.perform(asCustomerToken(post("/api/v1/customers/{id}/credit/reserve", customerId), "kc-user-1", customerId)
+        mvc.perform(asIdentityCustomer(post("/api/v1/customers/{id}/credit/reserve", customerId), "kc-user-1", customerId)
                 .header("x-idempotency-key", "self-1")
                 .contentType(MediaType.APPLICATION_JSON)
                 .content("{\"amount\": 10.00, \"currency\": \"AED\"}"))
@@ -285,18 +287,18 @@ class CustomerServiceIT {
     @Test
     void aCustomerTokenIsMatchedOnItsCustomerIdClaimAndFallsBackToTheSubject() throws Exception {
         loadParitySeed();
-        String keycloakUser = "6f1c2a7e-5b8d-4c3e-9a1f-0d2b3c4e5f60";
+        String identityUser = UUID.nameUUIDFromBytes("keycloak-user-1".getBytes(StandardCharsets.UTF_8)).toString();
 
         for (String path : List.of("/api/v1/customers/{id}", "/api/v1/customers/{id}/credit")) {
-            mvc.perform(asCustomerToken(get(path, "CUST-12345678"), keycloakUser, "CUST-12345678"))
+            mvc.perform(asIdentityCustomer(get(path, "CUST-12345678"), identityUser, "CUST-12345678"))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.customerId").value("CUST-12345678"));
-            mvc.perform(asCustomerToken(get(path, "CUST-87654321"), keycloakUser, "CUST-12345678"))
+            mvc.perform(asIdentityCustomer(get(path, "CUST-87654321"), identityUser, "CUST-12345678"))
                 .andExpect(status().isForbidden());
             // No customer_id claim: the subject is the principal name.
-            mvc.perform(asCustomerToken(get(path, "CUST-87654321"), "CUST-87654321", null))
+            mvc.perform(asIdentityCustomer(get(path, "CUST-87654321"), "CUST-87654321", null))
                 .andExpect(status().isOk());
-            mvc.perform(asCustomerToken(get(path, "CUST-87654321"), keycloakUser, null))
+            mvc.perform(asIdentityCustomer(get(path, "CUST-87654321"), identityUser, null))
                 .andExpect(status().isForbidden());
         }
     }
@@ -452,7 +454,7 @@ class CustomerServiceIT {
     }
 
     /** A bearer token decoded by the mocked JwtDecoder and converted by the service's real converter. */
-    private MockHttpServletRequestBuilder asCustomerToken(MockHttpServletRequestBuilder request, String subject,
+    private MockHttpServletRequestBuilder asIdentityCustomer(MockHttpServletRequestBuilder request, String subject,
                                                           String customerIdClaim) {
         String token = "customer-token-" + java.util.UUID.randomUUID();
         org.springframework.security.oauth2.jwt.Jwt.Builder jwt = org.springframework.security.oauth2.jwt.Jwt.withTokenValue(token)
