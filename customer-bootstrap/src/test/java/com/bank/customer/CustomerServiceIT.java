@@ -124,11 +124,14 @@ class CustomerServiceIT {
     void duplicateEmailIsRejected() throws Exception {
         create("dup@example.com", "5000.00");
 
-        mvc.perform(asBanker(post("/api/v1/customers"))
+        String body = mvc.perform(asBanker(post("/api/v1/customers"))
                 .contentType(MediaType.APPLICATION_JSON)
                 .content(customerJson("DUP@example.com", "5000.00")))
-            .andExpect(status().isBadRequest())
-            .andExpect(jsonPath("$.code").value("INVALID_REQUEST"));
+            .andExpect(status().isConflict())
+            .andExpect(jsonPath("$.code").value("CUSTOMER_ALREADY_EXISTS"))
+            .andReturn().getResponse().getContentAsString();
+        assertThat(body.toLowerCase()).doesNotContain("dup@example.com", "noor", "rahman");
+        assertThat(jdbc.queryForObject("select count(*) from sc_cus_profile_kyc.customer", Integer.class)).isEqualTo(1);
     }
 
     @Test

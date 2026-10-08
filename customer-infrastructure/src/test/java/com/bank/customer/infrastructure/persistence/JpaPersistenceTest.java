@@ -2,6 +2,7 @@ package com.bank.customer.infrastructure.persistence;
 
 import com.bank.customer.domain.CreditMovement;
 import com.bank.customer.domain.Customer;
+import com.bank.customer.domain.CustomerAlreadyExistsException;
 import com.bank.shared.kernel.domain.CustomerId;
 import com.bank.shared.kernel.domain.Money;
 import org.junit.jupiter.api.BeforeAll;
@@ -73,6 +74,16 @@ class JpaPersistenceTest {
 
         repository.deleteById(CustomerId.of("CUST-JPA-1"));
         assertThat(repository.existsById(CustomerId.of("CUST-JPA-1"))).isFalse();
+    }
+
+    /** Two registrations racing past the existsByEmail check: the unique index decides, with the same domain error. */
+    @Test
+    void aSecondCustomerWithTheSameEmailInAnyCaseIsADomainConflict() {
+        repository.save(newCustomer("CUST-JPA-DUP-1", "race@example.com"));
+
+        assertThatThrownBy(() -> repository.save(newCustomer("CUST-JPA-DUP-2", "RACE@example.com")))
+            .isInstanceOf(CustomerAlreadyExistsException.class)
+            .hasMessageNotContainingAny("race@example.com", "RACE@example.com");
     }
 
     @Test

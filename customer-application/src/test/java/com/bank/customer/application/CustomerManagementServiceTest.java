@@ -187,8 +187,8 @@ class CustomerManagementServiceTest {
         when(customerRepository.existsByEmail("ali@example.com")).thenReturn(true);
 
         assertThatThrownBy(() -> service.registerCustomer(request))
-            .isInstanceOf(IllegalArgumentException.class)
-            .hasMessageContaining("already exists");
+            .isInstanceOf(com.bank.customer.domain.CustomerAlreadyExistsException.class)
+            .hasMessageNotContaining("ali@example.com");
 
         verify(customerRepository, never()).save(any(Customer.class));
     }

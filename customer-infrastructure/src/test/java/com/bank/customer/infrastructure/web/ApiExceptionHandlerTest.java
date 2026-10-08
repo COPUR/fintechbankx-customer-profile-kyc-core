@@ -2,6 +2,7 @@ package com.bank.customer.infrastructure.web;
 
 import com.bank.customer.domain.CustomerNotFoundException;
 import com.bank.customer.domain.IdempotencyKeyConflictException;
+import com.bank.customer.domain.CustomerAlreadyExistsException;
 import com.bank.customer.domain.InsufficientCreditException;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
@@ -53,6 +54,16 @@ class ApiExceptionHandlerTest {
         assertThat(handler.badRequest(new IllegalArgumentException("Email must be valid")))
             .extracting(ResponseEntity::getStatusCode, r -> r.getBody().message())
             .containsExactly(HttpStatus.BAD_REQUEST, "Email must be valid");
+    }
+
+    @Test
+    void aDuplicateCustomerIsA409WithoutPersonalData() {
+        ResponseEntity<ApiExceptionHandler.ErrorResponse> response =
+            handler.customerAlreadyExists(new CustomerAlreadyExistsException());
+
+        assertThat(response.getStatusCode()).isEqualTo(HttpStatus.CONFLICT);
+        assertThat(response.getBody().code()).isEqualTo("CUSTOMER_ALREADY_EXISTS");
+        assertThat(response.getBody().message()).doesNotContain("@");
     }
 
     @Test
