@@ -273,7 +273,7 @@ paths:
               schema:
                 $ref: '#/components/schemas/ErrorResponse'
         '422':
-          description: Not enough available credit
+          description: INSUFFICIENT_CREDIT (not enough available credit), or CURRENCY_MISMATCH (a valid ISO 4217 currency other than the customer's credit currency; a malformed currency is 400)
           content:
             application/json:
               schema:
@@ -338,6 +338,12 @@ paths:
                 $ref: '#/components/schemas/ErrorResponse'
         '409':
           description: Idempotency key reused for a different credit movement (IDEMPOTENCY_KEY_REUSED), or the customer kept changing while the service retried a lost race (CONCURRENT_UPDATE)
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '422':
+          description: CURRENCY_MISMATCH, a valid ISO 4217 currency other than the customer's credit currency (a malformed currency is 400)
           content:
             application/json:
               schema:
@@ -469,8 +475,14 @@ components:
       required: true
       description: |-
         Caller-chosen key, unique per customer, that makes a credit movement
-        safe to retry. Derive it from what the movement is for (for example
-        "<loanId>:reserve") so a retry resends the same key.
+        safe to retry. It must be deterministic: derived from what the
+        movement is for, never random, so a retry after a timeout resends the
+        same key and the credit moves once. svc-ln-loan-lifecycle uses
+        "<loanId>:reserve" (":g<n>" appended after n cancelled reservations),
+        "<loanId>:reserve...:compensation" to cancel a reservation, and
+        "<loanId>:release" when the loan is repaid, with the loan id as the
+        body's reference. The same key with a different amount, currency,
+        movement or reference is 409 IDEMPOTENCY_KEY_REUSED.
       schema:
         type: string
         maxLength: 128

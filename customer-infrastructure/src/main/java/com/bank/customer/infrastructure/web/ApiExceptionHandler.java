@@ -1,5 +1,6 @@
 package com.bank.customer.infrastructure.web;
 
+import com.bank.customer.domain.CreditCurrencyMismatchException;
 import com.bank.customer.domain.CreditLimitBelowUsedCreditException;
 import com.bank.customer.domain.CustomerNotFoundException;
 import com.bank.customer.domain.IdempotencyKeyConflictException;
@@ -44,6 +45,13 @@ public class ApiExceptionHandler {
         log.info("Credit reservation refused: {}", ex.getMessage());
         return error(HttpStatus.UNPROCESSABLE_ENTITY, "INSUFFICIENT_CREDIT",
             "The customer does not have enough available credit");
+    }
+
+    /** A valid ISO 4217 code that is not the customer's credit currency; a malformed one stays 400. */
+    @ExceptionHandler(CreditCurrencyMismatchException.class)
+    ResponseEntity<ErrorResponse> currencyMismatch(CreditCurrencyMismatchException ex) {
+        return error(HttpStatus.UNPROCESSABLE_ENTITY, "CURRENCY_MISMATCH",
+            "The amount is not in the currency the customer's credit is held in");
     }
 
     @ExceptionHandler(CreditLimitBelowUsedCreditException.class)

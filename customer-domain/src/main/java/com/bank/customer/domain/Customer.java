@@ -288,8 +288,11 @@ public class Customer extends AggregateRoot<CustomerId> {
         addDomainEvent(new CustomerCreditReleasedEvent(customerId, amount));
     }
     
-    private static void requirePositive(Money amount) {
+    private void requirePositive(Money amount) {
         Objects.requireNonNull(amount, "Credit amount cannot be null");
+        if (!amount.getCurrency().equals(creditProfile.getCreditLimit().getCurrency())) {
+            throw new CreditCurrencyMismatchException(creditProfile.getCreditLimit().getCurrency(), amount.getCurrency());
+        }
         if (amount.isZero() || amount.isNegative()) {
             throw new IllegalArgumentException("Credit amount must be positive");
         }
