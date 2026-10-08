@@ -18,6 +18,10 @@ import com.bank.customer.domain.IdentityUserId;
 import com.bank.customer.domain.port.in.IdentityLink;
 import com.bank.customer.domain.port.in.LinkIdentityCommand;
 import com.bank.customer.domain.port.out.CreditMovementJournal;
+import com.bank.customer.domain.port.out.CreditReservationLedger;
+import com.bank.customer.domain.CreditReservation;
+import com.bank.customer.domain.ReleaseExceedsReservationException;
+import com.bank.customer.domain.ReservationNotFoundException;
 import com.bank.customer.domain.port.out.CustomerEventPublisher;
 import com.bank.shared.kernel.domain.CustomerId;
 import com.bank.shared.kernel.domain.Money;
@@ -61,6 +65,9 @@ class CustomerManagementServiceTest {
     private CreditMovementJournal creditMovements;
 
     @Mock
+    private CreditReservationLedger creditReservations;
+
+    @Mock
     private IdentityDirectoryPort identityDirectory;
 
     private static final Instant NOW = Instant.parse("2026-10-07T12:00:00Z");
@@ -70,7 +77,7 @@ class CustomerManagementServiceTest {
     @BeforeEach
     void setUp() {
         service = new CustomerManagementService(customerRepository, eventPublisher, creditMovements,
-            identityDirectory, Clock.fixed(NOW, ZoneOffset.UTC));
+            creditReservations, identityDirectory, Clock.fixed(NOW, ZoneOffset.UTC));
     }
 
     private Customer existingCustomer() {
@@ -139,6 +146,7 @@ class CustomerManagementServiceTest {
         customer.clearDomainEvents();
         when(customerRepository.findById(CustomerId.of("CUST-IDEM"))).thenReturn(Optional.of(customer));
         when(creditMovements.find(CustomerId.of("CUST-IDEM"), "key-2")).thenReturn(Optional.empty());
+        when(creditReservations.openAmount(CustomerId.of("CUST-IDEM"), AED)).thenReturn(aed("0.00"));
         when(customerRepository.save(any(Customer.class))).thenAnswer(invocation -> invocation.getArgument(0));
 
         CreditPosition response = service.releaseCredit(move("CUST-IDEM", "500.00", "key-2", "LOAN-7"));
@@ -148,6 +156,113 @@ class CustomerManagementServiceTest {
         verify(creditMovements).record(movement.capture());
         assertThat(movement.getValue().type()).isEqualTo(CreditMovement.Type.RELEASE);
         verify(eventPublisher).publish(eq(customer), anyList());
+    }
+
+    @Test
+    void aReserveWithAReferenceIsAddedToThatReservationAfterTheCustomerIsSaved() {
+        Customer customer = existingCustomer();
+        when(customerRepository.findById(CustomerId.of("CUST-IDEM"))).thenReturn(Optional.of(customer));
+        when(creditMovements.find(CustomerId.of("CUST-IDEM"), "LOAN-7:reserve")).thenReturn(Optional.empty());
+        when(creditReservations.find(CustomerId.of("CUST-IDEM"), "LOAN-7")).thenReturn(Optional.empty());
+        when(customerRepository.save(any(Customer.class))).thenAnswer(invocation -> invocation.getArgument(0));
+
+        service.reserveCredit(move("CUST-IDEM", "1000.00", "LOAN-7:reserve", "LOAN-7"));
+
+        ArgumentCaptor<CreditReservation> saved = ArgumentCaptor.forClass(CreditReservation.class);
+        org.mockito.InOrder order = org.mockito.Mockito.inOrder(customerRepository, creditReservations);
+        order.verify(customerRepository).save(customer);
+        order.verify(creditReservations).save(saved.capture());
+        assertThat(saved.getValue().reference()).isEqualTo("LOAN-7");
+        assertThat(saved.getValue().reserved()).isEqualTo(aed("1000.00"));
+        assertThat(saved.getValue().remaining()).isEqualTo(aed("1000.00"));
+    }
+
+    @Test
+    void aReserveWithoutAReferenceIsNotTracked() {
+        Customer customer = existingCustomer();
+        when(customerRepository.findById(CustomerId.of("CUST-IDEM"))).thenReturn(Optional.of(customer));
+        when(customerRepository.save(any(Customer.class))).thenAnswer(invocation -> invocation.getArgument(0));
+
+        service.reserveCredit(move("CUST-IDEM", "1000.00", "key-u", null));
+
+        verifyNoInteractions(creditReservations);
+        assertThat(customer.getCreditProfile().getUsedCredit()).isEqualTo(aed("1000.00"));
+    }
+
+    @Test
+    void aReleaseNamingAReservationTakesPartOfIt() {
+        Customer customer = existingCustomer();
+        customer.reserveCredit(aed("2000.00"));
+        customer.clearDomainEvents();
+        CreditReservation loan7 = CreditReservation.none(CustomerId.of("CUST-IDEM"), "LOAN-7", AED).reserve(aed("2000.00"));
+        when(customerRepository.findById(CustomerId.of("CUST-IDEM"))).thenReturn(Optional.of(customer));
+        when(creditReservations.find(CustomerId.of("CUST-IDEM"), "LOAN-7")).thenReturn(Optional.of(loan7));
+        when(customerRepository.save(any(Customer.class))).thenAnswer(invocation -> invocation.getArgument(0));
+
+        CreditPosition response = service.releaseCredit(move("CUST-IDEM", "500.00", "LOAN-7:cancel", "LOAN-7"));
+
+        assertThat(response.usedCredit()).isEqualTo(aed("1500.00"));
+        ArgumentCaptor<CreditReservation> saved = ArgumentCaptor.forClass(CreditReservation.class);
+        verify(creditReservations).save(saved.capture());
+        assertThat(saved.getValue().remaining()).isEqualTo(aed("1500.00"));
+        verify(creditReservations, never()).openAmount(any(), any());
+        verify(creditMovements).record(any(CreditMovement.class));
+    }
+
+    @Test
+    void aReleaseAboveTheNamedReservationIsRefusedAndNothingIsSaved() {
+        Customer customer = existingCustomer();
+        customer.reserveCredit(aed("3000.00"));
+        customer.clearDomainEvents();
+        CreditReservation loan7 = CreditReservation.none(CustomerId.of("CUST-IDEM"), "LOAN-7", AED).reserve(aed("2000.00"));
+        when(customerRepository.findById(CustomerId.of("CUST-IDEM"))).thenReturn(Optional.of(customer));
+        when(creditReservations.find(CustomerId.of("CUST-IDEM"), "LOAN-7")).thenReturn(Optional.of(loan7));
+
+        assertThatThrownBy(() -> service.releaseCredit(move("CUST-IDEM", "2000.01", "LOAN-7:cancel", "LOAN-7")))
+            .isInstanceOf(ReleaseExceedsReservationException.class);
+
+        verify(customerRepository, never()).save(any(Customer.class));
+        verify(creditReservations, never()).save(any());
+        verify(creditMovements, never()).record(any());
+        verifyNoInteractions(eventPublisher);
+    }
+
+    @Test
+    void aReleaseNamingNoReservationTakesOnlyUntrackedCredit() {
+        Customer customer = existingCustomer();
+        customer.reserveCredit(aed("5000.00"));
+        customer.clearDomainEvents();
+        when(customerRepository.findById(CustomerId.of("CUST-IDEM"))).thenReturn(Optional.of(customer));
+        when(creditReservations.find(CustomerId.of("CUST-IDEM"), "LOAN-UNKNOWN")).thenReturn(Optional.empty());
+        when(creditReservations.openAmount(CustomerId.of("CUST-IDEM"), AED)).thenReturn(aed("3000.00"));
+
+        assertThatThrownBy(() -> service.releaseCredit(move("CUST-IDEM", "2000.01", "key-x", "LOAN-UNKNOWN")))
+            .isInstanceOf(ReservationNotFoundException.class);
+        assertThatThrownBy(() -> service.releaseCredit(move("CUST-IDEM", "2000.01", "key-y", null)))
+            .isInstanceOf(ReservationNotFoundException.class);
+        verify(customerRepository, never()).save(any(Customer.class));
+
+        when(customerRepository.save(any(Customer.class))).thenAnswer(invocation -> invocation.getArgument(0));
+        CreditPosition response = service.releaseCredit(move("CUST-IDEM", "2000.00", "key-z", "LOAN-UNKNOWN"));
+
+        assertThat(response.usedCredit()).isEqualTo(aed("3000.00"));
+        verify(creditReservations, never()).save(any());
+    }
+
+    /** Idempotency is unchanged: a replayed release answers before any reservation rule runs. */
+    @Test
+    void aReplayedReleaseIsAnsweredFromTheJournalWithoutTouchingReservations() {
+        Customer customer = existingCustomer();
+        when(customerRepository.findById(CustomerId.of("CUST-IDEM"))).thenReturn(Optional.of(customer));
+        when(creditMovements.find(CustomerId.of("CUST-IDEM"), "LOAN-7:release")).thenReturn(Optional.of(
+            new CreditMovement(UUID.randomUUID(), CustomerId.of("CUST-IDEM"), "LOAN-7:release", CreditMovement.Type.RELEASE,
+                aed("500.00"), "LOAN-7", NOW)));
+
+        CreditPosition response = service.releaseCredit(move("CUST-IDEM", "500.00", "LOAN-7:release", "LOAN-7"));
+
+        assertThat(response.usedCredit().isZero()).isTrue();
+        verifyNoInteractions(creditReservations, eventPublisher);
+        verify(customerRepository, never()).save(any(Customer.class));
     }
 
     @Test
@@ -216,6 +331,7 @@ class CustomerManagementServiceTest {
         Customer customer = customer();
         when(customerRepository.findById(any(CustomerId.class))).thenReturn(Optional.of(customer));
         doReturn(customer).when(customerRepository).save(customer);
+        when(creditReservations.openAmount(customer.getId(), AED)).thenReturn(aed("0.00"));
 
         service.reserveCredit(move(customer.getId().getValue(), "1000.00", "key-r", null));
         service.releaseCredit(move(customer.getId().getValue(), "500.00", "key-l", null));
@@ -396,6 +512,8 @@ class CustomerManagementServiceTest {
             .isInstanceOf(CustomerNotFoundException.class);
         verifyNoInteractions(identityDirectory);
     }
+
+    private static final java.util.Currency AED = java.util.Currency.getInstance("AED");
 
     private static Money aed(String amount) {
         return Money.aed(new BigDecimal(amount));

@@ -38,7 +38,7 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
     "spring.jpa.properties.hibernate.default_schema=sc_cus_profile_kyc"
 })
 @AutoConfigureTestDatabase(replace = AutoConfigureTestDatabase.Replace.NONE)
-@Import({JpaCustomerRepositoryAdapter.class, JpaCreditMovementJournal.class})
+@Import({JpaCustomerRepositoryAdapter.class, JpaCreditMovementJournal.class, JpaCreditReservationLedger.class})
 class JpaPersistenceTest {
 
     @BeforeAll
@@ -53,6 +53,7 @@ class JpaPersistenceTest {
 
     @Autowired JpaCustomerRepositoryAdapter repository;
     @Autowired JpaCreditMovementJournal journal;
+    @Autowired JpaCreditReservationLedger reservations;
     @Autowired JdbcTemplate jdbc;
 
     @Test
@@ -132,6 +133,41 @@ class JpaPersistenceTest {
         assertThatThrownBy(() -> journal.record(new CreditMovement(UUID.randomUUID(), CustomerId.of("CUST-JPA-3"),
                 "LOAN-9:reserve", CreditMovement.Type.RESERVE, Money.aed(new BigDecimal("250.00")), "LOAN-9", at)))
             .isInstanceOf(DataIntegrityViolationException.class);
+    }
+
+    /** V10: one row per (customer, reference); the open amount sums what is still reserved. */
+    @Test
+    void reservationsAreStoredPerReferenceAndTheirOpenAmountIsSummed() {
+        repository.save(newCustomer("CUST-JPA-RES", "jpares@example.com"));
+        repository.save(newCustomer("CUST-JPA-RES-2", "jpares2@example.com"));
+        CustomerId id = CustomerId.of("CUST-JPA-RES");
+        java.util.Currency aed = java.util.Currency.getInstance("AED");
+        assertThat(reservations.find(id, "LOAN-1")).isEmpty();
+        assertThat(reservations.openAmount(id, aed)).isEqualTo(Money.aed(BigDecimal.ZERO));
+
+        reservations.save(com.bank.customer.domain.CreditReservation.none(id, "LOAN-1", aed)
+            .reserve(Money.aed(new BigDecimal("2500.00"))));
+        reservations.save(com.bank.customer.domain.CreditReservation.none(id, "LOAN-2", aed)
+            .reserve(Money.aed(new BigDecimal("1000.00"))));
+        reservations.save(com.bank.customer.domain.CreditReservation.none(CustomerId.of("CUST-JPA-RES-2"), "LOAN-1", aed)
+            .reserve(Money.aed(new BigDecimal("700.00"))));
+        reservations.save(reservations.find(id, "LOAN-1").orElseThrow().release(Money.aed(new BigDecimal("1000.00"))));
+
+        assertThat(reservations.find(id, "LOAN-1")).get().satisfies(found -> {
+            assertThat(found.reserved()).isEqualTo(Money.aed(new BigDecimal("2500.00")));
+            assertThat(found.released()).isEqualTo(Money.aed(new BigDecimal("1000.00")));
+            assertThat(found.remaining()).isEqualTo(Money.aed(new BigDecimal("1500.00")));
+        });
+        assertThat(reservations.openAmount(id, aed)).isEqualTo(Money.aed(new BigDecimal("2500.00")));
+        assertThat(jdbc.queryForObject("select count(*) from sc_cus_profile_kyc.credit_reservation where customer_id = 'CUST-JPA-RES'",
+            Integer.class)).isEqualTo(2);
+        // ck_credit_reservation_amounts: never more released than reserved.
+        assertViolates("update sc_cus_profile_kyc.credit_reservation set released_amount = 2500.01 "
+            + "where customer_id = 'CUST-JPA-RES' and reference = 'LOAN-1'");
+        // One row per customer and reference.
+        assertViolates("insert into sc_cus_profile_kyc.credit_reservation (reservation_id, customer_id, reference, currency, "
+            + "reserved_amount, released_amount, created_at, updated_at) values (gen_random_uuid(), 'CUST-JPA-RES', 'LOAN-1', "
+            + "'AED', 1, 0, now(), now())");
     }
 
     @Test

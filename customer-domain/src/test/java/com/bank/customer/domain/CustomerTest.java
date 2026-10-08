@@ -107,7 +107,7 @@ class CustomerTest {
         Customer customer = createCustomer();
         customer.reserveCredit(Money.aed(new BigDecimal("5000.00")));
 
-        customer.releaseCredit(Money.aed(new BigDecimal("2000.00")));
+        customer.releaseUntrackedCredit(Money.aed(new BigDecimal("2000.00")), Money.aed(BigDecimal.ZERO));
 
         assertThat(customer.getCreditProfile().getUsedCredit()).isEqualTo(Money.aed(new BigDecimal("3000.00")));
         assertThat(lastEvent(customer)).isInstanceOf(CustomerCreditReleasedEvent.class);
@@ -131,7 +131,7 @@ class CustomerTest {
         assertThatThrownBy(() -> customer.reserveCredit(Money.usd(new BigDecimal("100.00"))))
             .isInstanceOf(CreditCurrencyMismatchException.class)
             .hasMessage("Credit is held in AED, the request is in USD");
-        assertThatThrownBy(() -> customer.releaseCredit(Money.usd(new BigDecimal("100.00"))))
+        assertThatThrownBy(() -> customer.releaseUntrackedCredit(Money.usd(new BigDecimal("100.00")), Money.aed(BigDecimal.ZERO)))
             .isInstanceOf(CreditCurrencyMismatchException.class);
 
         assertThat(customer.getCreditProfile().getUsedCredit()).isEqualTo(Money.aed(new BigDecimal("0.00")));
@@ -212,7 +212,7 @@ class CustomerTest {
             assertThatThrownBy(() -> customer.reserveCredit(money))
                 .isInstanceOf(IllegalArgumentException.class)
                 .hasMessage("Credit amount must be positive");
-            assertThatThrownBy(() -> customer.releaseCredit(money))
+            assertThatThrownBy(() -> customer.releaseUntrackedCredit(money, Money.aed(BigDecimal.ZERO)))
                 .isInstanceOf(IllegalArgumentException.class)
                 .hasMessage("Credit amount must be positive");
         }

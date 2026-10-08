@@ -59,6 +59,7 @@ class KycStatusIT {
     void cleanTables() {
         jdbc.update("delete from sc_cus_profile_kyc.outbox_event");
         jdbc.update("delete from sc_cus_profile_kyc.credit_movement");
+        jdbc.update("delete from sc_cus_profile_kyc.credit_reservation");
         jdbc.update("delete from sc_cus_profile_kyc.customer");
     }
 

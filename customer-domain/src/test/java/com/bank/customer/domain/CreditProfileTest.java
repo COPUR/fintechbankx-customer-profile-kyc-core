@@ -41,16 +41,29 @@ class CreditProfileTest {
     }
 
     @Test
-    void releaseCreditShouldNotGoBelowZero() {
+    void releaseCreditShouldDecreaseUsedCredit() {
         CreditProfile profile = CreditProfile.create(
             Money.aed(new BigDecimal("1000.00")),
             Money.aed(new BigDecimal("200.00"))
         );
 
-        CreditProfile updated = profile.releaseCredit(Money.aed(new BigDecimal("500.00")));
+        CreditProfile updated = profile.releaseCredit(Money.aed(new BigDecimal("200.00")));
 
         assertThat(updated.getUsedCredit()).isEqualTo(Money.aed(BigDecimal.ZERO));
         assertThat(updated.getAvailableCredit()).isEqualTo(Money.aed(new BigDecimal("1000.00")));
+    }
+
+    /** No more flooring at zero (loan PR #14 review): a release above used credit is refused. */
+    @Test
+    void releaseCreditAboveUsedCreditIsRefused() {
+        CreditProfile profile = CreditProfile.create(
+            Money.aed(new BigDecimal("1000.00")),
+            Money.aed(new BigDecimal("200.00"))
+        );
+
+        assertThatThrownBy(() -> profile.releaseCredit(Money.aed(new BigDecimal("200.01"))))
+            .isInstanceOf(IllegalArgumentException.class)
+            .hasMessageContaining("exceeds used credit");
     }
 
     @Test

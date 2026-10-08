@@ -85,6 +85,22 @@ class CustomerContextOpenApiContractTest {
         }
     }
 
+    /** Release by reference (loan PR #14 review): the two new refusals are documented on the release 422. */
+    @Test
+    @SuppressWarnings("unchecked")
+    void releaseDocumentsTheReservationRefusals() throws IOException {
+        java.util.Map<String, Object> spec = new org.yaml.snakeyaml.Yaml().load(loadSpec());
+        java.util.Map<String, Object> release = (java.util.Map<String, Object>) ((java.util.Map<String, Object>)
+            ((java.util.Map<String, Object>) spec.get("paths")).get("/api/v1/customers/{customerId}/credit/release")).get("post");
+        java.util.Map<String, Object> unprocessable = (java.util.Map<String, Object>)
+            ((java.util.Map<String, Object>) release.get("responses")).get("422");
+
+        assertThat((String) unprocessable.get("description"))
+            .contains("CURRENCY_MISMATCH", "RELEASE_EXCEEDS_RESERVATION", "RESERVATION_NOT_FOUND");
+        assertThat(((String) release.get("description")).replaceAll("\\s+", " "))
+            .contains("untracked used credit");
+    }
+
     /** The loan service is the consumer; its keys must be deterministic so a retry resends the same key. */
     @Test
     @SuppressWarnings("unchecked")

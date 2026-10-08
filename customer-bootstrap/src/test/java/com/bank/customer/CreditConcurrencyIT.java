@@ -73,6 +73,7 @@ class CreditConcurrencyIT {
     void cleanTables() {
         jdbc.update("delete from sc_cus_profile_kyc.outbox_event");
         jdbc.update("delete from sc_cus_profile_kyc.credit_movement");
+        jdbc.update("delete from sc_cus_profile_kyc.credit_reservation");
         jdbc.update("delete from sc_cus_profile_kyc.customer");
     }
 
@@ -130,6 +131,65 @@ class CreditConcurrencyIT {
         assertThat(used).isEqualByComparingTo(new BigDecimal(accepted * 1000));
         assertThat(used).as("used credit never above the limit").isLessThanOrEqualTo(limit);
         assertThat(limit).isIn(new BigDecimal("5000.0000"), new BigDecimal("10000.0000"));
+    }
+
+    /** Several cancels for one loan at once: the reservation is released once in total, never beyond it. */
+    @Test
+    void concurrentReleasesOfOneReservationNeverReleaseMoreThanItHolds() throws Exception {
+        String customerId = create("release-race@example.com", "10000.00");
+        assertThat(move("reserve", customerId, "LOAN-C:reserve", "3000.00", "LOAN-C").getStatus()).isEqualTo(200);
+
+        List<Callable<MockHttpServletResponse>> calls = new ArrayList<>();
+        for (int i = 0; i < THREADS; i++) {
+            String key = "LOAN-C:cancel-" + i;
+            calls.add(() -> move("release", customerId, key, "1000.00", "LOAN-C"));
+        }
+        List<MockHttpServletResponse> responses = runTogether(calls);
+
+        // 8 x 1000 asked against a 3000 reservation: three fit, five are refused.
+        assertThat(countStatuses(responses)).as("status -> count").containsOnlyKeys(200, 422)
+            .containsEntry(200, 3L).containsEntry(422, 5L);
+        for (MockHttpServletResponse refused : responses.stream().filter(r -> r.getStatus() == 422).toList()) {
+            assertThat(json.readTree(refused.getContentAsString()).get("code").asText()).isEqualTo("RELEASE_EXCEEDS_RESERVATION");
+        }
+        assertCreditInvariant(customerId, "10000.00", "0.00");
+        assertThat(jdbc.queryForObject("select released_amount from sc_cus_profile_kyc.credit_reservation "
+            + "where customer_id = ? and reference = 'LOAN-C'", BigDecimal.class, customerId)).isEqualByComparingTo("3000.00");
+    }
+
+    /** Releases naming no reservation race; together they never take credit another loan reserved. */
+    @Test
+    void concurrentUntrackedReleasesNeverTakeAnotherLoansReservation() throws Exception {
+        String customerId = create("untracked-race@example.com", "10000.00");
+        assertThat(move("reserve", customerId, "MIGRATED:reserve", "2000.00", null).getStatus()).isEqualTo(200);
+        assertThat(move("reserve", customerId, "LOAN-D:reserve", "3000.00", "LOAN-D").getStatus()).isEqualTo(200);
+
+        List<Callable<MockHttpServletResponse>> calls = new ArrayList<>();
+        for (int i = 0; i < THREADS; i++) {
+            String key = "NOREF:release-" + i;
+            calls.add(() -> move("release", customerId, key, "1000.00", null));
+        }
+        List<MockHttpServletResponse> responses = runTogether(calls);
+
+        assertThat(countStatuses(responses)).as("status -> count").containsOnlyKeys(200, 422)
+            .containsEntry(200, 2L).containsEntry(422, 6L);
+        for (MockHttpServletResponse refused : responses.stream().filter(r -> r.getStatus() == 422).toList()) {
+            assertThat(json.readTree(refused.getContentAsString()).get("code").asText()).isEqualTo("RESERVATION_NOT_FOUND");
+        }
+        assertCreditInvariant(customerId, "10000.00", "3000.00");
+        assertThat(move("release", customerId, "LOAN-D:release", "3000.00", "LOAN-D").getStatus()).isEqualTo(200);
+    }
+
+    private MockHttpServletResponse move(String movement, String customerId, String key, String amount, String reference)
+            throws Exception {
+        String body = reference == null
+            ? "{\"amount\": %s, \"currency\": \"AED\"}".formatted(amount)
+            : "{\"amount\": %s, \"currency\": \"AED\", \"reference\": \"%s\"}".formatted(amount, reference);
+        return mvc.perform(asService(post("/api/v1/customers/{id}/credit/" + movement, customerId))
+                .header("x-idempotency-key", key)
+                .contentType(MediaType.APPLICATION_JSON)
+                .content(body))
+            .andReturn().getResponse();
     }
 
     private void assertCreditInvariant(String customerId, String expectedLimit, String expectedUsed) {

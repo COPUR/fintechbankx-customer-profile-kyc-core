@@ -30,7 +30,7 @@ class CustomerEventEnvelopeFactoryTest {
         customer.updateContactInformation("new@example.com", "+971500000010");
         customer.updateCreditLimit(Money.aed(new BigDecimal("45000.00")));
         customer.reserveCredit(Money.aed(new BigDecimal("1000.00")));
-        customer.releaseCredit(Money.aed(new BigDecimal("400.00")));
+        customer.releaseUntrackedCredit(Money.aed(new BigDecimal("400.00")), Money.aed(BigDecimal.ZERO));
         customer.updateCreditScore(760);
         List<DomainEvent> events = customer.getDomainEvents();
 
@@ -107,7 +107,7 @@ class CustomerEventEnvelopeFactoryTest {
         customer.updateContactInformation("c@example.com", "+971500000011");
         customer.updateCreditLimit(Money.aed(new BigDecimal("20000.00")));
         customer.reserveCredit(Money.aed(new BigDecimal("10.00")));
-        customer.releaseCredit(Money.aed(new BigDecimal("10.00")));
+        customer.releaseUntrackedCredit(Money.aed(new BigDecimal("10.00")), Money.aed(BigDecimal.ZERO));
         customer.updateCreditScore(710);
         customer.verifyKyc("banker-sub-1", java.time.Instant.parse("2026-10-08T10:00:00Z"));
 

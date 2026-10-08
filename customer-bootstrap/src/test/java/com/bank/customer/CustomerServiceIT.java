@@ -104,6 +104,7 @@ class CustomerServiceIT {
     void cleanTables() {
         jdbc.update("delete from sc_cus_profile_kyc.outbox_event");
         jdbc.update("delete from sc_cus_profile_kyc.credit_movement");
+        jdbc.update("delete from sc_cus_profile_kyc.credit_reservation");
         jdbc.update("delete from sc_cus_profile_kyc.customer");
     }
 
@@ -115,7 +116,7 @@ class CustomerServiceIT {
             order by table_name
             """, String.class);
 
-        assertThat(tables).containsExactly("credit_movement", "customer", "outbox_event");
+        assertThat(tables).containsExactly("credit_movement", "credit_reservation", "customer", "outbox_event");
     }
 
     @Test
@@ -386,6 +387,7 @@ class CustomerServiceIT {
                 .andExpect(jsonPath("$.availableCredit").value(Double.parseDouble(expected[3])));
         }
         assertThat(jdbc.queryForObject("select count(*) from sc_cus_profile_kyc.credit_movement", Integer.class)).isZero();
+        assertThat(jdbc.queryForObject("select count(*) from sc_cus_profile_kyc.credit_reservation", Integer.class)).isZero();
         reserve("CUST-11111111", "5000.00", "PARITY-1:reserve", "USD").andExpect(status().isOk());
     }
 

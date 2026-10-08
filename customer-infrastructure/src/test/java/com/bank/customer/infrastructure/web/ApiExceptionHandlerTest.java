@@ -65,6 +65,27 @@ class ApiExceptionHandlerTest {
             .containsExactly(HttpStatus.BAD_REQUEST, "Email must be valid");
     }
 
+    /** Release by reference: both refusals are 422 with a stable code and no credit figures. */
+    @Test
+    void releaseRefusalsHaveStableCodesWithoutFigures() {
+        assertThat(handler.releaseExceedsReservation(new com.bank.customer.domain.ReleaseExceedsReservationException(
+                "LOAN-7", com.bank.shared.kernel.domain.Money.aed(new java.math.BigDecimal("2000.01")),
+                com.bank.shared.kernel.domain.Money.aed(new java.math.BigDecimal("2000.00")))))
+            .satisfies(r -> {
+                assertThat(r.getStatusCode()).isEqualTo(HttpStatus.UNPROCESSABLE_ENTITY);
+                assertThat(r.getBody().code()).isEqualTo("RELEASE_EXCEEDS_RESERVATION");
+                assertThat(r.getBody().message()).doesNotContain("2000");
+            });
+        assertThat(handler.reservationNotFound(new com.bank.customer.domain.ReservationNotFoundException(
+                com.bank.shared.kernel.domain.Money.aed(new java.math.BigDecimal("2000.01")),
+                com.bank.shared.kernel.domain.Money.aed(new java.math.BigDecimal("2000.00")))))
+            .satisfies(r -> {
+                assertThat(r.getStatusCode()).isEqualTo(HttpStatus.UNPROCESSABLE_ENTITY);
+                assertThat(r.getBody().code()).isEqualTo("RESERVATION_NOT_FOUND");
+                assertThat(r.getBody().message()).doesNotContain("2000");
+            });
+    }
+
     @Test
     void identityLinkFailuresHaveStableCodes() {
         assertThat(handler.identityLinkConflict(new com.bank.customer.domain.IdentityLinkConflictException()))

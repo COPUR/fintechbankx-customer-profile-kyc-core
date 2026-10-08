@@ -75,6 +75,7 @@ class LoanClientContractIT {
     void cleanTables() {
         jdbc.update("delete from sc_cus_profile_kyc.outbox_event");
         jdbc.update("delete from sc_cus_profile_kyc.credit_movement");
+        jdbc.update("delete from sc_cus_profile_kyc.credit_reservation");
         jdbc.update("delete from sc_cus_profile_kyc.customer");
     }
 
@@ -111,6 +112,31 @@ class LoanClientContractIT {
                 + "where customer_id = ? order by occurred_at, idempotency_key", String.class, customerId))
             .containsExactlyInAnyOrder("LOAN-77:reserve LOAN-77", "LOAN-77:reserve:compensation LOAN-77",
                 "LOAN-77:reserve:g1 LOAN-77", "LOAN-77:release LOAN-77");
+        // Both generations are netted on the loan's one reservation row.
+        assertThat(jdbc.queryForMap("select reserved_amount, released_amount from sc_cus_profile_kyc.credit_reservation "
+                + "where customer_id = ? and reference = 'LOAN-77'", customerId))
+            .satisfies(row -> {
+                assertThat((BigDecimal) row.get("reserved_amount")).isEqualByComparingTo("5000.00");
+                assertThat((BigDecimal) row.get("released_amount")).isEqualByComparingTo("5000.00");
+            });
+    }
+
+    /** Loan PR #14: a cancel releases at most what the loan reserved, never another loan's credit. */
+    @Test
+    void aReleaseIsBoundedByTheLoansReservation() throws Exception {
+        String customerId = create("contract-bounded@example.com");
+        ok(move("reserve", customerId, "LOAN-81:reserve", "2500.00", "AED", "LOAN-81"));
+        ok(move("reserve", customerId, "LOAN-82:reserve", "1000.00", "AED", "LOAN-82"));
+
+        assertError(move("release", customerId, "LOAN-81:reserve:compensation", "2500.01", "AED", "LOAN-81"),
+            422, "RELEASE_EXCEEDS_RESERVATION");
+        // A loan this service never reserved for: only untracked credit could be released, and there is none.
+        assertError(move("release", customerId, "LOAN-83:release", "100.00", "AED", "LOAN-83"),
+            422, "RESERVATION_NOT_FOUND");
+        assertCreditPosition(ok(move("release", customerId, "LOAN-81:reserve:compensation", "2500.00", "AED", "LOAN-81")),
+            customerId, "10000.00", "1000.00", "9000.00");
+        assertError(move("release", customerId, "LOAN-81:release", "0.01", "AED", "LOAN-81"),
+            422, "RELEASE_EXCEEDS_RESERVATION");
     }
 
     @Test

@@ -44,7 +44,7 @@ class CustomerRehydrateTest {
         customer.reserveCredit(Money.aed(new BigDecimal("30000.00")));
         assertThatThrownBy(() -> customer.reserveCredit(Money.aed(new BigDecimal("0.01"))))
             .isInstanceOf(InsufficientCreditException.class);
-        customer.releaseCredit(Money.aed(new BigDecimal("50000.00")));
+        customer.releaseUntrackedCredit(Money.aed(new BigDecimal("50000.00")), Money.aed(BigDecimal.ZERO));
 
         assertThat(customer.getCreditProfile().getUsedCredit()).isEqualTo(Money.aed(BigDecimal.ZERO));
         assertThat(customer.getDomainEvents()).hasSize(2);
