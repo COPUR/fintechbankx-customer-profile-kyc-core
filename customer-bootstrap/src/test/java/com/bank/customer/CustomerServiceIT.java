@@ -82,6 +82,21 @@ class CustomerServiceIT {
     @Autowired MoveCreditUseCase moveCredit;
     @Autowired SpringDataOutboxRepository outbox;
     @Autowired PlatformTransactionManager transactionManager;
+    @Autowired io.micrometer.core.instrument.MeterRegistry meterRegistry;
+
+    /**
+     * Platform alert rules select on the common tags app (the chart's service
+     * account) and squad; application.yml sets them from METRICS_APP and
+     * METRICS_SQUAD, defaulting to this service.
+     */
+    @Test
+    void everyMeterCarriesTheAppAndSquadTags() {
+        io.micrometer.core.instrument.Meter.Id gauge = meterRegistry.get("outbox.oldest.pending.age.seconds").gauge().getId();
+
+        assertThat(gauge.getTag("app")).isEqualTo("customer-profile-kyc-service");
+        assertThat(gauge.getTag("squad")).isEqualTo("customer");
+        assertThat(gauge.getTag("service")).isEqualTo("svc-cus-profile-kyc");
+    }
     @MockBean KafkaTemplate<String, String> kafka;
     @MockBean org.springframework.security.oauth2.jwt.JwtDecoder jwtDecoder;
 

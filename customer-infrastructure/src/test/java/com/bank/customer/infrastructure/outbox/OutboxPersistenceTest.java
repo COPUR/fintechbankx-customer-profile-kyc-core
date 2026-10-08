@@ -116,7 +116,9 @@ class OutboxPersistenceTest {
             .contains(otherCustomer.getEventId())
             .doesNotContain(parked.getEventId(), behindParked.getEventId());
         assertThat(outbox.countByPublishedAtIsNullAndParkedAtIsNotNull()).isEqualTo(1);
-        assertThat(outbox.oldestPendingOccurredAt()).as("oldest row waiting for the relay").isNotNull();
+        assertThat(outbox.oldestPendingCreatedAt()).as("created_at of the oldest row waiting for the relay")
+            .isEqualTo(jdbc.queryForObject("select min(created_at) from sc_cus_profile_kyc.outbox_event "
+                + "where published_at is null and parked_at is null", java.sql.Timestamp.class).toInstant());
         assertThat(outbox.countByPublishedAtIsNullAndParkedAtIsNull()).isGreaterThanOrEqualTo(2);
         assertThat(outbox.findById(parked.getEventId())).get()
             .satisfies(found -> {

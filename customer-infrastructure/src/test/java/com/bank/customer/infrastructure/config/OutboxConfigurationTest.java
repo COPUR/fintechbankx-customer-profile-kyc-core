@@ -53,13 +53,13 @@ class OutboxConfigurationTest {
         assertThat(relay.backoff().max()).as("customer.outbox.relay.backoff-max").isEqualTo(Duration.ofMinutes(5));
     }
 
-    /** Age of the oldest event waiting for the relay; 0 when nothing waits. Alert when it keeps growing. */
+    /** Age (from created_at) of the oldest event waiting for the relay; 0 when nothing waits. The alert signal. */
     @Test
     void oldestPendingAgeGaugeIsExportedInSeconds() {
         SimpleMeterRegistry registry = new SimpleMeterRegistry();
         java.time.Instant now = java.time.Instant.parse("2026-10-08T10:00:00Z");
         Clock clock = Clock.fixed(now, java.time.ZoneOffset.UTC);
-        when(outbox.oldestPendingOccurredAt()).thenReturn(now.minusSeconds(90), (java.time.Instant) null);
+        when(outbox.oldestPendingCreatedAt()).thenReturn(now.minusSeconds(90), (java.time.Instant) null);
 
         configuration.customerOutboxOldestPendingAgeGauge(registry, outbox, clock);
 

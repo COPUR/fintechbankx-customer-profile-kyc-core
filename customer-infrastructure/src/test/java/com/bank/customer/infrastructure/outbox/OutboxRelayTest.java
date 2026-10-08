@@ -354,7 +354,7 @@ class OutboxRelayTest {
         verify(kafka, times(12)).send(any(ProducerRecord.class));
     }
 
-    /** outbox.publish.failures, tagged with the failure's simple class name only (never ids or topics). */
+    /** outbox.send.failures (platform name, Prometheus outbox_send_failures_total), tagged with the failure's simple class name only (never ids or topics). */
     @Test
     void eachFailedSendIsCountedByExceptionClass() {
         when(outbox.tryRelayLock(anyLong())).thenReturn(true);
@@ -365,13 +365,64 @@ class OutboxRelayTest {
 
         relay.relayOnce();
 
-        assertThat(meters.get("outbox.publish.failures").tag("exception", "RecordTooLargeException").counter().count())
+        assertThat(meters.get("outbox.send.failures").tag("exception", "RecordTooLargeException").counter().count())
             .isEqualTo(1.0);
-        assertThat(meters.get("outbox.publish.failures").tag("exception", "NetworkException").counter().count())
+        assertThat(meters.get("outbox.send.failures").tag("exception", "NetworkException").counter().count())
             .isEqualTo(1.0);
-        assertThat(meters.get("outbox.publish.failures").meters())
+        assertThat(meters.get("outbox.send.failures").meters())
             .extracting(Meter::getId)
             .allSatisfy(id -> assertThat(id.getTags()).extracting(tag -> tag.getKey()).containsExactly("exception"));
+    }
+
+    /** The platform alert rule is keyed on outbox.send.failures with exactly one tag, exception. */
+    @Test
+    void theRelayRegistersTheSendFailureCounterWithAnExceptionTag() {
+        when(outbox.tryRelayLock(anyLong())).thenReturn(true);
+        when(outbox.findUnpublishedBatch(50)).thenReturn(List.of(row("CUST-1")));
+        when(kafka.send(any(ProducerRecord.class))).thenReturn(CompletableFuture.failedFuture(
+            producerFailure(new TopicAuthorizationException(Set.of("evt.cus.customer.created.v1")))));
+
+        relay.relayOnce();
+
+        io.micrometer.core.instrument.Counter counter = meters.get("outbox.send.failures").counter();
+        assertThat(counter.getId().getTags()).extracting(tag -> tag.getKey()).containsExactly("exception");
+        assertThat(counter.getId().getTag("exception")).isEqualTo("TopicAuthorizationException");
+        assertThat(meters.find("outbox.publish.failures").meters()).as("old name gone").isEmpty();
+    }
+
+    /** Review 5456301261: an authorization failure lasting days never parks the row, and nothing after it is sent. */
+    @Test
+    void aNonPayloadFailureNeverParksHoweverLongItLasts() {
+        OutboxEventJpaEntity stuck = row("CUST-1");
+        OutboxEventJpaEntity next = row("CUST-2");
+        when(outbox.tryRelayLock(anyLong())).thenReturn(true);
+        when(outbox.findUnpublishedBatch(50)).thenReturn(List.of(stuck, next));
+        when(kafka.send(any(ProducerRecord.class))).thenAnswer(invocation -> CompletableFuture.failedFuture(
+            producerFailure(new TopicAuthorizationException(Set.of("evt.cus.customer.created.v1")))));
+
+        for (int hour = 0; hour < 24 * 5; hour++) {                   // hourly for five days
+            assertThat(relay.relayOnce()).isZero();
+            clock.advance(Duration.ofHours(1));
+        }
+
+        assertThat(stuck.getParkedAt()).isNull();
+        assertThat(next.getPublishedAt()).isNull();
+        verify(kafka, times(24 * 5)).send(any(ProducerRecord.class));
+    }
+
+    /** Review 5456301261: no attempts, first_failed_at or last_error; the error goes to the log only. */
+    @Test
+    void aNonPayloadFailureMarksNothingOnTheRow() {
+        OutboxEventJpaEntity row = row("CUST-1");
+        when(outbox.tryRelayLock(anyLong())).thenReturn(true);
+        when(outbox.findUnpublishedBatch(50)).thenReturn(List.of(row));
+        when(kafka.send(any(ProducerRecord.class)))
+            .thenReturn(CompletableFuture.failedFuture(producerFailure(new NetworkException("broker down"))));
+
+        relay.relayOnce();
+
+        assertUntouched(row);
+        assertThat(row.getPublishedAt()).isNull();
     }
 
     /** What KafkaTemplate completes its future with when the producer reports a failure. */
