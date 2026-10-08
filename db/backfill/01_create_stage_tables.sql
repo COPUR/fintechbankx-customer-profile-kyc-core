@@ -17,3 +17,11 @@ CREATE TABLE backfill_stage.customers (
     updated_at        TIMESTAMP      NOT NULL,
     version           BIGINT         NOT NULL
 );
+
+-- Fingerprint of the monolith-owned fields the backfill copies. The same
+-- expression fills customer.legacy_synced_hash (V6), so a monolith change is
+-- detected from the data even though the monolith never bumps its version.
+CREATE FUNCTION backfill_stage.synced_hash(name TEXT, surname TEXT, credit_limit NUMERIC, used_credit NUMERIC)
+RETURNS CHAR(32) LANGUAGE sql IMMUTABLE STRICT AS $$
+    SELECT md5(concat_ws('|', name, surname, credit_limit::numeric(19, 2)::text, used_credit::numeric(19, 2)::text))
+$$;
