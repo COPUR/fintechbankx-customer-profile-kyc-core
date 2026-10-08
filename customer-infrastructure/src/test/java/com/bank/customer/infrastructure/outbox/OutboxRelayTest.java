@@ -52,15 +52,13 @@ class OutboxRelayTest {
     private final SpringDataOutboxRepository outbox = mock(SpringDataOutboxRepository.class);
     private final KafkaTemplate<String, String> kafka = mock(KafkaTemplate.class);
     private final TransactionTemplate transactions = inlineTransactions();
-    /** customer.outbox.relay.retryable-park-after default. */
-    private static final Duration PARK_AFTER = Duration.ofHours(24);
     private final MutableClock clock = new MutableClock(NOW);
     /** Backoff after a stopped batch: from the poll interval, doubling, capped (customer.outbox.relay.backoff-max). */
     private static final Duration POLL_INTERVAL = Duration.ofSeconds(1);
     private static final Duration BACKOFF_MAX = Duration.ofMinutes(5);
     private final SimpleMeterRegistry meters = new SimpleMeterRegistry();
     private final OutboxRelay relay = new OutboxRelay(outbox, kafka, transactions,
-        clock, 50, Duration.ofSeconds(1), Duration.ofDays(7), PARK_AFTER, POLL_INTERVAL, BACKOFF_MAX, meters);
+        clock, 50, Duration.ofSeconds(1), Duration.ofDays(7), POLL_INTERVAL, BACKOFF_MAX, meters);
 
     /** A clock the test moves forward. */
     static final class MutableClock extends Clock {
@@ -311,19 +309,6 @@ class OutboxRelayTest {
         assertThat(poison.getFirstFailedAt()).as("no longer written (ADR-021 drops the ceiling)").isNull();
     }
 
-    @Test
-    void theRetryableCeilingMustBePositive() {
-        assertThatThrownBy(() -> new OutboxRelay(outbox, kafka, transactions,
-                Clock.fixed(NOW, ZoneOffset.UTC), 50, Duration.ofSeconds(1), Duration.ofDays(7), Duration.ZERO,
-                POLL_INTERVAL, BACKOFF_MAX, meters))
-            .isInstanceOf(IllegalArgumentException.class);
-    }
-
-    /**
-     * After a stopped batch the relay waits before it tries again: the poll
-     * interval, doubling per stopped batch up to the cap, and back to no wait
-     * once a batch completes. While waiting it does not even take the lock.
-     */
     @Test
     void aStoppedBatchBacksOffExponentiallyAndASuccessResetsIt() {
         OutboxEventJpaEntity row = row("CUST-1");

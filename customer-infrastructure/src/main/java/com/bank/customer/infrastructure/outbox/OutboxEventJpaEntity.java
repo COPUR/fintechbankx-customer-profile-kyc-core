@@ -50,11 +50,15 @@ public class OutboxEventJpaEntity {
     @Column(name = "published_at")
     private Instant publishedAt;
 
-    /** Set when the relay gave up on this row; parked rows are skipped until replayed by hand. */
+    /** Set when the record can never be sent (payload error) or an operator parked it; skipped until replayed by hand. */
     @Column(name = "parked_at")
     private Instant parkedAt;
 
-    /** First failed send since the row was written (or last un-parked); the retryable ceiling counts from here. */
+    /**
+     * No longer written: the 24 h park ceiling that used it was removed by
+     * ADR-021 decision 4. The column stays (released migrations are never
+     * edited); rows from before the change may still carry a value.
+     */
     @Column(name = "first_failed_at")
     private Instant firstFailedAt;
 
@@ -113,9 +117,6 @@ public class OutboxEventJpaEntity {
     }
 
     void markFailed(String error, Instant at) {
-        if (this.firstFailedAt == null) {
-            this.firstFailedAt = at;
-        }
         this.attempts++;
         this.lastError = error == null ? null : error.substring(0, Math.min(error.length(), 512));
     }

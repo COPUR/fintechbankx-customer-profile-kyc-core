@@ -44,12 +44,11 @@ class OutboxConfigurationTest {
 
     @Test
     @SuppressWarnings("unchecked")
-    void relayTakesItsRetryableCeilingFromSettings() {
+    void relayTakesItsBackoffFromSettings() {
         OutboxRelay relay = new OutboxConfiguration.RelayConfiguration().outboxRelay(outbox, mock(KafkaTemplate.class),
             mock(PlatformTransactionManager.class), Clock.systemUTC(), 100, Duration.ofSeconds(10), Duration.ofDays(7),
-            Duration.ofHours(24), Duration.ofSeconds(1), Duration.ofMinutes(5), new SimpleMeterRegistry());
+            Duration.ofSeconds(1), Duration.ofMinutes(5), new SimpleMeterRegistry());
 
-        assertThat(relay.retryableParkAfter()).isEqualTo(Duration.ofHours(24));
         assertThat(relay.backoff().initial()).as("starts from the poll interval").isEqualTo(Duration.ofSeconds(1));
         assertThat(relay.backoff().max()).as("customer.outbox.relay.backoff-max").isEqualTo(Duration.ofMinutes(5));
     }

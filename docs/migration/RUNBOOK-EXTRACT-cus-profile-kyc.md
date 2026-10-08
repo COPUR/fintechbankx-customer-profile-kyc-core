@@ -71,18 +71,16 @@ Owners: **monolith squad** (enterprise-loan-management-system flags and anti-cor
 
 ## 4. Parked outbox events
 
-`OutboxRelay` parks a row (sets `parked_at`, keeps the reason in `last_error`) in two cases:
+Relay failures are classified by ADR-021 decision 4 (adr-runbooks, `ADR-021-database-per-service-and-data-migration.md`):
 
-- at once only for a payload failure, where the record itself can never be sent: `RecordTooLargeException`,
-  `SerializationException`, `InvalidTopicException`. The batch continues with other customers;
-- for every other failure only when the row has kept failing for longer than
-  `customer.outbox.relay.retryable-park-after` (`OUTBOX_RELAY_RETRYABLE_PARK_AFTER`, default `PT24H`) since its first
-  failure (`first_failed_at`). This covers Kafka `RetriableException`s and producer or relay timeouts, but also
-  `SaslAuthenticationException`, `AuthenticationException`, `AuthorizationException` (including
-  `TopicAuthorizationException`), a generic `KafkaException` and any unclassified exception: they say nothing about the
-  row, so until the ceiling they stop the batch and are retried every run. A broker or egress outage, an expired
-  credential or a missing IAM/ACL grant fixed within 24 h needs no replay; the backlog drains by itself. Watch
-  `last_error` and `outbox_oldest_pending_age_seconds` to tell an auth failure from an outage.
+- **Payload errors** that can never succeed for that row (`RecordTooLargeException`, `SerializationException`,
+  `InvalidTopicException`): the relay parks the row (`parked_at` set, reason in `last_error`, `outbox_parked_events`
+  alerts) and continues with the next one.
+- **Everything else**, including retriable errors and timeouts, authorization errors (`TopicAuthorizationException`,
+  SASL/IAM failures) and any unclassified exception: the relay stops the batch without marking the row or anything
+  after it, retries with backoff and alerts (`outbox_oldest_pending_age_seconds`). It never skips or parks a row for
+  such an error, so per-customer ordering and the complete event history are kept. There is no time ceiling: a row
+  stuck this way holds the batch until the cause is fixed or an operator parks it by hand (below).
 
 Parked rows are skipped and never purged. The same customer's later events wait behind a parked row (they stay in
 `outbox_pending_events`), so a consumer never sees a customer's events out of order; other customers' events keep
@@ -94,7 +92,6 @@ flowing. Metrics (all tagged `service="svc-cus-profile-kyc"`):
   signal (ADR-021 decision 4): above 900 (15 minutes) the relay or Kafka is down or a row keeps failing. The chart
   ships no PrometheusRule, so the platform monitoring stack carries the rule:
   `max(outbox_oldest_pending_age_seconds{service="svc-cus-profile-kyc"}) > 900` for 5 minutes, severity page.
-  Rows that keep failing park once they pass the 24 h ceiling.
 - `outbox_pending_events`: rows waiting for the relay.
 - `outbox_publish_failures_total{exception="<simple class name>"}`: failed sends by exception class (no ids or
   topics); use it to tell an authorization failure (`TopicAuthorizationException`, `SaslAuthenticationException`) from
@@ -103,6 +100,18 @@ flowing. Metrics (all tagged `service="svc-cus-profile-kyc"`):
 After a stopped batch the relay backs off: it waits the poll interval (`customer.outbox.relay.interval`, 1 s), doubling
 per stopped batch up to `customer.outbox.relay.backoff-max` (`OUTBOX_RELAY_BACKOFF_MAX`, default `PT5M`), and resets
 after a completed batch. The backoff is per replica and in memory; a restart starts from the poll interval again.
+
+Manual park (operator only). The relay never parks a row for a non-payload error. When one row holds the batch on
+such an error (`last_error` stays empty; see the relay log and `outbox_publish_failures_total`) and the cause cannot be
+fixed soon, an operator may park that row so the other customers' events flow; that customer's later events wait
+behind it. It needs the incident or change ticket in the reason, and the replay below once the cause is fixed:
+
+```sql
+-- Manual park (operator only): the oldest row waiting for the relay, held by a non-payload error.
+UPDATE sc_cus_profile_kyc.outbox_event
+SET parked_at = now(), last_error = left('manual: <reason>', 512)
+WHERE event_id = '<event id>' AND published_at IS NULL AND parked_at IS NULL;
+```
 
 Un-park (replay), after fixing the cause (topic created, IAM policy fixed, payload size limit raised):
 
@@ -114,7 +123,7 @@ WHERE published_at IS NULL AND parked_at IS NOT NULL
 ORDER BY created_seq;
 
 -- Un-park one row (or drop the event_id filter to replay all; the relay sends them in created_seq order).
--- first_failed_at must be reset, otherwise the 24 h ceiling parks the row again on its first retryable failure.
+-- first_failed_at is no longer written (ADR-021); clearing it tidies rows parked before that change.
 UPDATE sc_cus_profile_kyc.outbox_event
 SET parked_at = NULL, first_failed_at = NULL, attempts = 0, last_error = NULL
 WHERE event_id = '<event id>' AND published_at IS NULL AND parked_at IS NOT NULL;

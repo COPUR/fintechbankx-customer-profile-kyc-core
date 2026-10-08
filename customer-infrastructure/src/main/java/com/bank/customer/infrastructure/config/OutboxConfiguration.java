@@ -53,15 +53,15 @@ public class OutboxConfiguration {
     @Bean
     Gauge customerOutboxParkedGauge(MeterRegistry registry, SpringDataOutboxRepository outbox) {
         return Gauge.builder("outbox.parked.events", outbox, SpringDataOutboxRepository::countByPublishedAtIsNullAndParkedAtIsNotNull)
-            .description("Customer events the outbox relay parked after a permanent failure or too many attempts")
+            .description("Customer events parked after a payload error, or by an operator")
             .register(registry);
     }
 
     /**
      * Age of the oldest event waiting for the relay, 0 when none waits
      * (Prometheus outbox_oldest_pending_age_seconds). Alert when it keeps
-     * growing past a few minutes: the relay or Kafka is down, and rows that
-     * keep failing retryably park once they pass retryable-park-after.
+     * stays above 15 minutes (ADR-021 decision 4): the relay or Kafka is down,
+     * or a row keeps failing on a non-payload error and holds the batch.
      */
     @Bean
     Gauge customerOutboxOldestPendingAgeGauge(MeterRegistry registry, SpringDataOutboxRepository outbox, Clock clock) {
@@ -92,12 +92,11 @@ public class OutboxConfiguration {
                                 @Value("${customer.outbox.relay.batch-size:100}") int batchSize,
                                 @Value("${customer.outbox.relay.send-timeout:PT35S}") Duration sendTimeout,
                                 @Value("${customer.outbox.retention:P7D}") Duration retention,
-                                @Value("${customer.outbox.relay.retryable-park-after:PT24H}") Duration retryableParkAfter,
                                 @Value("${customer.outbox.relay.interval:PT1S}") Duration pollInterval,
                                 @Value("${customer.outbox.relay.backoff-max:PT5M}") Duration backoffMax,
                                 MeterRegistry meters) {
             return new OutboxRelay(outbox, kafka, new TransactionTemplate(transactionManager), clock, batchSize,
-                sendTimeout, retention, retryableParkAfter, pollInterval, backoffMax, meters);
+                sendTimeout, retention, pollInterval, backoffMax, meters);
         }
 
         @Bean

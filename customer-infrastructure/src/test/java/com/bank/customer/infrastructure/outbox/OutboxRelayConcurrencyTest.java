@@ -101,7 +101,7 @@ class OutboxRelayConcurrencyTest {
             List<Future<Integer>> runs = new ArrayList<>();
             for (int replica = 0; replica < 2; replica++) {
                 OutboxRelay relay = new OutboxRelay(outbox, kafka, new TransactionTemplate(transactionManager),
-                    Clock.systemUTC(), 10, Duration.ofSeconds(5), Duration.ofDays(7), Duration.ofHours(24),
+                    Clock.systemUTC(), 10, Duration.ofSeconds(5), Duration.ofDays(7),
             Duration.ofSeconds(1), Duration.ofMinutes(5), new io.micrometer.core.instrument.simple.SimpleMeterRegistry());
                 runs.add(replicas.submit(() -> {
                     start.await();
