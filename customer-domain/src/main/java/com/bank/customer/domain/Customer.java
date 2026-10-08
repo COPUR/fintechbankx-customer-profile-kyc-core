@@ -234,6 +234,7 @@ public class Customer extends AggregateRoot<CustomerId> {
     }
     
     public void reserveCredit(Money amount) {
+        requirePositive(amount);
         if (!canBorrowAmount(amount)) {
             throw new InsufficientCreditException(
                 String.format("Customer %s has insufficient credit. Requested: %s, Available: %s",
@@ -246,12 +247,20 @@ public class Customer extends AggregateRoot<CustomerId> {
     }
     
     public void releaseCredit(Money amount) {
+        requirePositive(amount);
         this.creditProfile = this.creditProfile.releaseCredit(amount);
         this.updatedAt = LocalDateTime.now();
         
         addDomainEvent(new CustomerCreditReleasedEvent(customerId, amount));
     }
     
+    private static void requirePositive(Money amount) {
+        Objects.requireNonNull(amount, "Credit amount cannot be null");
+        if (amount.isZero() || amount.isNegative()) {
+            throw new IllegalArgumentException("Credit amount must be positive");
+        }
+    }
+
     public void updateCreditScore(Integer newCreditScore) {
         this.creditScore = validateCreditScore(newCreditScore);
         this.creditProfile = CreditProfile.create(calculateCreditLimit(), this.creditProfile.getUsedCredit());

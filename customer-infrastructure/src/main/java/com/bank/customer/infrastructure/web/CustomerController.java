@@ -12,11 +12,15 @@ import com.bank.customer.infrastructure.web.dto.CustomerResponse;
 import com.bank.shared.kernel.domain.CustomerId;
 import com.bank.shared.kernel.domain.Money;
 import jakarta.validation.Valid;
+import jakarta.validation.constraints.AssertTrue;
+import jakarta.validation.constraints.NotNull;
+import jakarta.validation.constraints.Positive;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.web.bind.annotation.*;
 
+import java.math.BigDecimal;
 import java.util.Currency;
 
 /**
@@ -95,7 +99,7 @@ public class CustomerController {
     @PreAuthorize("hasAnyRole('BANKER', 'ADMIN')")
     public ResponseEntity<CustomerResponse> updateCreditLimit(
             @PathVariable String customerId, 
-            @RequestBody UpdateCreditLimitRequest request) {
+            @Valid @RequestBody UpdateCreditLimitRequest request) {
         
         Money newLimit = Money.of(request.amount(), Currency.getInstance(request.currency()));
         CustomerResponse response = CustomerResponse.from(updateCreditLimit.updateCreditLimit(CustomerId.of(customerId), newLimit));
@@ -110,7 +114,7 @@ public class CustomerController {
     public ResponseEntity<CustomerCreditResponse> reserveCredit(
             @RequestHeader(IDEMPOTENCY_KEY) String idempotencyKey,
             @PathVariable String customerId,
-            @RequestBody ReserveCreditRequest request) {
+            @Valid @RequestBody ReserveCreditRequest request) {
         
         Money amount = Money.of(request.amount(), Currency.getInstance(request.currency()));
         CustomerCreditResponse response = CustomerCreditResponse.from(moveCredit.reserveCredit(
@@ -126,7 +130,7 @@ public class CustomerController {
     public ResponseEntity<CustomerCreditResponse> releaseCredit(
             @RequestHeader(IDEMPOTENCY_KEY) String idempotencyKey,
             @PathVariable String customerId,
-            @RequestBody ReleaseCreditRequest request) {
+            @Valid @RequestBody ReleaseCreditRequest request) {
         
         Money amount = Money.of(request.amount(), Currency.getInstance(request.currency()));
         CustomerCreditResponse response = CustomerCreditResponse.from(moveCredit.releaseCredit(
@@ -134,9 +138,44 @@ public class CustomerController {
         return ResponseEntity.ok(response);
     }
     
-    // Request DTOs for credit operations
-    public record UpdateCreditLimitRequest(java.math.BigDecimal amount, String currency) {}
+    // Request DTOs for credit operations. Invalid input is a 400 INVALID_REQUEST
+    // (ApiExceptionHandler), never a 500 or a 422.
+    public record UpdateCreditLimitRequest(
+        @NotNull(message = "amount is required") @Positive(message = "amount must be positive") BigDecimal amount,
+        @NotNull(message = "currency is required") String currency) {
+
+        @AssertTrue(message = "currency must be an ISO 4217 code")
+        public boolean isKnownCurrency() {
+            return isIsoCurrency(currency);
+        }
+    }
+
     /** reference: what the credit is reserved for, for example the loan id. */
-    public record ReserveCreditRequest(java.math.BigDecimal amount, String currency, String reference) {}
-    public record ReleaseCreditRequest(java.math.BigDecimal amount, String currency, String reference) {}
+    public record ReserveCreditRequest(
+        @NotNull(message = "amount is required") @Positive(message = "amount must be positive") BigDecimal amount,
+        @NotNull(message = "currency is required") String currency,
+        String reference) {
+
+        @AssertTrue(message = "currency must be an ISO 4217 code")
+        public boolean isKnownCurrency() {
+            return isIsoCurrency(currency);
+        }
+    }
+
+    public record ReleaseCreditRequest(
+        @NotNull(message = "amount is required") @Positive(message = "amount must be positive") BigDecimal amount,
+        @NotNull(message = "currency is required") String currency,
+        String reference) {
+
+        @AssertTrue(message = "currency must be an ISO 4217 code")
+        public boolean isKnownCurrency() {
+            return isIsoCurrency(currency);
+        }
+    }
+
+    /** Null is reported by @NotNull, so it counts as known here. */
+    static boolean isIsoCurrency(String code) {
+        return code == null || Currency.getAvailableCurrencies().stream()
+            .anyMatch(currency -> currency.getCurrencyCode().equals(code));
+    }
 }
