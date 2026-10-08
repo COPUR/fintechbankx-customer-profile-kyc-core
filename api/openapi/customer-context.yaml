@@ -472,6 +472,7 @@ components:
         initialCreditLimit:
           type: number
           format: double
+          description: At most as many decimal places as the currency allows (2 for USD and AED, 0 for JPY). More is a 400 INVALID_REQUEST, never rounded; trailing zeros are fine.
         currency:
           type: string
           example: USD
@@ -483,6 +484,7 @@ components:
         amount:
           type: number
           format: double
+          description: At most as many decimal places as the currency allows (2 for USD and AED, 0 for JPY). More is a 400 INVALID_REQUEST, never rounded; trailing zeros are fine.
         currency:
           type: string
           example: USD
@@ -494,6 +496,7 @@ components:
         amount:
           type: number
           format: double
+          description: At most as many decimal places as the currency allows (2 for USD and AED, 0 for JPY). More is a 400 INVALID_REQUEST, never rounded; trailing zeros are fine.
         currency:
           type: string
           example: USD

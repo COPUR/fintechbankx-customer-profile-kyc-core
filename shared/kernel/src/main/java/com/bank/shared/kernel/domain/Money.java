@@ -17,14 +17,31 @@ public final class Money implements ValueObject, Comparable<Money> {
     private final Currency currency;
     
     private Money(BigDecimal amount, Currency currency) {
+        this.currency = Objects.requireNonNull(currency, "Currency cannot be null");
         this.amount = Objects.requireNonNull(amount, "Amount cannot be null")
                 .setScale(currency.getDefaultFractionDigits(), RoundingMode.HALF_UP);
-        this.currency = Objects.requireNonNull(currency, "Currency cannot be null");
     }
     
+    /**
+     * An amount in a currency. The amount may not carry more decimal places
+     * than the currency allows (2 for AED and USD, 0 for JPY): 2500.005 AED
+     * is rejected, never rounded. Trailing zeros are fine (2500.0000 is
+     * 2500.00). Only {@link #multiply} and {@link #divide} round, HALF_UP to
+     * the currency's scale.
+     *
+     * @throws IllegalArgumentException for a null amount or currency, or too many decimals
+     */
     public static Money of(BigDecimal amount, Currency currency) {
         if (amount == null) {
             throw new IllegalArgumentException("Amount cannot be null");
+        }
+        if (currency == null) {
+            throw new IllegalArgumentException("Currency cannot be null");
+        }
+        int allowed = currency.getDefaultFractionDigits();
+        if (amount.stripTrailingZeros().scale() > allowed) {
+            throw new IllegalArgumentException(
+                currency.getCurrencyCode() + " amounts allow at most " + allowed + " decimal places");
         }
         return new Money(amount, currency);
     }
@@ -67,10 +84,12 @@ public final class Money implements ValueObject, Comparable<Money> {
         return new Money(this.amount.subtract(other.amount), this.currency);
     }
     
+    /** Rounds HALF_UP to the currency's scale (10.01 x 0.5 = 5.01). */
     public Money multiply(BigDecimal multiplier) {
         return new Money(this.amount.multiply(multiplier), this.currency);
     }
     
+    /** Rounds HALF_UP to the currency's scale (100.00 / 3 = 33.33). */
     public Money divide(BigDecimal divisor) {
         return new Money(this.amount.divide(divisor, currency.getDefaultFractionDigits(), RoundingMode.HALF_UP), this.currency);
     }
