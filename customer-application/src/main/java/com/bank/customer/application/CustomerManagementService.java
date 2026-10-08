@@ -6,7 +6,12 @@ import com.bank.customer.domain.Customer;
 import com.bank.customer.domain.CustomerAlreadyExistsException;
 import com.bank.customer.domain.CustomerNotFoundException;
 import com.bank.customer.domain.IdempotencyKeyConflictException;
+import com.bank.customer.domain.KycStatus;
+import com.bank.customer.domain.port.in.ChangeKycStatusCommand;
+import com.bank.customer.domain.port.in.ChangeKycStatusUseCase;
 import com.bank.customer.domain.port.in.CreditMovementCommand;
+import com.bank.customer.domain.port.in.GetKycStatusUseCase;
+import com.bank.customer.domain.port.in.KycStatusView;
 import com.bank.customer.domain.port.in.CreditPosition;
 import com.bank.customer.domain.port.in.CustomerProfile;
 import com.bank.customer.domain.port.in.GetCreditPositionUseCase;
@@ -44,7 +49,8 @@ import java.util.UUID;
 @Service
 @Transactional
 public class CustomerManagementService implements RegisterCustomerUseCase, GetCustomerProfileUseCase,
-        GetCreditPositionUseCase, UpdateCreditLimitUseCase, MoveCreditUseCase, LinkIdentityUseCase {
+        GetCreditPositionUseCase, UpdateCreditLimitUseCase, MoveCreditUseCase, LinkIdentityUseCase,
+        GetKycStatusUseCase, ChangeKycStatusUseCase {
 
     private final CustomerRepository customerRepository;
     private final CustomerEventPublisher eventPublisher;
@@ -110,6 +116,23 @@ public class CustomerManagementService implements RegisterCustomerUseCase, GetCu
     @Transactional(readOnly = true)
     public CreditPosition getCreditPosition(CustomerId customerId) {
         return CreditPosition.of(load(customerId));
+    }
+
+    /** KYC status only, for service callers (payments) that must not see personal data. */
+    @Override
+    @Transactional(readOnly = true)
+    public KycStatusView getKycStatus(CustomerId customerId) {
+        return KycStatusView.of(load(customerId));
+    }
+
+    /** Staff verify or reject; an unchanged status is neither saved nor published. */
+    @Override
+    public KycStatusView changeKycStatus(ChangeKycStatusCommand command) {
+        Customer customer = load(command.customerId());
+        boolean changed = command.status() == KycStatus.Status.VERIFIED
+            ? customer.verifyKyc(command.updatedBy(), clock.instant())
+            : customer.rejectKyc(command.updatedBy(), clock.instant());
+        return KycStatusView.of(changed ? saveAndPublish(customer) : customer);
     }
 
     /** FR-003: change the credit limit. */

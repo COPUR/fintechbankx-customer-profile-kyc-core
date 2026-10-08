@@ -10,7 +10,8 @@ import java.time.LocalDateTime;
  * rebuild the aggregate without replaying creation rules or raising events.
  * email, phoneNumber, creditScore and monthlyIncome may be null for customers
  * migrated from the monolith, which never stored them. identityUserId is null
- * until onboarding links the customer to an identity user.
+ * until onboarding links the customer to an identity user. kycStatus null
+ * means PENDING.
  */
 public record CustomerSnapshot(
     CustomerId customerId,
@@ -25,8 +26,18 @@ public record CustomerSnapshot(
     LocalDateTime createdAt,
     LocalDateTime updatedAt,
     Long version,
-    IdentityUserId identityUserId
+    IdentityUserId identityUserId,
+    KycStatus kycStatus
 ) {
+
+    /** A snapshot without a KYC status reads as PENDING (see Customer.rehydrate). */
+    public CustomerSnapshot(CustomerId customerId, String firstName, String lastName, String email,
+                            String phoneNumber, Money creditLimit, Money usedCredit, Integer creditScore,
+                            Money monthlyIncome, LocalDateTime createdAt, LocalDateTime updatedAt, Long version,
+                            IdentityUserId identityUserId) {
+        this(customerId, firstName, lastName, email, phoneNumber, creditLimit, usedCredit, creditScore,
+            monthlyIncome, createdAt, updatedAt, version, identityUserId, null);
+    }
 
     /** A customer not linked to an identity user. */
     public CustomerSnapshot(CustomerId customerId, String firstName, String lastName, String email,

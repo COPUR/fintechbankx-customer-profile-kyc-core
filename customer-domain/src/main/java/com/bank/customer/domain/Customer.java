@@ -32,6 +32,7 @@ public class Customer extends AggregateRoot<CustomerId> {
     private LocalDateTime createdAt;
     private LocalDateTime updatedAt;
     private IdentityUserId identityUserId;
+    private KycStatus kycStatus = KycStatus.pending();
 
     /** Rule of the Keycloak user attribute customer_id (platform contract). */
     private static final java.util.regex.Pattern IDENTITY_ATTRIBUTE_VALUE =
@@ -97,6 +98,7 @@ public class Customer extends AggregateRoot<CustomerId> {
         customer.createdAt = snapshot.createdAt();
         customer.updatedAt = snapshot.updatedAt();
         customer.identityUserId = snapshot.identityUserId();
+        customer.kycStatus = snapshot.kycStatus() == null ? KycStatus.pending() : snapshot.kycStatus();
         customer.setVersion(snapshot.version());
         return customer;
     }
@@ -227,6 +229,42 @@ public class Customer extends AggregateRoot<CustomerId> {
      *
      * @return true if the link was added
      */
+    public KycStatus getKycStatus() {
+        return kycStatus;
+    }
+
+    /**
+     * Staff verified the customer's KYC. Same status again changes nothing.
+     * @return whether the status changed
+     */
+    public boolean verifyKyc(String by, java.time.Instant at) {
+        return changeKyc(KycStatus.Status.VERIFIED, by, at);
+    }
+
+    /**
+     * Staff rejected the customer's KYC (also revokes a verification).
+     * @return whether the status changed
+     */
+    public boolean rejectKyc(String by, java.time.Instant at) {
+        return changeKyc(KycStatus.Status.REJECTED, by, at);
+    }
+
+    private boolean changeKyc(KycStatus.Status target, String by, java.time.Instant at) {
+        if (by == null || by.isBlank()) {
+            throw new IllegalArgumentException("Who changed the KYC status is required");
+        }
+        Objects.requireNonNull(at, "When the KYC status changed is required");
+        if (kycStatus.status() == target) {
+            return false;
+        }
+        KycStatus.Status previous = kycStatus.status();
+        this.kycStatus = new KycStatus(target, KycStatus.Source.STAFF,
+            target == KycStatus.Status.VERIFIED ? at : null, by);
+        this.updatedAt = LocalDateTime.now();
+        addDomainEvent(new CustomerKycStatusChangedEvent(customerId, previous, kycStatus, at));
+        return true;
+    }
+
     public boolean linkIdentity(IdentityUserId userId) {
         Objects.requireNonNull(userId, "Identity user id cannot be null");
         if (userId.equals(identityUserId)) {
