@@ -34,8 +34,9 @@ import java.util.Map;
  * the @PreAuthorize rules on CustomerController.
  *
  * DPoP proof-of-possession is enforced at the edge gateway for external
- * clients; calls inside the mesh are authenticated by STRICT mTLS (see the
- * PeerAuthentication and AuthorizationPolicy in the Helm chart).
+ * clients; calls inside the mesh are authenticated by mesh-wide STRICT mTLS.
+ * The mesh repository owns PeerAuthentication and AuthorizationPolicy; this
+ * service's chart ships neither, only a NetworkPolicy backstop.
  *
  * Actuator endpoints are served on the management port, which the chart's
  * NetworkPolicy opens to the monitoring namespace only.
