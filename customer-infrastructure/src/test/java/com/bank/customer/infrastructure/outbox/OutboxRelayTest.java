@@ -15,6 +15,7 @@ import org.apache.kafka.common.errors.TopicAuthorizationException;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.MethodSource;
+import org.mockito.ArgumentCaptor;
 import org.springframework.kafka.core.KafkaProducerException;
 import org.springframework.kafka.core.KafkaTemplate;
 import org.springframework.kafka.support.SendResult;
@@ -115,8 +116,7 @@ class OutboxRelayTest {
         assertThat(first.getPublishedAt()).isEqualTo(NOW);
         assertThat(second.getPublishedAt()).isNull();
         assertThat(second.getParkedAt()).as("a retryable failure is retried, not parked").isNull();
-        assertThat(second.getAttempts()).isEqualTo(1);
-        assertThat(second.getLastError()).startsWith("NetworkException");
+        assertUntouched(second);
         assertThat(third.getAttempts()).isZero();
         verify(kafka, times(2)).send(any(ProducerRecord.class));
     }
@@ -132,7 +132,7 @@ class OutboxRelayTest {
         assertThat(relay.relayOnce()).isZero();
 
         assertThat(first.getParkedAt()).isNull();
-        assertThat(first.getLastError()).startsWith("TimeoutException");
+        assertUntouched(first);
         verify(kafka, times(1)).send(any(ProducerRecord.class));
     }
 
@@ -172,33 +172,12 @@ class OutboxRelayTest {
 
         assertThat(relay.relayOnce()).isZero();
 
-        assertThat(first.getParkedAt()).as("not parked on its first failure").isNull();
-        assertThat(first.getAttempts()).isEqualTo(1);
-        assertThat(first.getFirstFailedAt()).isEqualTo(NOW);
-        assertThat(first.getLastError()).startsWith(failure.getClass().getSimpleName());
+        assertThat(first.getParkedAt()).as("not parked").isNull();
+        assertUntouched(first);
         assertThat(next.getParkedAt()).isNull();
         assertThat(next.getPublishedAt()).as("the batch stopped").isNull();
         assertThat(next.getAttempts()).isZero();
         verify(kafka, times(1)).send(any(ProducerRecord.class));
-    }
-
-    @Test
-    void anAuthFailurePastTheCeilingParksTheRow() {
-        OutboxEventJpaEntity stuck = row("CUST-1");
-        when(outbox.tryRelayLock(anyLong())).thenReturn(true);
-        when(outbox.findUnpublishedBatch(50)).thenReturn(List.of(stuck));
-        when(kafka.send(any(ProducerRecord.class))).thenAnswer(invocation -> CompletableFuture.failedFuture(
-            producerFailure(new TopicAuthorizationException(Set.of("evt.cus.customer.created.v1")))));
-
-        relay.relayOnce();
-        clock.advance(PARK_AFTER);
-        relay.relayOnce();
-        assertThat(stuck.getParkedAt()).as("at the ceiling: still retried").isNull();
-        clock.advance(Duration.ofSeconds(2));          // past the ceiling and the 2 s backoff
-        relay.relayOnce();
-
-        assertThat(stuck.getParkedAt()).isEqualTo(NOW.plus(PARK_AFTER).plusSeconds(2));
-        assertThat(stuck.getAttempts()).isEqualTo(3);
     }
 
     @ParameterizedTest
@@ -267,34 +246,53 @@ class OutboxRelayTest {
             clock.advance(BACKOFF_MAX);                      // past any backoff wait
         }
 
-        assertThat(row.getAttempts()).isEqualTo(20);
         assertThat(row.getParkedAt()).isNull();
-        assertThat(row.getFirstFailedAt()).as("measured from the first failure").isEqualTo(NOW);
-        assertThat(row.getLastError()).startsWith("NetworkException");
+        assertUntouched(row);
     }
 
-    @Test
-    void aRetryableFailurePastTheCeilingParksTheRowAndTheBatchContinues() {
+    static Stream<RuntimeException> nonPayloadFailures() {
+        return Stream.of(
+            new NetworkException("broker down"),
+            new TopicAuthorizationException(Set.of("evt.cus.customer.created.v1")),
+            new SaslAuthenticationException("SASL authentication failed"),
+            new KafkaException("unclassified producer failure"));
+    }
+
+    /**
+     * ADR-021 decision 4: a retriable, authorization or unclassified failure
+     * never parks or skips the row, however long it lasts; the batch stops at
+     * it every time, so nothing after it is sent.
+     */
+    @ParameterizedTest
+    @MethodSource("nonPayloadFailures")
+    void aNonPayloadFailureNeverParksTheRowEvenAfterMoreThan24Hours(RuntimeException failure) {
         OutboxEventJpaEntity stuck = row("CUST-1");
         OutboxEventJpaEntity next = row("CUST-2");
         when(outbox.tryRelayLock(anyLong())).thenReturn(true);
-        when(outbox.findUnpublishedBatch(50)).thenReturn(List.of(stuck), List.of(stuck), List.of(stuck, next));
+        when(outbox.findUnpublishedBatch(50)).thenReturn(List.of(stuck, next));
         when(kafka.send(any(ProducerRecord.class)))
-            .thenReturn(CompletableFuture.failedFuture(producerFailure(new NetworkException("broker down"))))
-            .thenReturn(CompletableFuture.failedFuture(producerFailure(new NetworkException("broker down"))))
-            .thenReturn(CompletableFuture.failedFuture(producerFailure(new NetworkException("broker down"))))
-            .thenReturn(CompletableFuture.completedFuture((SendResult<String, String>) null));
+            .thenAnswer(invocation -> CompletableFuture.failedFuture(producerFailure(failure)));
 
-        relay.relayOnce();                                   // first failure at NOW
-        clock.advance(PARK_AFTER);
-        relay.relayOnce();                                   // exactly at the ceiling: still retried
-        assertThat(stuck.getParkedAt()).isNull();
-        clock.advance(Duration.ofSeconds(2));          // past the ceiling and the 2 s backoff
-        assertThat(relay.relayOnce()).isEqualTo(1);          // past the ceiling: parked, batch goes on
+        for (Duration elapsed : List.of(Duration.ZERO, Duration.ofHours(24), BACKOFF_MAX, Duration.ofDays(7))) {
+            clock.advance(elapsed);
+            assertThat(relay.relayOnce()).isZero();
+        }
 
-        assertThat(stuck.getParkedAt()).isEqualTo(NOW.plus(PARK_AFTER).plusSeconds(2));
-        assertThat(stuck.getFirstFailedAt()).isEqualTo(NOW);
-        assertThat(next.getPublishedAt()).isNotNull();
+        assertThat(stuck.getParkedAt()).as("never parked").isNull();
+        assertUntouched(stuck);
+        assertThat(next.getPublishedAt()).as("the next row is never sent").isNull();
+        assertUntouched(next);
+        ArgumentCaptor<ProducerRecord<String, String>> sent = ArgumentCaptor.forClass(ProducerRecord.class);
+        verify(kafka, times(4)).send(sent.capture());
+        assertThat(sent.getAllValues()).extracting(ProducerRecord::key).containsOnly("CUST-1");
+    }
+
+    /** ADR-021: the relay stops "without marking the row"; no attempt, error or first-failure time is written. */
+    private static void assertUntouched(OutboxEventJpaEntity row) {
+        assertThat(row.getAttempts()).as("attempts").isZero();
+        assertThat(row.getLastError()).as("last_error").isNull();
+        assertThat(row.getFirstFailedAt()).as("first_failed_at").isNull();
+        assertThat(row.getParkedAt()).as("parked_at").isNull();
     }
 
     @Test
@@ -309,7 +307,8 @@ class OutboxRelayTest {
 
         assertThat(poison.getAttempts()).isEqualTo(1);
         assertThat(poison.getParkedAt()).isEqualTo(NOW);
-        assertThat(poison.getFirstFailedAt()).isEqualTo(NOW);
+        assertThat(poison.getLastError()).startsWith("RecordTooLargeException");
+        assertThat(poison.getFirstFailedAt()).as("no longer written (ADR-021 drops the ceiling)").isNull();
     }
 
     @Test

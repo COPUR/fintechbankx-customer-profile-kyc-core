@@ -6,10 +6,15 @@ import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.autoconfigure.jdbc.AutoConfigureTestDatabase;
 import org.springframework.boot.test.autoconfigure.orm.jpa.DataJpaTest;
+import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.test.context.DynamicPropertyRegistry;
 import org.springframework.test.context.DynamicPropertySource;
 
+import java.io.IOException;
+import java.nio.file.Files;
+import java.nio.file.Path;
 import java.time.Instant;
+import java.util.List;
 import java.util.UUID;
 
 import static org.assertj.core.api.Assertions.assertThat;
@@ -41,6 +46,61 @@ class OutboxPersistenceTest {
     }
 
     @Autowired SpringDataOutboxRepository outbox;
+    @Autowired JdbcTemplate jdbc;
+
+    /**
+     * The runbook's operator-only manual park (a row stuck on a non-payload
+     * error, which the relay never parks itself under ADR-021 decision 4) and
+     * its replay, run exactly as written in the runbook.
+     */
+    @Test
+    void theRunbooksManualParkAndReplayStatementsWork() throws IOException {
+        OutboxEventJpaEntity stuck = outbox.saveAndFlush(row("CUST-MANUAL-1"));
+        String id = stuck.getEventId().toString();
+        String manualPark = runbookStatement("-- Manual park (operator only)")
+            .replace("<event id>", id).replace("<reason>", "TopicAuthorizationException since 09:00, CHG-1");
+        String replay = runbookStatement("-- Un-park one row").replace("<event id>", id);
+
+        assertThat(jdbc.update(manualPark)).isEqualTo(1);
+
+        assertThat(jdbc.queryForObject("select last_error from sc_cus_profile_kyc.outbox_event where event_id = ?::uuid",
+            String.class, id)).isEqualTo("manual: TopicAuthorizationException since 09:00, CHG-1");
+        assertThat(jdbc.queryForObject("select parked_at is not null from sc_cus_profile_kyc.outbox_event where event_id = ?::uuid",
+            Boolean.class, id)).isTrue();
+        assertThat(outbox.findUnpublishedBatch(10)).extracting(OutboxEventJpaEntity::getEventId).doesNotContain(stuck.getEventId());
+        assertThat(jdbc.update(manualPark)).as("parking twice changes nothing").isZero();
+
+        assertThat(jdbc.update(replay)).isEqualTo(1);
+
+        assertThat(jdbc.queryForObject("select parked_at is null and last_error is null and attempts = 0 "
+            + "from sc_cus_profile_kyc.outbox_event where event_id = ?::uuid", Boolean.class, id)).isTrue();
+        assertThat(outbox.findUnpublishedBatch(10)).extracting(OutboxEventJpaEntity::getEventId).contains(stuck.getEventId());
+    }
+
+    /** The SQL statement that follows the given comment line in the runbook's "Parked outbox events" section. */
+    private static String runbookStatement(String commentPrefix) throws IOException {
+        List<String> lines = Files.readAllLines(Path.of("..", "docs", "migration", "RUNBOOK-EXTRACT-cus-profile-kyc.md"));
+        int start = -1;
+        for (int i = 0; i < lines.size(); i++) {
+            if (lines.get(i).startsWith(commentPrefix)) {
+                start = i;
+                break;
+            }
+        }
+        assertThat(start).as("runbook has a statement after '%s'", commentPrefix).isNotNegative();
+        StringBuilder sql = new StringBuilder();
+        for (int i = start; i < lines.size(); i++) {
+            String line = lines.get(i).trim();
+            if (line.startsWith("--") || line.isEmpty()) {
+                continue;
+            }
+            sql.append(line).append('\n');
+            if (line.endsWith(";")) {
+                break;
+            }
+        }
+        return sql.toString();
+    }
 
     @Test
     void theBatchSkipsParkedRowsAndHoldsTheParkedCustomersLaterEvents() {
@@ -62,7 +122,7 @@ class OutboxPersistenceTest {
             .satisfies(found -> {
                 assertThat(found.getParkedAt()).isEqualTo(NOW);
                 assertThat(found.getLastError()).startsWith("RecordTooLargeException");
-                assertThat(found.getFirstFailedAt()).isEqualTo(NOW);
+                assertThat(found.getFirstFailedAt()).as("kept as a column, no longer written").isNull();
             });
     }
 
