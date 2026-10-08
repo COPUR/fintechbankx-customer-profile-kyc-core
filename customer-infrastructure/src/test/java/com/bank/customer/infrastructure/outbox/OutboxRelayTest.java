@@ -1,5 +1,7 @@
 package com.bank.customer.infrastructure.outbox;
 
+import io.micrometer.core.instrument.Meter;
+import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
 import org.apache.kafka.clients.producer.ProducerRecord;
 import org.apache.kafka.common.KafkaException;
 import org.apache.kafka.common.errors.AuthenticationException;
@@ -52,8 +54,12 @@ class OutboxRelayTest {
     /** customer.outbox.relay.retryable-park-after default. */
     private static final Duration PARK_AFTER = Duration.ofHours(24);
     private final MutableClock clock = new MutableClock(NOW);
+    /** Backoff after a stopped batch: from the poll interval, doubling, capped (customer.outbox.relay.backoff-max). */
+    private static final Duration POLL_INTERVAL = Duration.ofSeconds(1);
+    private static final Duration BACKOFF_MAX = Duration.ofMinutes(5);
+    private final SimpleMeterRegistry meters = new SimpleMeterRegistry();
     private final OutboxRelay relay = new OutboxRelay(outbox, kafka, transactions,
-        clock, 50, Duration.ofSeconds(1), Duration.ofDays(7), PARK_AFTER);
+        clock, 50, Duration.ofSeconds(1), Duration.ofDays(7), PARK_AFTER, POLL_INTERVAL, BACKOFF_MAX, meters);
 
     /** A clock the test moves forward. */
     static final class MutableClock extends Clock {
@@ -258,7 +264,7 @@ class OutboxRelayTest {
 
         for (int tick = 0; tick < 20; tick++) {
             assertThat(relay.relayOnce()).isZero();
-            clock.advance(Duration.ofMinutes(1));
+            clock.advance(BACKOFF_MAX);                      // past any backoff wait
         }
 
         assertThat(row.getAttempts()).isEqualTo(20);
@@ -309,8 +315,79 @@ class OutboxRelayTest {
     @Test
     void theRetryableCeilingMustBePositive() {
         assertThatThrownBy(() -> new OutboxRelay(outbox, kafka, transactions,
-                Clock.fixed(NOW, ZoneOffset.UTC), 50, Duration.ofSeconds(1), Duration.ofDays(7), Duration.ZERO))
+                Clock.fixed(NOW, ZoneOffset.UTC), 50, Duration.ofSeconds(1), Duration.ofDays(7), Duration.ZERO,
+                POLL_INTERVAL, BACKOFF_MAX, meters))
             .isInstanceOf(IllegalArgumentException.class);
+    }
+
+    /**
+     * After a stopped batch the relay waits before it tries again: the poll
+     * interval, doubling per stopped batch up to the cap, and back to no wait
+     * once a batch completes. While waiting it does not even take the lock.
+     */
+    @Test
+    void aStoppedBatchBacksOffExponentiallyAndASuccessResetsIt() {
+        OutboxEventJpaEntity row = row("CUST-1");
+        when(outbox.tryRelayLock(anyLong())).thenReturn(true);
+        when(outbox.findUnpublishedBatch(50)).thenReturn(List.of(row));
+        when(kafka.send(any(ProducerRecord.class)))
+            .thenReturn(CompletableFuture.failedFuture(producerFailure(new NetworkException("broker down"))))
+            .thenReturn(CompletableFuture.failedFuture(producerFailure(new NetworkException("broker down"))))
+            .thenReturn(CompletableFuture.completedFuture((SendResult<String, String>) null))
+            .thenReturn(CompletableFuture.failedFuture(producerFailure(new NetworkException("broker down"))));
+
+        relay.relayOnce();                                    // NOW: stopped, wait 1 s
+        clock.advance(Duration.ofMillis(999));
+        assertThat(relay.relayOnce()).isZero();               // still waiting: nothing tried
+        verify(outbox, times(1)).tryRelayLock(anyLong());
+        clock.advance(Duration.ofMillis(1));
+        relay.relayOnce();                                    // NOW+1 s: stopped again, wait 2 s
+        clock.advance(Duration.ofMillis(1999));
+        relay.relayOnce();                                    // still waiting
+        verify(kafka, times(2)).send(any(ProducerRecord.class));
+        clock.advance(Duration.ofMillis(1));
+        assertThat(relay.relayOnce()).isEqualTo(1);           // NOW+3 s: sent, wait reset
+        when(outbox.findUnpublishedBatch(50)).thenReturn(List.of(row("CUST-2")));
+        relay.relayOnce();                                    // NOW+3 s: stopped, wait 1 s again
+        assertThat(relay.backoff().nextAttemptAt()).isEqualTo(NOW.plusSeconds(4));
+        verify(kafka, times(4)).send(any(ProducerRecord.class));
+    }
+
+    @Test
+    void theBackoffIsCappedAtTheConfiguredMaximum() {
+        when(outbox.tryRelayLock(anyLong())).thenReturn(true);
+        when(outbox.findUnpublishedBatch(50)).thenReturn(List.of(row("CUST-1")));
+        when(kafka.send(any(ProducerRecord.class)))
+            .thenAnswer(invocation -> CompletableFuture.failedFuture(producerFailure(new NetworkException("broker down"))));
+
+        for (int run = 0; run < 12; run++) {
+            relay.relayOnce();
+            clock.advance(BACKOFF_MAX);
+        }
+
+        Instant lastFailure = clock.instant().minus(BACKOFF_MAX);
+        assertThat(relay.backoff().nextAttemptAt()).isEqualTo(lastFailure.plus(BACKOFF_MAX));
+        verify(kafka, times(12)).send(any(ProducerRecord.class));
+    }
+
+    /** outbox.publish.failures, tagged with the failure's simple class name only (never ids or topics). */
+    @Test
+    void eachFailedSendIsCountedByExceptionClass() {
+        when(outbox.tryRelayLock(anyLong())).thenReturn(true);
+        when(outbox.findUnpublishedBatch(50)).thenReturn(List.of(row("CUST-1"), row("CUST-2")));
+        when(kafka.send(any(ProducerRecord.class)))
+            .thenReturn(CompletableFuture.failedFuture(producerFailure(new RecordTooLargeException("too large"))))
+            .thenReturn(CompletableFuture.failedFuture(producerFailure(new NetworkException("broker down"))));
+
+        relay.relayOnce();
+
+        assertThat(meters.get("outbox.publish.failures").tag("exception", "RecordTooLargeException").counter().count())
+            .isEqualTo(1.0);
+        assertThat(meters.get("outbox.publish.failures").tag("exception", "NetworkException").counter().count())
+            .isEqualTo(1.0);
+        assertThat(meters.get("outbox.publish.failures").meters())
+            .extracting(Meter::getId)
+            .allSatisfy(id -> assertThat(id.getTags()).extracting(tag -> tag.getKey()).containsExactly("exception"));
     }
 
     /** What KafkaTemplate completes its future with when the producer reports a failure. */
