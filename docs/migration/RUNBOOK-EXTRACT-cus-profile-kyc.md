@@ -86,7 +86,7 @@ Parked rows are skipped and never purged. The same customer's later events wait 
 `outbox_pending_events`), so a consumer never sees a customer's events out of order; other customers' events keep
 flowing. Metrics (all tagged `service="svc-cus-profile-kyc"`):
 
-- `outbox_parked_events`: rows parked; alert on any value above zero, because consumers are missing that customer's
+- `outbox_parked_events`: rows parked; any increase alerts (below), because consumers are missing that customer's
   events until the replay.
 - `outbox_oldest_pending_age_seconds`: age of the oldest row waiting for the relay, from its `created_at` (0 when
   none). This is the alert signal (ADR-021 decision 4).
@@ -99,13 +99,19 @@ flowing. Metrics (all tagged `service="svc-cus-profile-kyc"`):
 Outbox alerts: **proposed** to platform observability (fintechbankx-platform-observability-sre-operations); no rule on
 these two series exists there yet (review 5456636554), and this chart ships no PrometheusRule. Platform rules select on
 `service_id`, which comes from the pod label `fintechbankx.io/service-id: svc-cus-profile-kyc` (set in the chart and
-checked by the deploy/helm CI job). Proposed rules, owning squad **customer**:
+checked by the deploy/helm CI job). Proposed rules, with the severities platform has settled, owning squad **customer**
+(still proposed until platform's commit lands):
 
-- `max(outbox_oldest_pending_age_seconds{service_id="svc-cus-profile-kyc"}) > 900` for 5m, severity critical, squad customer;
-- companion: `increase(outbox_send_failures_total{service_id="svc-cus-profile-kyc"}[10m]) > 0`, squad customer.
+- `max(outbox_oldest_pending_age_seconds{service_id="svc-cus-profile-kyc"}) > 900` for 5m: severity critical;
+- `increase(outbox_send_failures_total{service_id="svc-cus-profile-kyc"}[10m]) > 0`: severity warning (any send
+  failure);
+- any increase in `outbox_parked_events{service_id="svc-cus-profile-kyc"}`: alert (a parked row means consumers miss
+  that customer's events until the replay).
 
-Both depend on platform widening the AMP remote-write keep regex from `.*outbox_pending.*` to `outbox_.*`; until then
-neither series reaches the alerting backend. Until the rules exist, the customer squad watches these series on its
+All depend on platform widening the AMP remote-write keep regex from `.*outbox_pending.*` to `outbox_.*` (in progress on
+the platform side); until then these series do not reach the alerting backend. Scraping relies on the pod annotations
+`prometheus.io/scrape`, `prometheus.io/port` and `prometheus.io/path` (the platform PodMonitor reads them); the
+deploy/helm CI job checks they are rendered. Until the rules exist, the customer squad watches these series on its
 dashboards.
 
 Every meter carries `service="svc-cus-profile-kyc"`, `app` (`METRICS_APP`, the chart's service account

@@ -71,6 +71,10 @@ jobs:
           # Kafka TLS env only for the kafka-strimzi profile, from the Secret named by kafkaTls.secretName.
           python3 -c "import yaml" 2>/dev/null || python3 -m pip install --user pyyaml==6.0.2
           python3 scripts/ci/strimzi-tls-env.py --expect-none <<<"$rendered"
+          # The platform PodMonitor scrapes through these pod annotations.
+          for annotation in 'prometheus.io/scrape: "true"' 'prometheus.io/port: "8081"' 'prometheus.io/path: /actuator/prometheus'; do
+            grep -qF "$annotation" <<<"$rendered" || { echo "missing pod annotation $annotation" >&2; exit 1; }
+          done
           # Platform outbox alerts select on service_id, taken from this pod label.
           python3 scripts/ci/pod-service-id.py --expect svc-cus-profile-kyc <<<"$rendered"
           if helm template ci "$chart" $args --set 'podLabels.fintechbankx\.io/service-id=wrong' \
