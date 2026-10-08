@@ -60,7 +60,7 @@ public class OutboxConfiguration {
                                 PlatformTransactionManager transactionManager,
                                 Clock clock,
                                 @Value("${customer.outbox.relay.batch-size:100}") int batchSize,
-                                @Value("${customer.outbox.relay.send-timeout:PT10S}") Duration sendTimeout,
+                                @Value("${customer.outbox.relay.send-timeout:PT35S}") Duration sendTimeout,
                                 @Value("${customer.outbox.retention:P7D}") Duration retention) {
             return new OutboxRelay(outbox, kafka, new TransactionTemplate(transactionManager), clock, batchSize, sendTimeout, retention);
         }

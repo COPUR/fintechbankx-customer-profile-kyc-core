@@ -55,7 +55,10 @@ spring:
       properties:
         enable.idempotence: true
         max.in.flight.requests.per.connection: 5
+        # Kafka requires delivery.timeout.ms >= linger.ms + request.timeout.ms,
+        # otherwise the producer cannot be constructed.
         delivery.timeout.ms: 30000
+        request.timeout.ms: 20000
         linger.ms: 5
   security:
     oauth2:
@@ -109,7 +112,9 @@ customer:
       enabled: ${OUTBOX_RELAY_ENABLED:true}
       interval: PT1S
       batch-size: 100
-      send-timeout: PT10S
+      # Longer than delivery.timeout.ms, so the relay never abandons a send Kafka
+      # is still retrying (which would publish the event twice).
+      send-timeout: PT35S
 
 logging:
   pattern:

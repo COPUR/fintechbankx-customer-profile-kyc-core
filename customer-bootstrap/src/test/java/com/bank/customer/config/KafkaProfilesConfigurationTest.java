@@ -41,6 +41,30 @@ class KafkaProfilesConfigurationTest {
         assertThat(base.getProperty("spring.kafka.producer.compression-type")).hasToString("lz4");
     }
 
+    @Test
+    void producerTimeoutsLetKafkaConstructTheProducer() throws Exception {
+        PropertySource<?> base = load("application.yml");
+        long delivery = Long.parseLong(base.getProperty("spring.kafka.producer.properties.delivery.timeout.ms").toString());
+        long request = Long.parseLong(base.getProperty("spring.kafka.producer.properties.request.timeout.ms").toString());
+        long linger = Long.parseLong(base.getProperty("spring.kafka.producer.properties.linger.ms").toString());
+
+        assertThat(delivery).isGreaterThanOrEqualTo(linger + request);
+        assertThat(java.time.Duration.parse(base.getProperty("customer.outbox.relay.send-timeout").toString()).toMillis())
+            .isGreaterThan(delivery);
+
+        java.util.Map<String, Object> config = new java.util.HashMap<>();
+        config.put("bootstrap.servers", "localhost:9092");
+        config.put("key.serializer", org.apache.kafka.common.serialization.StringSerializer.class);
+        config.put("value.serializer", org.apache.kafka.common.serialization.StringSerializer.class);
+        config.put("enable.idempotence", true);
+        config.put("delivery.timeout.ms", (int) delivery);
+        config.put("request.timeout.ms", (int) request);
+        config.put("linger.ms", (int) linger);
+        config.put("compression.type", "lz4");
+        // Construction validates the timeout rule; no broker is contacted.
+        new org.apache.kafka.clients.producer.KafkaProducer<String, String>(config).close(java.time.Duration.ZERO);
+    }
+
     private static PropertySource<?> load(String file) throws Exception {
         return new YamlPropertySourceLoader().load(file, new ClassPathResource(file)).get(0);
     }
