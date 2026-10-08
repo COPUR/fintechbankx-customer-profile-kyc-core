@@ -47,6 +47,10 @@ public class OutboxEventJpaEntity {
     @Column(name = "occurred_at", nullable = false, updatable = false)
     private Instant occurredAt;
 
+    /** Written by the database (DEFAULT now()); the oldest-pending-age gauge measures from here. */
+    @Column(name = "created_at", insertable = false, updatable = false)
+    private Instant createdAt;
+
     @Column(name = "published_at")
     private Instant publishedAt;
 

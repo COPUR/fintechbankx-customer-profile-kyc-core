@@ -48,9 +48,13 @@ public interface SpringDataOutboxRepository extends JpaRepository<OutboxEventJpa
     /** Rows waiting for the relay (not published, not parked). */
     long countByPublishedAtIsNullAndParkedAtIsNull();
 
-    /** occurred_at of the oldest row waiting for the relay (not published, not parked); null when none waits. */
-    @Query("select min(e.occurredAt) from OutboxEventJpaEntity e where e.publishedAt is null and e.parkedAt is null")
-    Instant oldestPendingOccurredAt();
+    /**
+     * created_at of the oldest row waiting for the relay (not published, not
+     * parked); null when none waits. The relay marks nothing on a row it cannot
+     * send (ADR-021 decision 4), so the age is measured from when it was written.
+     */
+    @Query("select min(e.createdAt) from OutboxEventJpaEntity e where e.publishedAt is null and e.parkedAt is null")
+    Instant oldestPendingCreatedAt();
 
     /** Rows the relay gave up on; they wait for a manual replay. */
     long countByPublishedAtIsNullAndParkedAtIsNotNull();

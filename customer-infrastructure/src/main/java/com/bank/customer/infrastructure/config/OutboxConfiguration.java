@@ -59,14 +59,14 @@ public class OutboxConfiguration {
 
     /**
      * Age of the oldest event waiting for the relay, 0 when none waits
-     * (Prometheus outbox_oldest_pending_age_seconds). Alert when it keeps
-     * stays above 15 minutes (ADR-021 decision 4): the relay or Kafka is down,
+     * (Prometheus outbox_oldest_pending_age_seconds), measured from created_at.
+     * The platform alert fires when it stays above 15 minutes (ADR-021 decision 4): the relay or Kafka is down,
      * or a row keeps failing on a non-payload error and holds the batch.
      */
     @Bean
     Gauge customerOutboxOldestPendingAgeGauge(MeterRegistry registry, SpringDataOutboxRepository outbox, Clock clock) {
         return Gauge.builder("outbox.oldest.pending.age.seconds", outbox, repository -> {
-                Instant oldest = repository.oldestPendingOccurredAt();
+                Instant oldest = repository.oldestPendingCreatedAt();
                 return oldest == null ? 0.0 : Math.max(0, Duration.between(oldest, clock.instant()).toSeconds());
             })
             .description("Age in seconds of the oldest customer event waiting for the outbox relay")

@@ -1,10 +1,16 @@
 apiVersion: v1
 kind: ConfigMap
 metadata:
+  # Common metric tags (management.metrics.tags): app is the service account, squad the owning squad.
+  METRICS_APP: {{ .Values.serviceAccount.name | quote }}
+  METRICS_SQUAD: {{ required "squad is required" .Values.squad | quote }}
   name: {{ include "customer.name" . }}
   labels:
     {{- include "customer.labels" . | nindent 4 }}
 data:
+  # Common metric tags (management.metrics.tags): app is the service account, squad the owning squad.
+  METRICS_APP: {{ .Values.serviceAccount.name | quote }}
+  METRICS_SQUAD: {{ required "squad is required" .Values.squad | quote }}
   {{- range $key, $value := .Values.config }}
   {{- if and (has $key $.Values.requiredConfig) (empty $value) }}
   {{- fail (printf "config.%s is required" $key) }}

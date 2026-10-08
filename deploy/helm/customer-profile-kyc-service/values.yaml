@@ -8,6 +8,9 @@ image:
 
 replicaCount: 3
 
+# Owning squad; tags every metric (squad) for the platform alert routing.
+squad: customer
+
 serviceAccount:
   name: customer-profile-kyc-service
   # IAM role from deploy/terraform output workload_role_arn (IRSA).

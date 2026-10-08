@@ -88,21 +88,27 @@ flowing. Metrics (all tagged `service="svc-cus-profile-kyc"`):
 
 - `outbox_parked_events`: rows parked; alert on any value above zero, because consumers are missing that customer's
   events until the replay.
-- `outbox_oldest_pending_age_seconds`: age of the oldest row waiting for the relay (0 when none). This is the alert
-  signal (ADR-021 decision 4): above 900 (15 minutes) the relay or Kafka is down or a row keeps failing. The chart
-  ships no PrometheusRule, so the platform monitoring stack carries the rule:
-  `max(outbox_oldest_pending_age_seconds{service="svc-cus-profile-kyc"}) > 900` for 5 minutes, severity page.
+- `outbox_oldest_pending_age_seconds`: age of the oldest row waiting for the relay, from its `created_at` (0 when
+  none). This is the alert signal (ADR-021 decision 4). The platform observability repository owns the outbox alert
+  rule (one per service, on the common tags `app` and `squad`); this chart ships no PrometheusRule. Its expression for
+  this service: `max(outbox_oldest_pending_age_seconds{app="customer-profile-kyc-service"}) > 900` (15 minutes),
+  routed to the owning squad, **customer** (`squad="customer"`). The rule's name is set in the observability repo
+  (not visible from this repo; confirm it there before linking it from an incident).
 - `outbox_pending_events`: rows waiting for the relay.
-- `outbox_publish_failures_total{exception="<simple class name>"}`: failed sends by exception class (no ids or
-  topics); use it to tell an authorization failure (`TopicAuthorizationException`, `SaslAuthenticationException`) from
-  an outage (`NetworkException`, `TimeoutException`).
+- `outbox_send_failures_total{exception="<simple class name>"}`: failed sends by exception class (no ids or topics);
+  use it to tell an authorization failure (`TopicAuthorizationException`, `SaslAuthenticationException`) from an
+  outage (`NetworkException`, `TimeoutException`). A non-payload failure is not written to the row (`last_error`
+  stays empty); the relay log has the event id and the error.
+
+Every meter carries `service="svc-cus-profile-kyc"`, `app` (`METRICS_APP`, the chart's service account
+`customer-profile-kyc-service`) and `squad` (`METRICS_SQUAD`, `customer`); the chart sets both.
 
 After a stopped batch the relay backs off: it waits the poll interval (`customer.outbox.relay.interval`, 1 s), doubling
 per stopped batch up to `customer.outbox.relay.backoff-max` (`OUTBOX_RELAY_BACKOFF_MAX`, default `PT5M`), and resets
 after a completed batch. The backoff is per replica and in memory; a restart starts from the poll interval again.
 
 Manual park (operator only). The relay never parks a row for a non-payload error. When one row holds the batch on
-such an error (`last_error` stays empty; see the relay log and `outbox_publish_failures_total`) and the cause cannot be
+such an error (`last_error` stays empty; see the relay log and `outbox_send_failures_total`) and the cause cannot be
 fixed soon, an operator may park that row so the other customers' events flow; that customer's later events wait
 behind it. It needs the incident or change ticket in the reason, and the replay below once the cause is fixed:
 

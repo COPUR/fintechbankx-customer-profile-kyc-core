@@ -116,6 +116,9 @@ management:
   metrics:
     tags:
       service: svc-cus-profile-kyc
+      # Platform alert rules select on app (the chart's service account) and squad.
+      app: ${METRICS_APP:customer-profile-kyc-service}
+      squad: ${METRICS_SQUAD:customer}
     distribution:
       percentiles-histogram:
         http.server.requests: true

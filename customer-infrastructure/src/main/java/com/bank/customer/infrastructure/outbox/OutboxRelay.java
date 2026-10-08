@@ -52,7 +52,7 @@ import java.util.concurrent.TimeoutException;
  * After a stopped batch the relay backs off ({@link RelayBackoff}): it waits
  * the poll interval, doubling per stopped batch up to backoff-max, and resets
  * after a completed batch. Every failed send increments
- * outbox.publish.failures tagged with the exception's simple class name; the
+ * outbox.send.failures tagged with the exception's simple class name; the
  * alert signal is outbox.oldest.pending.age.seconds (ADR-021 decision 4).
  */
 public class OutboxRelay {
@@ -146,7 +146,7 @@ public class OutboxRelay {
     }
 
     private void countFailure(Throwable failure) {
-        Counter.builder("outbox.publish.failures")
+        Counter.builder("outbox.send.failures")
             .description("Failed outbox sends to Kafka, by exception class")
             .tag("exception", rootClass(failure).getSimpleName())
             .register(meters)
