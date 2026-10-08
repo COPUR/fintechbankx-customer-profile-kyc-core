@@ -98,6 +98,8 @@ class CustomerControllerTest {
             new CustomerController.ReserveCreditRequest(new BigDecimal("300.00"), "AED", "LOAN-4"));
 
         assertThat(entity.getStatusCode()).isEqualTo(HttpStatus.OK);
+        assertThat(entity.getBody()).isEqualTo(new CustomerCreditResponse(
+            "CUST-WEB-004", "AED", new BigDecimal("10000.00"), new BigDecimal("1000.00"), new BigDecimal("9000.00")));
         verify(moveCredit).reserveCredit(
             new CreditMovementCommand(CustomerId.of("CUST-WEB-004"), aed("300.00"), "key-4", "LOAN-4"));
     }
@@ -110,6 +112,7 @@ class CustomerControllerTest {
             new CustomerController.ReleaseCreditRequest(new BigDecimal("150.00"), "AED", null));
 
         assertThat(entity.getStatusCode()).isEqualTo(HttpStatus.OK);
+        assertThat(entity.getBody()).isInstanceOf(CustomerCreditResponse.class);
         verify(moveCredit).releaseCredit(
             new CreditMovementCommand(CustomerId.of("CUST-WEB-005"), aed("150.00"), "key-5", null));
     }

@@ -159,6 +159,29 @@ class CustomerServiceIT {
     }
 
     @Test
+    void reserveAndReleaseReturnOnlyTheCreditPosition() throws Exception {
+        String customerId = create("position@example.com", "10000.00");
+
+        for (var result : List.of(
+                reserve(customerId, "2500.00", "LOAN-9:reserve"),
+                mvc.perform(asService(post("/api/v1/customers/{id}/credit/release", customerId))
+                    .header("x-idempotency-key", "LOAN-9:release")
+                    .contentType(MediaType.APPLICATION_JSON)
+                    .content("{\"amount\": 1000.00, \"currency\": \"AED\", \"reference\": \"LOAN-9\"}")))) {
+            JsonNode body = json.readTree(result.andExpect(status().isOk()).andReturn().getResponse().getContentAsString());
+            assertThat(body.fieldNames()).toIterable()
+                .containsExactlyInAnyOrder("customerId", "currency", "creditLimit", "usedCredit", "availableCredit");
+            assertThat(body.has("firstName") || body.has("lastName") || body.has("email") || body.has("phoneNumber")
+                || body.has("monthlyIncome") || body.has("creditScore")).isFalse();
+            assertThat(body.get("customerId").asText()).isEqualTo(customerId);
+            assertThat(body.get("currency").asText()).isEqualTo("AED");
+        }
+        mvc.perform(asService(get("/api/v1/customers/{id}/credit", customerId)))
+            .andExpect(jsonPath("$.usedCredit").value(1500.00))
+            .andExpect(jsonPath("$.availableCredit").value(8500.00));
+    }
+
+    @Test
     void aCreditMovementWithoutAnIdempotencyKeyIsRefused() throws Exception {
         String customerId = create("nokey@example.com", "10000.00");
 

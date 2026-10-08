@@ -33,6 +33,25 @@ class CustomerContextOpenApiContractTest {
         assertThat(spec).contains("security:");
     }
 
+    @Test
+    @SuppressWarnings("unchecked")
+    void creditMovementsAnswerWithTheCreditPositionOnly() throws IOException {
+        java.util.Map<String, Object> spec = new org.yaml.snakeyaml.Yaml().load(loadSpec());
+        java.util.Map<String, Object> paths = (java.util.Map<String, Object>) spec.get("paths");
+
+        for (String path : List.of("/api/v1/customers/{customerId}/credit/reserve",
+                "/api/v1/customers/{customerId}/credit/release", "/api/v1/customers/{customerId}/credit")) {
+            java.util.Map<String, Object> operations = (java.util.Map<String, Object>) paths.get(path);
+            java.util.Map<String, Object> operation = (java.util.Map<String, Object>)
+                operations.getOrDefault("post", operations.get("get"));
+            java.util.Map<String, Object> ok = (java.util.Map<String, Object>)
+                ((java.util.Map<String, Object>) operation.get("responses")).get("200");
+            java.util.Map<String, Object> schema = (java.util.Map<String, Object>) ((java.util.Map<String, Object>)
+                ((java.util.Map<String, Object>) ok.get("content")).get("application/json")).get("schema");
+            assertThat(schema.get("$ref")).as(path).isEqualTo("#/components/schemas/CustomerCreditResponse");
+        }
+    }
+
     private static String loadSpec() throws IOException {
         List<Path> candidates = List.of(
                 Path.of("api/openapi/customer-context.yaml"),
