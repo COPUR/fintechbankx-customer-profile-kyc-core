@@ -1,4 +1,4 @@
-package com.bank.customer.application;
+package com.bank.customer.domain;
 
 /**
  * Exception thrown when an idempotency key is reused for a different credit

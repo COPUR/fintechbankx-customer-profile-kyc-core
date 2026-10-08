@@ -1,9 +1,15 @@
 package com.bank.customer.infrastructure.web;
 
-import com.bank.customer.application.CustomerManagementService;
-import com.bank.customer.application.dto.CreateCustomerRequest;
-import com.bank.customer.application.dto.CustomerCreditResponse;
-import com.bank.customer.application.dto.CustomerResponse;
+import com.bank.customer.domain.port.in.CreditMovementCommand;
+import com.bank.customer.domain.port.in.GetCreditPositionUseCase;
+import com.bank.customer.domain.port.in.GetCustomerProfileUseCase;
+import com.bank.customer.domain.port.in.MoveCreditUseCase;
+import com.bank.customer.domain.port.in.RegisterCustomerUseCase;
+import com.bank.customer.domain.port.in.UpdateCreditLimitUseCase;
+import com.bank.customer.infrastructure.web.dto.CreateCustomerRequest;
+import com.bank.customer.infrastructure.web.dto.CustomerCreditResponse;
+import com.bank.customer.infrastructure.web.dto.CustomerResponse;
+import com.bank.shared.kernel.domain.CustomerId;
 import com.bank.shared.kernel.domain.Money;
 import jakarta.validation.Valid;
 import org.springframework.http.HttpStatus;
@@ -34,10 +40,22 @@ public class CustomerController {
     static final String CREDIT_CALLERS =
         "hasAnyRole('BANKER', 'ADMIN') or (hasRole('SERVICE') and @serviceCallers.allowed(authentication))";
 
-    private final CustomerManagementService customerService;
-    
-    public CustomerController(CustomerManagementService customerService) {
-        this.customerService = customerService;
+    private final RegisterCustomerUseCase registerCustomer;
+    private final GetCustomerProfileUseCase getCustomerProfile;
+    private final GetCreditPositionUseCase getCreditPosition;
+    private final UpdateCreditLimitUseCase updateCreditLimit;
+    private final MoveCreditUseCase moveCredit;
+
+    public CustomerController(RegisterCustomerUseCase registerCustomer,
+                              GetCustomerProfileUseCase getCustomerProfile,
+                              GetCreditPositionUseCase getCreditPosition,
+                              UpdateCreditLimitUseCase updateCreditLimit,
+                              MoveCreditUseCase moveCredit) {
+        this.registerCustomer = registerCustomer;
+        this.getCustomerProfile = getCustomerProfile;
+        this.getCreditPosition = getCreditPosition;
+        this.updateCreditLimit = updateCreditLimit;
+        this.moveCredit = moveCredit;
     }
     
     /**
@@ -46,7 +64,7 @@ public class CustomerController {
     @PostMapping
     @PreAuthorize("hasAnyRole('BANKER', 'ADMIN')")
     public ResponseEntity<CustomerResponse> createCustomer(@Valid @RequestBody CreateCustomerRequest request) {
-        CustomerResponse response = customerService.createCustomer(request);
+        CustomerResponse response = CustomerResponse.from(registerCustomer.registerCustomer(request.toCommand()));
         return ResponseEntity.status(HttpStatus.CREATED).body(response);
     }
     
@@ -56,7 +74,7 @@ public class CustomerController {
     @GetMapping("/{customerId}")
     @PreAuthorize("hasAnyRole('BANKER', 'ADMIN') or (hasRole('CUSTOMER') and #customerId == authentication.name)")
     public ResponseEntity<CustomerResponse> getCustomer(@PathVariable String customerId) {
-        CustomerResponse response = customerService.findCustomerById(customerId);
+        CustomerResponse response = CustomerResponse.from(getCustomerProfile.getCustomerProfile(CustomerId.of(customerId)));
         return ResponseEntity.ok(response);
     }
 
@@ -66,7 +84,7 @@ public class CustomerController {
     @GetMapping("/{customerId}/credit")
     @PreAuthorize(CREDIT_CALLERS + " or (hasRole('CUSTOMER') and #customerId == authentication.name)")
     public ResponseEntity<CustomerCreditResponse> getCreditPosition(@PathVariable String customerId) {
-        return ResponseEntity.ok(customerService.findCreditPosition(customerId));
+        return ResponseEntity.ok(CustomerCreditResponse.from(getCreditPosition.getCreditPosition(CustomerId.of(customerId))));
     }
     
     /**
@@ -79,7 +97,7 @@ public class CustomerController {
             @RequestBody UpdateCreditLimitRequest request) {
         
         Money newLimit = Money.of(request.amount(), Currency.getInstance(request.currency()));
-        CustomerResponse response = customerService.updateCreditLimit(customerId, newLimit);
+        CustomerResponse response = CustomerResponse.from(updateCreditLimit.updateCreditLimit(CustomerId.of(customerId), newLimit));
         return ResponseEntity.ok(response);
     }
     
@@ -94,7 +112,8 @@ public class CustomerController {
             @RequestBody ReserveCreditRequest request) {
         
         Money amount = Money.of(request.amount(), Currency.getInstance(request.currency()));
-        CustomerResponse response = customerService.reserveCredit(customerId, amount, idempotencyKey, request.reference());
+        CustomerResponse response = CustomerResponse.from(moveCredit.reserveCredit(
+            new CreditMovementCommand(CustomerId.of(customerId), amount, idempotencyKey, request.reference())));
         return ResponseEntity.ok(response);
     }
     
@@ -109,7 +128,8 @@ public class CustomerController {
             @RequestBody ReleaseCreditRequest request) {
         
         Money amount = Money.of(request.amount(), Currency.getInstance(request.currency()));
-        CustomerResponse response = customerService.releaseCredit(customerId, amount, idempotencyKey, request.reference());
+        CustomerResponse response = CustomerResponse.from(moveCredit.releaseCredit(
+            new CreditMovementCommand(CustomerId.of(customerId), amount, idempotencyKey, request.reference())));
         return ResponseEntity.ok(response);
     }
     

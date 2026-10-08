@@ -1,8 +1,9 @@
 package com.bank.customer;
 
-import com.bank.customer.application.CustomerManagementService;
 import com.bank.customer.domain.Customer;
-import com.bank.customer.domain.CustomerRepository;
+import com.bank.customer.domain.port.in.CreditMovementCommand;
+import com.bank.customer.domain.port.in.MoveCreditUseCase;
+import com.bank.customer.domain.port.out.CustomerRepository;
 import com.bank.customer.infrastructure.outbox.OutboxRelay;
 import com.bank.customer.infrastructure.outbox.SpringDataOutboxRepository;
 import com.bank.shared.kernel.domain.CustomerId;
@@ -75,7 +76,7 @@ class CustomerServiceIT {
     @Autowired ObjectMapper json;
     @Autowired JdbcTemplate jdbc;
     @Autowired CustomerRepository customers;
-    @Autowired CustomerManagementService customerService;
+    @Autowired MoveCreditUseCase moveCredit;
     @Autowired SpringDataOutboxRepository outbox;
     @Autowired PlatformTransactionManager transactionManager;
     @MockBean KafkaTemplate<String, String> kafka;
@@ -240,7 +241,7 @@ class CustomerServiceIT {
     void staleAggregateCannotOverwriteANewerVersion() throws Exception {
         String customerId = create("stale@example.com", "8000.00");
         Customer stale = customers.findById(CustomerId.of(customerId)).orElseThrow();
-        customerService.reserveCredit(customerId, Money.aed(new BigDecimal("8000.00")));
+        moveCredit.reserveCredit(new CreditMovementCommand(CustomerId.of(customerId), Money.aed(new BigDecimal("8000.00")), "stale-1", null));
 
         stale.reserveCredit(Money.aed(new BigDecimal("8000.00")));
 
@@ -254,7 +255,7 @@ class CustomerServiceIT {
     @SuppressWarnings("unchecked")
     void relayPublishesPendingEventsInOrderKeyedByCustomerId() throws Exception {
         String customerId = create("relay@example.com", "4000.00");
-        customerService.reserveCredit(customerId, Money.aed(new BigDecimal("100.00")));
+        moveCredit.reserveCredit(new CreditMovementCommand(CustomerId.of(customerId), Money.aed(new BigDecimal("100.00")), "relay-1", null));
         when(kafka.send(any(ProducerRecord.class))).thenReturn(CompletableFuture.completedFuture((SendResult<String, String>) null));
         OutboxRelay relay = new OutboxRelay(outbox, kafka, new TransactionTemplate(transactionManager),
             Clock.systemUTC(), 100, Duration.ofSeconds(5), Duration.ofDays(7));

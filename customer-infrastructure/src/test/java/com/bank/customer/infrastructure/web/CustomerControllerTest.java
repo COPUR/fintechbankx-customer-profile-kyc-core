@@ -1,147 +1,138 @@
 package com.bank.customer.infrastructure.web;
 
-import com.bank.customer.application.CustomerManagementService;
-import com.bank.customer.application.dto.CreateCustomerRequest;
-import com.bank.customer.application.dto.CustomerResponse;
+import com.bank.customer.domain.Customer;
+import com.bank.customer.domain.port.in.CreditMovementCommand;
+import com.bank.customer.domain.port.in.CreditPosition;
+import com.bank.customer.domain.port.in.CustomerProfile;
+import com.bank.customer.domain.port.in.GetCreditPositionUseCase;
+import com.bank.customer.domain.port.in.GetCustomerProfileUseCase;
+import com.bank.customer.domain.port.in.MoveCreditUseCase;
+import com.bank.customer.domain.port.in.RegisterCustomerCommand;
+import com.bank.customer.domain.port.in.RegisterCustomerUseCase;
+import com.bank.customer.domain.port.in.UpdateCreditLimitUseCase;
+import com.bank.customer.infrastructure.web.dto.CreateCustomerRequest;
+import com.bank.customer.infrastructure.web.dto.CustomerCreditResponse;
+import com.bank.customer.infrastructure.web.dto.CustomerResponse;
+import com.bank.shared.kernel.domain.CustomerId;
 import com.bank.shared.kernel.domain.Money;
+import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.ArgumentCaptor;
-import org.mockito.InjectMocks;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 
 import java.math.BigDecimal;
-import java.time.Instant;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.eq;
-import static org.mockito.ArgumentMatchers.isNull;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 @ExtendWith(MockitoExtension.class)
 class CustomerControllerTest {
 
-    @Mock
-    private CustomerManagementService customerService;
+    @Mock private RegisterCustomerUseCase registerCustomer;
+    @Mock private GetCustomerProfileUseCase getCustomerProfile;
+    @Mock private GetCreditPositionUseCase getCreditPosition;
+    @Mock private UpdateCreditLimitUseCase updateCreditLimit;
+    @Mock private MoveCreditUseCase moveCredit;
 
-    @InjectMocks
     private CustomerController controller;
+
+    @BeforeEach
+    void setUp() {
+        controller = new CustomerController(registerCustomer, getCustomerProfile, getCreditPosition,
+            updateCreditLimit, moveCredit);
+    }
 
     @Test
     void createCustomerShouldReturnCreatedResponse() {
         CreateCustomerRequest request = new CreateCustomerRequest(
-            "Ali", "Sample", "ali@example.com", "+971500000001", new BigDecimal("10000.00"), "AED"
-        );
-        CustomerResponse response = sampleResponse("CUST-WEB-001");
-        when(customerService.createCustomer(request)).thenReturn(response);
+            "Ali", "Sample", "ali@example.com", "+971500000001", new BigDecimal("10000.00"), "AED");
+        CustomerProfile profile = profile("CUST-WEB-001");
+        when(registerCustomer.registerCustomer(any(RegisterCustomerCommand.class))).thenReturn(profile);
 
         ResponseEntity<CustomerResponse> entity = controller.createCustomer(request);
 
         assertThat(entity.getStatusCode()).isEqualTo(HttpStatus.CREATED);
-        assertThat(entity.getBody()).isEqualTo(response);
+        assertThat(entity.getBody()).isEqualTo(CustomerResponse.from(profile));
+        ArgumentCaptor<RegisterCustomerCommand> command = ArgumentCaptor.forClass(RegisterCustomerCommand.class);
+        verify(registerCustomer).registerCustomer(command.capture());
+        assertThat(command.getValue().initialCreditLimit()).isEqualTo(aed("10000.00"));
     }
 
     @Test
     void getCustomerShouldReturnOkResponse() {
-        CustomerResponse response = sampleResponse("CUST-WEB-002");
-        when(customerService.findCustomerById("CUST-WEB-002")).thenReturn(response);
+        CustomerProfile profile = profile("CUST-WEB-002");
+        when(getCustomerProfile.getCustomerProfile(CustomerId.of("CUST-WEB-002"))).thenReturn(profile);
 
         ResponseEntity<CustomerResponse> entity = controller.getCustomer("CUST-WEB-002");
 
         assertThat(entity.getStatusCode()).isEqualTo(HttpStatus.OK);
-        assertThat(entity.getBody()).isEqualTo(response);
+        assertThat(entity.getBody().customerId()).isEqualTo("CUST-WEB-002");
+        assertThat(entity.getBody().firstName()).isEqualTo("Ali");
     }
 
     @Test
     void updateCreditLimitShouldConvertMoneyAndDelegate() {
-        CustomerResponse response = sampleResponse("CUST-WEB-003");
-        when(customerService.updateCreditLimit(eq("CUST-WEB-003"), eq(Money.aed(new BigDecimal("12000.00")))))
-            .thenReturn(response);
+        CustomerProfile profile = profile("CUST-WEB-003");
+        when(updateCreditLimit.updateCreditLimit(eq(CustomerId.of("CUST-WEB-003")), eq(aed("12000.00"))))
+            .thenReturn(profile);
 
-        CustomerController.UpdateCreditLimitRequest request =
-            new CustomerController.UpdateCreditLimitRequest(new BigDecimal("12000.00"), "AED");
-
-        ResponseEntity<CustomerResponse> entity = controller.updateCreditLimit("CUST-WEB-003", request);
+        ResponseEntity<CustomerResponse> entity = controller.updateCreditLimit("CUST-WEB-003",
+            new CustomerController.UpdateCreditLimitRequest(new BigDecimal("12000.00"), "AED"));
 
         assertThat(entity.getStatusCode()).isEqualTo(HttpStatus.OK);
-        assertThat(entity.getBody()).isEqualTo(response);
+        assertThat(entity.getBody()).isEqualTo(CustomerResponse.from(profile));
     }
 
     @Test
-    void reserveCreditShouldConvertMoneyAndDelegate() {
-        CustomerResponse response = sampleResponse("CUST-WEB-004");
-        when(customerService.reserveCredit(eq("CUST-WEB-004"), eq(Money.aed(new BigDecimal("300.00"))), eq("key-4"), eq("LOAN-4")))
-            .thenReturn(response);
+    void reserveCreditShouldBuildTheMovementCommand() {
+        when(moveCredit.reserveCredit(any(CreditMovementCommand.class))).thenReturn(profile("CUST-WEB-004"));
 
-        CustomerController.ReserveCreditRequest request =
-            new CustomerController.ReserveCreditRequest(new BigDecimal("300.00"), "AED", "LOAN-4");
-
-        ResponseEntity<CustomerResponse> entity = controller.reserveCredit("key-4", "CUST-WEB-004", request);
+        ResponseEntity<?> entity = controller.reserveCredit("key-4", "CUST-WEB-004",
+            new CustomerController.ReserveCreditRequest(new BigDecimal("300.00"), "AED", "LOAN-4"));
 
         assertThat(entity.getStatusCode()).isEqualTo(HttpStatus.OK);
-        assertThat(entity.getBody()).isEqualTo(response);
+        verify(moveCredit).reserveCredit(
+            new CreditMovementCommand(CustomerId.of("CUST-WEB-004"), aed("300.00"), "key-4", "LOAN-4"));
     }
 
     @Test
-    void releaseCreditShouldConvertMoneyAndDelegate() {
-        CustomerResponse response = sampleResponse("CUST-WEB-005");
-        when(customerService.releaseCredit(eq("CUST-WEB-005"), eq(Money.aed(new BigDecimal("150.00"))), eq("key-5"), isNull()))
-            .thenReturn(response);
+    void releaseCreditShouldBuildTheMovementCommand() {
+        when(moveCredit.releaseCredit(any(CreditMovementCommand.class))).thenReturn(profile("CUST-WEB-005"));
 
-        CustomerController.ReleaseCreditRequest request =
-            new CustomerController.ReleaseCreditRequest(new BigDecimal("150.00"), "AED", null);
-
-        ResponseEntity<CustomerResponse> entity = controller.releaseCredit("key-5", "CUST-WEB-005", request);
+        ResponseEntity<?> entity = controller.releaseCredit("key-5", "CUST-WEB-005",
+            new CustomerController.ReleaseCreditRequest(new BigDecimal("150.00"), "AED", null));
 
         assertThat(entity.getStatusCode()).isEqualTo(HttpStatus.OK);
-        assertThat(entity.getBody()).isEqualTo(response);
+        verify(moveCredit).releaseCredit(
+            new CreditMovementCommand(CustomerId.of("CUST-WEB-005"), aed("150.00"), "key-5", null));
     }
 
     @Test
-    void reserveCreditShouldPassConvertedMoneyToService() {
-        CustomerResponse response = sampleResponse("CUST-WEB-006");
-        when(customerService.reserveCredit(eq("CUST-WEB-006"), eq(Money.aed(new BigDecimal("999.99"))), eq("key-6"), isNull()))
-            .thenReturn(response);
+    void creditPositionCarriesNoPersonalData() {
+        CustomerProfile profile = profile("CUST-WEB-007");
+        when(getCreditPosition.getCreditPosition(CustomerId.of("CUST-WEB-007"))).thenReturn(profile.credit());
 
-        CustomerController.ReserveCreditRequest request =
-            new CustomerController.ReserveCreditRequest(new BigDecimal("999.99"), "AED", null);
+        CustomerCreditResponse body = controller.getCreditPosition("CUST-WEB-007").getBody();
 
-        controller.reserveCredit("key-6", "CUST-WEB-006", request);
-
-        ArgumentCaptor<Money> captor = ArgumentCaptor.forClass(Money.class);
-        verify(customerService).reserveCredit(eq("CUST-WEB-006"), captor.capture(), eq("key-6"), isNull());
-        assertThat(captor.getValue().getAmount()).isEqualByComparingTo("999.99");
-        assertThat(captor.getValue().getCurrency().getCurrencyCode()).isEqualTo("AED");
+        assertThat(body).isEqualTo(new CustomerCreditResponse(
+            "CUST-WEB-007", "AED", new BigDecimal("10000.00"), new BigDecimal("1000.00"), new BigDecimal("9000.00")));
     }
 
-    @Test
-    void creditPositionDelegatesToTheService() {
-        var credit = new com.bank.customer.application.dto.CustomerCreditResponse(
-            "CUST-WEB-007", "AED", new BigDecimal("10000.00"), new BigDecimal("1000.00"), new BigDecimal("9000.00"));
-        when(customerService.findCreditPosition("CUST-WEB-007")).thenReturn(credit);
-
-        assertThat(controller.getCreditPosition("CUST-WEB-007").getBody()).isEqualTo(credit);
+    private static Money aed(String amount) {
+        return Money.aed(new BigDecimal(amount));
     }
 
-    private static CustomerResponse sampleResponse(String id) {
-        return new CustomerResponse(
-            id,
-            "Ali",
-            "Sample",
-            "ali@example.com",
-            "+971500000001",
-            new BigDecimal("10000.00"),
-            new BigDecimal("1000.00"),
-            new BigDecimal("9000.00"),
-            "ACTIVE",
-            720,
-            new BigDecimal("6000.00"),
-            Instant.parse("2026-01-01T00:00:00Z"),
-            Instant.parse("2026-01-01T01:00:00Z")
-        );
+    private static CustomerProfile profile(String id) {
+        Customer customer = Customer.create(CustomerId.of(id), "Ali", "Sample", "ali@example.com", "+971500000001",
+            aed("10000.00"));
+        customer.reserveCredit(aed("1000.00"));
+        return CustomerProfile.of(customer);
     }
 }

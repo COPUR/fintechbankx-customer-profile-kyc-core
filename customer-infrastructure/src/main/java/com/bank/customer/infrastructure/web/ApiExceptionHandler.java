@@ -1,7 +1,7 @@
 package com.bank.customer.infrastructure.web;
 
-import com.bank.customer.application.CustomerNotFoundException;
-import com.bank.customer.application.IdempotencyKeyConflictException;
+import com.bank.customer.domain.CustomerNotFoundException;
+import com.bank.customer.domain.IdempotencyKeyConflictException;
 import com.bank.customer.domain.InsufficientCreditException;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;

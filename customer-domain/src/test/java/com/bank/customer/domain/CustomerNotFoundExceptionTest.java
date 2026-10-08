@@ -1,4 +1,4 @@
-package com.bank.customer.application;
+package com.bank.customer.domain;
 
 import org.junit.jupiter.api.Test;
 

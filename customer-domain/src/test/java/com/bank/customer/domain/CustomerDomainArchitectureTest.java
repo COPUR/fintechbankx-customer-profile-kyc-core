@@ -19,7 +19,6 @@ class CustomerDomainArchitectureTest {
             .that().resideInAPackage("com.bank.customer.domain..")
             .should().dependOnClassesThat()
             .resideInAnyPackage("com.bank.customer.application..", "com.bank.customer.infrastructure..")
-            .allowEmptyShould(true)
             .check(classes);
     }
 
@@ -33,7 +32,8 @@ class CustomerDomainArchitectureTest {
             .that().resideInAPackage("com.bank.customer.domain..")
             .should().dependOnClassesThat()
             .resideInAnyPackage("org.springframework..", "jakarta.persistence..", "org.hibernate..",
-                "com.fasterxml.jackson..", "org.apache.kafka..")
+                "com.fasterxml.jackson..", "org.apache.kafka..", "org.springframework.kafka..",
+                "com.mongodb..", "org.bson..")
             .check(classes);
     }
 }

@@ -1,7 +1,7 @@
 package com.bank.customer.infrastructure.persistence;
 
 import com.bank.customer.domain.Customer;
-import com.bank.customer.domain.CustomerRepository;
+import com.bank.customer.domain.port.out.CustomerRepository;
 import com.bank.shared.kernel.domain.CustomerId;
 import org.springframework.dao.OptimisticLockingFailureException;
 import org.springframework.stereotype.Repository;

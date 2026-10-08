@@ -1,5 +1,6 @@
-package com.bank.customer.domain;
+package com.bank.customer.domain.port.out;
 
+import com.bank.customer.domain.Customer;
 import com.bank.shared.kernel.domain.CustomerId;
 import java.util.Optional;
 

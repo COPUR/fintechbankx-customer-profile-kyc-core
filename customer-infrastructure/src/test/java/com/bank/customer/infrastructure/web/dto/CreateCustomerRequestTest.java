@@ -1,4 +1,4 @@
-package com.bank.customer.application.dto;
+package com.bank.customer.infrastructure.web.dto;
 
 import org.junit.jupiter.api.Test;
 
@@ -25,6 +25,20 @@ class CreateCustomerRequestTest {
     }
 
     @Test
+    void toCommandCarriesTheFieldsAndTheLimitInItsCurrency() {
+        CreateCustomerRequest request = new CreateCustomerRequest(
+            "Ali", "Sample", "ali@example.com", "+971500000001", new BigDecimal("5000.00"), "AED");
+
+        var command = request.toCommand();
+
+        assertThat(command.firstName()).isEqualTo("Ali");
+        assertThat(command.lastName()).isEqualTo("Sample");
+        assertThat(command.email()).isEqualTo("ali@example.com");
+        assertThat(command.phoneNumber()).isEqualTo("+971500000001");
+        assertThat(command.initialCreditLimit()).isEqualTo(com.bank.shared.kernel.domain.Money.aed(new BigDecimal("5000.00")));
+    }
+
+    @Test
     void validateShouldRejectShortFirstName() {
         CreateCustomerRequest request = new CreateCustomerRequest(
             "A",
@@ -35,7 +49,7 @@ class CreateCustomerRequestTest {
             "AED"
         );
 
-        assertThatThrownBy(request::validate)
+        assertThatThrownBy(request::toCommand)
             .isInstanceOf(IllegalArgumentException.class)
             .hasMessageContaining("First name must be at least 2 characters");
     }
@@ -59,10 +73,10 @@ class CreateCustomerRequestTest {
             "AED"
         );
 
-        assertThatThrownBy(small::validate)
+        assertThatThrownBy(small::toCommand)
             .isInstanceOf(IllegalArgumentException.class)
             .hasMessageContaining("Minimum credit limit");
-        assertThatThrownBy(large::validate)
+        assertThatThrownBy(large::toCommand)
             .isInstanceOf(IllegalArgumentException.class)
             .hasMessageContaining("Maximum credit limit");
     }
