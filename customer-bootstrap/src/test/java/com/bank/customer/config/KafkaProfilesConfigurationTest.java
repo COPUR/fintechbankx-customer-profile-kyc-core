@@ -65,6 +65,28 @@ class KafkaProfilesConfigurationTest {
         new org.apache.kafka.clients.producer.KafkaProducer<String, String>(config).close(java.time.Duration.ZERO);
     }
 
+    /**
+     * Without it a missing topic or unreachable cluster blocks send() for the
+     * 60 s default plus the relay's send timeout, while the relay tick holds
+     * its transaction, DB connection and advisory lock.
+     */
+    @Test
+    void producerBlocksAtMostTenSecondsSoOneRelayTickCannotHoldTheLockForLong() throws Exception {
+        PropertySource<?> base = load("application.yml");
+        Object maxBlock = base.getProperty("spring.kafka.producer.properties.max.block.ms");
+
+        assertThat(maxBlock).as("spring.kafka.producer.properties.max.block.ms").isNotNull();
+        assertThat(Long.parseLong(maxBlock.toString())).isEqualTo(10_000L);
+
+        java.util.Map<String, Object> config = new java.util.HashMap<>();
+        config.put("bootstrap.servers", "localhost:9092");
+        config.put("key.serializer", org.apache.kafka.common.serialization.StringSerializer.class);
+        config.put("value.serializer", org.apache.kafka.common.serialization.StringSerializer.class);
+        config.put("max.block.ms", maxBlock.toString());
+        assertThat(new org.apache.kafka.clients.producer.ProducerConfig(config)
+            .getLong(org.apache.kafka.clients.producer.ProducerConfig.MAX_BLOCK_MS_CONFIG)).isEqualTo(10_000L);
+    }
+
     private static PropertySource<?> load(String file) throws Exception {
         return new YamlPropertySourceLoader().load(file, new ClassPathResource(file)).get(0);
     }
