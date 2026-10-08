@@ -54,6 +54,13 @@ jobs:
           # Kafka TLS env only for the kafka-strimzi profile, from the Secret named by kafkaTls.secretName.
           python3 -c "import yaml" 2>/dev/null || python3 -m pip install --user pyyaml==6.0.2
           python3 scripts/ci/strimzi-tls-env.py --expect-none <<<"$rendered"
+          # Platform outbox alerts select on service_id, taken from this pod label.
+          python3 scripts/ci/pod-service-id.py --expect svc-cus-profile-kyc <<<"$rendered"
+          if helm template ci "$chart" $args --set 'podLabels.fintechbankx\.io/service-id=wrong' \
+              | python3 scripts/ci/pod-service-id.py --expect svc-cus-profile-kyc; then
+            echo "pod-service-id accepted a wrong service id" >&2
+            exit 1
+          fi
           strimzi="--set config.SPRING_PROFILES_ACTIVE=kafka-strimzi"
           helm template ci "$chart" $args $strimzi --set kafkaTls.secretName=kafka-client-tls \
             | python3 scripts/ci/strimzi-tls-env.py --expect-secret kafka-client-tls

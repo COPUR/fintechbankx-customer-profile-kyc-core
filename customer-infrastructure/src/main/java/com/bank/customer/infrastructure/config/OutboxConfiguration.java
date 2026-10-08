@@ -60,7 +60,7 @@ public class OutboxConfiguration {
     /**
      * Age of the oldest event waiting for the relay, 0 when none waits
      * (Prometheus outbox_oldest_pending_age_seconds), measured from created_at.
-     * The platform alert fires when it stays above 15 minutes (ADR-021 decision 4): the relay or Kafka is down,
+     * The alert proposed to platform observability fires when it stays above 15 minutes (ADR-021 decision 4): the relay or Kafka is down,
      * or a row keeps failing on a non-payload error and holds the batch.
      */
     @Bean

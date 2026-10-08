@@ -89,16 +89,24 @@ flowing. Metrics (all tagged `service="svc-cus-profile-kyc"`):
 - `outbox_parked_events`: rows parked; alert on any value above zero, because consumers are missing that customer's
   events until the replay.
 - `outbox_oldest_pending_age_seconds`: age of the oldest row waiting for the relay, from its `created_at` (0 when
-  none). This is the alert signal (ADR-021 decision 4). The platform observability repository owns the outbox alert
-  rule (one per service, on the common tags `app` and `squad`); this chart ships no PrometheusRule. Its expression for
-  this service: `max(outbox_oldest_pending_age_seconds{app="customer-profile-kyc-service"}) > 900` (15 minutes),
-  routed to the owning squad, **customer** (`squad="customer"`). The rule's name is set in the observability repo
-  (not visible from this repo; confirm it there before linking it from an incident).
+  none). This is the alert signal (ADR-021 decision 4).
 - `outbox_pending_events`: rows waiting for the relay.
 - `outbox_send_failures_total{exception="<simple class name>"}`: failed sends by exception class (no ids or topics);
   use it to tell an authorization failure (`TopicAuthorizationException`, `SaslAuthenticationException`) from an
   outage (`NetworkException`, `TimeoutException`). A non-payload failure is not written to the row (`last_error`
   stays empty); the relay log has the event id and the error.
+
+Outbox alerts: **proposed** to platform observability (fintechbankx-platform-observability-sre-operations); no rule on
+these two series exists there yet (review 5456636554), and this chart ships no PrometheusRule. Platform rules select on
+`service_id`, which comes from the pod label `fintechbankx.io/service-id: svc-cus-profile-kyc` (set in the chart and
+checked by the deploy/helm CI job). Proposed rules, owning squad **customer**:
+
+- `max(outbox_oldest_pending_age_seconds{service_id="svc-cus-profile-kyc"}) > 900` for 5m, severity critical, squad customer;
+- companion: `increase(outbox_send_failures_total{service_id="svc-cus-profile-kyc"}[10m]) > 0`, squad customer.
+
+Both depend on platform widening the AMP remote-write keep regex from `.*outbox_pending.*` to `outbox_.*`; until then
+neither series reaches the alerting backend. Until the rules exist, the customer squad watches these series on its
+dashboards.
 
 Every meter carries `service="svc-cus-profile-kyc"`, `app` (`METRICS_APP`, the chart's service account
 `customer-profile-kyc-service`) and `squad` (`METRICS_SQUAD`, `customer`); the chart sets both.
