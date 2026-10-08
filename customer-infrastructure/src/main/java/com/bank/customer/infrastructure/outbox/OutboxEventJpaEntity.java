@@ -50,6 +50,10 @@ public class OutboxEventJpaEntity {
     @Column(name = "published_at")
     private Instant publishedAt;
 
+    /** Set when the relay gave up on this row; parked rows are skipped until replayed by hand. */
+    @Column(name = "parked_at")
+    private Instant parkedAt;
+
     @Column(name = "attempts", nullable = false)
     private int attempts;
 
@@ -93,6 +97,7 @@ public class OutboxEventJpaEntity {
     }
     public Instant getOccurredAt() { return occurredAt; }
     public Instant getPublishedAt() { return publishedAt; }
+    public Instant getParkedAt() { return parkedAt; }
     public int getAttempts() { return attempts; }
     public String getLastError() { return lastError; }
 
@@ -105,5 +110,9 @@ public class OutboxEventJpaEntity {
     void markFailed(String error) {
         this.attempts++;
         this.lastError = error == null ? null : error.substring(0, Math.min(error.length(), 512));
+    }
+
+    void park(Instant at) {
+        this.parkedAt = at;
     }
 }

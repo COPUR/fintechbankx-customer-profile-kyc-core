@@ -383,7 +383,7 @@ class CustomerServiceIT {
         moveCredit.reserveCredit(new CreditMovementCommand(CustomerId.of(customerId), Money.aed(new BigDecimal("100.00")), "relay-1", null));
         when(kafka.send(any(ProducerRecord.class))).thenReturn(CompletableFuture.completedFuture((SendResult<String, String>) null));
         OutboxRelay relay = new OutboxRelay(outbox, kafka, new TransactionTemplate(transactionManager),
-            Clock.systemUTC(), 100, Duration.ofSeconds(5), Duration.ofDays(7));
+            Clock.systemUTC(), 100, Duration.ofSeconds(5), Duration.ofDays(7), 10);
 
         int published = relay.relayOnce();
 

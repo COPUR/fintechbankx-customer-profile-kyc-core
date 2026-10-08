@@ -39,8 +39,20 @@ public class OutboxConfiguration {
      */
     @Bean
     Gauge customerOutboxPendingGauge(MeterRegistry registry, SpringDataOutboxRepository outbox) {
-        return Gauge.builder("outbox.pending.events", outbox, SpringDataOutboxRepository::countByPublishedAtIsNull)
-            .description("Customer events written to the outbox but not yet published to Kafka")
+        return Gauge.builder("outbox.pending.events", outbox, SpringDataOutboxRepository::countByPublishedAtIsNullAndParkedAtIsNull)
+            .description("Customer events written to the outbox and waiting for the relay (parked rows excluded)")
+            .register(registry);
+    }
+
+    /**
+     * Events the relay gave up on (Prometheus outbox_parked_events). Alert on
+     * any value above zero: consumers miss that customer's events until the
+     * row is replayed (runbook "Parked outbox events").
+     */
+    @Bean
+    Gauge customerOutboxParkedGauge(MeterRegistry registry, SpringDataOutboxRepository outbox) {
+        return Gauge.builder("outbox.parked.events", outbox, SpringDataOutboxRepository::countByPublishedAtIsNullAndParkedAtIsNotNull)
+            .description("Customer events the outbox relay parked after a permanent failure or too many attempts")
             .register(registry);
     }
 
@@ -61,8 +73,10 @@ public class OutboxConfiguration {
                                 Clock clock,
                                 @Value("${customer.outbox.relay.batch-size:100}") int batchSize,
                                 @Value("${customer.outbox.relay.send-timeout:PT35S}") Duration sendTimeout,
-                                @Value("${customer.outbox.retention:P7D}") Duration retention) {
-            return new OutboxRelay(outbox, kafka, new TransactionTemplate(transactionManager), clock, batchSize, sendTimeout, retention);
+                                @Value("${customer.outbox.retention:P7D}") Duration retention,
+                                @Value("${customer.outbox.relay.max-attempts:10}") int maxAttempts) {
+            return new OutboxRelay(outbox, kafka, new TransactionTemplate(transactionManager), clock, batchSize,
+                sendTimeout, retention, maxAttempts);
         }
 
         @Bean

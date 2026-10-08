@@ -127,6 +127,9 @@ customer:
       # Longer than delivery.timeout.ms, so the relay never abandons a send Kafka
       # is still retrying (which would publish the event twice).
       send-timeout: PT35S
+      # A row that fails this many times, or fails with a non-retryable error,
+      # is parked (runbook "Parked outbox events").
+      max-attempts: ${OUTBOX_RELAY_MAX_ATTEMPTS:10}
 
 logging:
   pattern:

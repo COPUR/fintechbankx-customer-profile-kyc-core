@@ -62,7 +62,43 @@ Credit must have one ledger at any time: the monolith's `public.customers` until
 3. The risk extraction drops `fk_credit_reports_customer` and `fk_risk_assessments_customer` (or those tables).
 4. Only then: step 7 here, drop `customers`. Before 2 and 3 a plain `DROP TABLE customers` fails on the foreign keys; never use `DROP ... CASCADE`, which would silently remove the other contexts' constraints.
 
-## 4. Acceptance checklist
+## 4. Parked outbox events
+
+`OutboxRelay` parks a row (sets `parked_at`, keeps the reason in `last_error`) when Kafka refuses it permanently
+(`RecordTooLargeException`, `SerializationException`, `InvalidTopicException`, `TopicAuthorizationException`, any
+error that is not a Kafka `RetriableException`) or when it has failed `customer.outbox.relay.max-attempts` times
+(`OUTBOX_RELAY_MAX_ATTEMPTS`, default 10). Retryable failures below the cap stop the batch and are retried on the
+next run, as before. Parked rows are skipped and never purged. The same customer's later events wait behind a parked
+row (they stay in `outbox_pending_events`), so a consumer never sees a customer's events out of order; other customers'
+events keep flowing. `outbox_parked_events{service="svc-cus-profile-kyc"}` counts parked rows: alert on any value
+above zero, because consumers are missing that customer's events until the replay.
+
+A long broker or network outage also parks rows: each head-of-queue row parks after the cap, then the next one
+becomes the head. After such an outage, replay everything that was parked during it.
+
+Un-park (replay), after fixing the cause (topic created, IAM policy fixed, payload size limit raised):
+
+```sql
+-- Inspect
+SELECT event_id, created_seq, aggregate_id, topic, attempts, last_error, parked_at
+FROM sc_cus_profile_kyc.outbox_event
+WHERE published_at IS NULL AND parked_at IS NOT NULL
+ORDER BY created_seq;
+
+-- Un-park one row (or drop the event_id filter to replay all; the relay sends them in created_seq order).
+-- attempts must be reset, otherwise the cap parks the row again on its first failure.
+UPDATE sc_cus_profile_kyc.outbox_event
+SET parked_at = NULL, attempts = 0, last_error = NULL
+WHERE event_id = '<event id>' AND published_at IS NULL AND parked_at IS NOT NULL;
+```
+
+The relay publishes the un-parked row, then the customer's held events, on its next run
+(`customer.outbox.relay.interval`, 1 s). Consumers de-duplicate on `eventId`, so replaying a row that Kafka did in fact
+accept is safe. If an event must never be sent (for example a payload that cannot be fixed), do not delete it: set
+`published_at = now()` and `last_error = 'discarded: <ticket>'` with the data owner's approval, which releases the
+customer's held events. Record each replay or discard (event ids, cause, operator) in the change log of the environment.
+
+## 5. Acceptance checklist
 
 - [x] Service builds and tests standalone (`ci/build`, `ci/test`, including PostgreSQL integration tests)
 - [x] Own schema and migrations; Hibernate validates entities against them at startup
