@@ -157,6 +157,13 @@ class CustomerServiceIT {
         reserve(customerId, "2600.00", "LOAN-1:reserve")
             .andExpect(status().isConflict())
             .andExpect(jsonPath("$.code").value("IDEMPOTENCY_KEY_REUSED"));
+        // Same key and amount, but for another loan: not a replay.
+        mvc.perform(asService(post("/api/v1/customers/{id}/credit/reserve", customerId))
+                .header("x-idempotency-key", "LOAN-1:reserve")
+                .contentType(MediaType.APPLICATION_JSON)
+                .content("{\"amount\": 2500.00, \"currency\": \"AED\", \"reference\": \"LOAN-2\"}"))
+            .andExpect(status().isConflict())
+            .andExpect(jsonPath("$.code").value("IDEMPOTENCY_KEY_REUSED"));
         mvc.perform(asService(post("/api/v1/customers/{id}/credit/release", customerId))
                 .header("x-idempotency-key", "LOAN-1:release")
                 .contentType(MediaType.APPLICATION_JSON)

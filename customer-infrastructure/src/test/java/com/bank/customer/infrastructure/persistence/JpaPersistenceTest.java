@@ -126,7 +126,7 @@ class JpaPersistenceTest {
             .satisfies(found -> {
                 assertThat(found.reference()).isEqualTo("LOAN-9");
                 assertThat(found.occurredAt()).isEqualTo(at);
-                assertThat(found.sameInstruction(CreditMovement.Type.RESERVE, Money.aed(new BigDecimal("250")))).isTrue();
+                assertThat(found.sameInstruction(CreditMovement.Type.RESERVE, Money.aed(new BigDecimal("250")), "LOAN-9")).isTrue();
             });
         assertThat(journal.find(CustomerId.of("CUST-JPA-3"), "unknown")).isEmpty();
         assertThatThrownBy(() -> journal.record(new CreditMovement(UUID.randomUUID(), CustomerId.of("CUST-JPA-3"),

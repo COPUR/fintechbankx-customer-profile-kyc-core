@@ -23,12 +23,23 @@ class CreditMovementTest {
     }
 
     @Test
-    void sameInstructionComparesTypeAndAmount() {
+    void sameInstructionComparesTypeAmountAndReference() {
         CreditMovement movement = movement("key-1");
 
-        assertThat(movement.sameInstruction(CreditMovement.Type.RESERVE, Money.aed(new BigDecimal("250")))).isTrue();
-        assertThat(movement.sameInstruction(CreditMovement.Type.RELEASE, AMOUNT)).isFalse();
-        assertThat(movement.sameInstruction(CreditMovement.Type.RESERVE, Money.aed(new BigDecimal("251.00")))).isFalse();
+        assertThat(movement.sameInstruction(CreditMovement.Type.RESERVE, Money.aed(new BigDecimal("250")), null)).isTrue();
+        assertThat(movement.sameInstruction(CreditMovement.Type.RELEASE, AMOUNT, null)).isFalse();
+        assertThat(movement.sameInstruction(CreditMovement.Type.RESERVE, Money.aed(new BigDecimal("251.00")), null)).isFalse();
+    }
+
+    /** A replay with the same key must be the same instruction: for loan LOAN-1, not for LOAN-2. */
+    @Test
+    void aDifferentReferenceIsADifferentInstruction() {
+        CreditMovement forLoan1 = new CreditMovement(UUID.randomUUID(), CustomerId.of("C-1"), "LOAN-1:reserve",
+            CreditMovement.Type.RESERVE, AMOUNT, "LOAN-1", Instant.EPOCH);
+
+        assertThat(forLoan1.sameInstruction(CreditMovement.Type.RESERVE, AMOUNT, "LOAN-1")).isTrue();
+        assertThat(forLoan1.sameInstruction(CreditMovement.Type.RESERVE, AMOUNT, "LOAN-2")).isFalse();
+        assertThat(forLoan1.sameInstruction(CreditMovement.Type.RESERVE, AMOUNT, null)).isFalse();
     }
 
     @Test
