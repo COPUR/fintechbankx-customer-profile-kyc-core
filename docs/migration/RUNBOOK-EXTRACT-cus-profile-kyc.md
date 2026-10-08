@@ -56,7 +56,7 @@ Owners: **monolith squad** (enterprise-loan-management-system flags and anti-cor
 | 3 | Final backfill under the freeze: `run-backfill.sh ... USD` | migration lead | exits 0; staged totals equal the monolith totals of the same snapshot; zero `monolith changed it after the service did`; zero `missing in the service` | any non-zero exit or any reported customer | lift the freeze (as step 2); fix the cause, start again from step 2 |
 | 4 | Reconcile and verify: re-run `03_reconcile.sql` alone and the parity checks against the frozen monolith | migration lead, customer squad | zero problem rows; `count(*)`, `sum(credit_limit)` and `sum(used_credit)` of migrated rows equal the monolith's; zero rows with `used_credit > credit_limit` on either side; 20 random customers read through `GET /api/v1/customers/{id}/credit` equal their monolith rows | any discrepancy | lift the freeze (as step 2) |
 | 5 | Route writes to the service and lift the freeze: the monolith flag sends credit writes, customer creation and profile edits through the anti-corruption client to this API, and reads too; switch `svc-ln-loan-lifecycle` to this service (`CUSTOMER_CREDIT_ADAPTER=http`, client-credentials token). This step is the precondition for loan runbook step 2 | monolith squad, lending squad | for 30 minutes: 5xx below 0.5 % of `http_server_requests_seconds_count{uri=~"/api/v1/customers.*"}`; p99 below 800 ms; `max(updated_at)` of `public.customers` unchanged (no write bypasses the flag); zero customers with `used_credit > credit_limit` | 5xx at or above 0.5 % for 5 minutes, any write landing in `public.customers`, any customer over their limit, or any 5xx on credit reserve/release that the loan service cannot replay | freeze again; copy every row changed here since step 5 (`version <> legacy_synced_version`, plus customers created here) back to `public.customers` (reverse sync, to be written and rehearsed before step 5 is scheduled); then route writes back to the monolith. Flipping the flag back without the reverse sync loses every write made here |
-| 6 | Merge asyncapi-catalog PR #9 and create the topics (fintechbankx-platform-event-streaming-kafka); once mesh #11's MSK egress is applied, enable the outbox relay with `helm upgrade ... --reuse-values --set config.OUTBOX_RELAY_ENABLED=true`; consumers move to `evt.cus.customer.*.v1` | customer squad, event-streaming squad | `outbox_pending_events` drains to below 100 and `outbox_oldest_pending_age_seconds` to below 60 within 10 minutes; `outbox_parked_events` is 0 | `outbox_parked_events` above 0, or pending still growing after 10 minutes | relay off; events stay in the outbox (nothing lost) |
+| 6 | Merge asyncapi-catalog PR #9 and create the topics (fintechbankx-platform-event-streaming-kafka); once mesh #11's MSK egress is applied, enable the outbox relay with `helm upgrade ... --reuse-values --set config.OUTBOX_RELAY_ENABLED=true`; consumers move to `evt.cus.customer.*.v1` | customer squad, event-streaming squad | `outbox_pending_events` drains to below 100 and `outbox_oldest_pending_age_seconds` to below 60 within 10 minutes; `outbox_parked_rows` is 0 | `outbox_parked_rows` above 0, or pending still growing after 10 minutes | relay off; events stay in the outbox (nothing lost) |
 | 7 | Remove the monolith's dead customer write code and the flag | monolith squad | monolith regression suite green; no write path to `public.customers` left in `src/main` | monolith regression failures | revert the removal; the flag still routes to this service |
 | 8 | After the loan and payment cut-overs are complete and one full month-end cycle has passed: drop the monolith foreign keys that reference `customers` (`loans.customer_id` and any other), then drop `customers` | monolith squad, migration lead | month-end figures from this service equal the finance report | any month-end discrepancy before the drop | restore from snapshot |
 
@@ -74,8 +74,8 @@ Owners: **monolith squad** (enterprise-loan-management-system flags and anti-cor
 Relay failures are classified by ADR-021 decision 4 (adr-runbooks, `ADR-021-database-per-service-and-data-migration.md`):
 
 - **Payload errors** that can never succeed for that row (`RecordTooLargeException`, `SerializationException`,
-  `InvalidTopicException`): the relay parks the row (`parked_at` set, reason in `last_error`, `outbox_parked_events`
-  alerts) and continues with the next one.
+  `InvalidTopicException`): the relay parks the row (`parked_at` set, reason in `last_error`, counted once by
+  `outbox_parked_events_total`) and continues with the next one.
 - **Everything else**, including retriable errors and timeouts, authorization errors (`TopicAuthorizationException`,
   SASL/IAM failures) and any unclassified exception: the relay stops the batch without marking the row or anything
   after it, retries with backoff and alerts (`outbox_oldest_pending_age_seconds`). It never skips or parks a row for
@@ -86,7 +86,10 @@ Parked rows are skipped and never purged. The same customer's later events wait 
 `outbox_pending_events`), so a consumer never sees a customer's events out of order; other customers' events keep
 flowing. Metrics (all tagged `service="svc-cus-profile-kyc"`):
 
-- `outbox_parked_events`: rows parked; any increase alerts (below), because consumers are missing that customer's
+- `outbox_parked_events_total{exception="<simple class name>|OperatorPark"}`: counter, incremented once per parked
+  row. A relay park is tagged with the root cause and marked `park_counted` in the same update; a manual park is counted
+  once by the relay on its next run, tagged `OperatorPark` (V9 column `park_counted`). Any increase alerts (below),
+  because consumers are missing that customer's
   events until the replay.
 - `outbox_oldest_pending_age_seconds`: age of the oldest row waiting for the relay, from its `created_at` (0 when
   none). This is the alert signal (ADR-021 decision 4).
@@ -105,14 +108,17 @@ checked by the deploy/helm CI job). Proposed rules, with the severities platform
 - `max(outbox_oldest_pending_age_seconds{service_id="svc-cus-profile-kyc"}) > 900` for 5m: severity critical;
 - `increase(outbox_send_failures_total{service_id="svc-cus-profile-kyc"}[10m]) > 0`: severity warning (any send
   failure);
-- any increase in `outbox_parked_events{service_id="svc-cus-profile-kyc"}`: alert (a parked row means consumers miss
-  that customer's events until the replay).
+- parked rows: the platform alert **OutboxEventsParked** (owned by platform; services ship no parked alert rule):
+  any increase of `outbox_parked_events_total` over 15 minutes, no `for` clause, severity warning, routed by squad with
+  namespace fallback.
 
 All depend on platform widening the AMP remote-write keep regex from `.*outbox_pending.*` to `outbox_.*` (in progress on
 the platform side); until then these series do not reach the alerting backend. Scraping relies on the pod annotations
 `prometheus.io/scrape`, `prometheus.io/port` and `prometheus.io/path` (the platform PodMonitor reads them); the
 deploy/helm CI job checks they are rendered. Until the rules exist, the customer squad watches these series on its
 dashboards.
+
+`outbox_parked_rows`: gauge of the rows currently parked (for dashboards and the replay check).
 
 Every meter carries `service="svc-cus-profile-kyc"`, `app` (`METRICS_APP`, the chart's service account
 `customer-profile-kyc-service`) and `squad` (`METRICS_SQUAD`, `customer`); the chart sets both.
@@ -146,9 +152,10 @@ WHERE published_at IS NULL AND parked_at IS NOT NULL
 ORDER BY created_seq;
 
 -- Un-park one row (or drop the event_id filter to replay all; the relay sends them in created_seq order).
--- first_failed_at is no longer written (ADR-021); clearing it tidies rows parked before that change.
+-- park_counted = FALSE lets a later park be counted again; first_failed_at is no longer written (ADR-021),
+-- clearing it tidies rows parked before that change.
 UPDATE sc_cus_profile_kyc.outbox_event
-SET parked_at = NULL, first_failed_at = NULL, attempts = 0, last_error = NULL
+SET parked_at = NULL, park_counted = FALSE, first_failed_at = NULL, attempts = 0, last_error = NULL
 WHERE event_id = '<event id>' AND published_at IS NULL AND parked_at IS NOT NULL;
 ```
 

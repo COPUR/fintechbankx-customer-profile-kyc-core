@@ -101,7 +101,7 @@ class OutboxPersistenceTest {
         assertThat(meters.get("outbox.parked.events").tag("exception", "OperatorPark").counter().count()).isEqualTo(1.0);
         assertThat(jdbc.queryForObject("select park_counted from sc_cus_profile_kyc.outbox_event where event_id = ?::uuid",
             Boolean.class, id)).isTrue();
-        jdbc.update(runbookStatement("-- Un-park one row").replace("<event id>", id));
+        assertThat(jdbc.update(runbookStatement("-- Un-park one row").replace("<event id>", id))).as("replayed rows").isEqualTo(1);
         assertThat(jdbc.queryForObject("select park_counted from sc_cus_profile_kyc.outbox_event where event_id = ?::uuid",
             Boolean.class, id)).as("replay clears the mark so a later park counts again").isFalse();
     }

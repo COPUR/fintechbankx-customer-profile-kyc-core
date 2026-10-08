@@ -46,13 +46,13 @@ public class OutboxConfiguration {
     }
 
     /**
-     * Events the relay gave up on (Prometheus outbox_parked_events). Alert on
-     * any value above zero: consumers miss that customer's events until the
-     * row is replayed (runbook "Parked outbox events").
+     * Rows currently parked (Prometheus outbox_parked_rows). New parks are
+     * counted by the relay's outbox.parked.events counter, on which the
+     * platform alert OutboxEventsParked fires (runbook "Parked outbox events").
      */
     @Bean
     Gauge customerOutboxParkedGauge(MeterRegistry registry, SpringDataOutboxRepository outbox) {
-        return Gauge.builder("outbox.parked.events", outbox, SpringDataOutboxRepository::countByPublishedAtIsNullAndParkedAtIsNotNull)
+        return Gauge.builder("outbox.parked.rows", outbox, SpringDataOutboxRepository::countByPublishedAtIsNullAndParkedAtIsNotNull)
             .description("Customer events parked after a payload error, or by an operator")
             .register(registry);
     }

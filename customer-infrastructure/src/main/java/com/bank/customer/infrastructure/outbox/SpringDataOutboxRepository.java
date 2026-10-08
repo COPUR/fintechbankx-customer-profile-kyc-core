@@ -58,4 +58,15 @@ public interface SpringDataOutboxRepository extends JpaRepository<OutboxEventJpa
 
     /** Rows the relay gave up on; they wait for a manual replay. */
     long countByPublishedAtIsNullAndParkedAtIsNotNull();
+
+    /**
+     * Marks parked rows not yet counted (operator parks, runbook UPDATE) as
+     * counted, in one statement, and returns how many it marked: each row is
+     * flipped once, so it is counted once. A bulk update, so it never writes
+     * other columns of a row an operator is changing at the same time.
+     */
+    @Modifying(flushAutomatically = true)
+    @Query(value = "update outbox_event set park_counted = true where parked_at is not null and park_counted = false",
+        nativeQuery = true)
+    int markOperatorParksCounted();
 }

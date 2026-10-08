@@ -436,8 +436,6 @@ class OutboxRelayTest {
         OutboxEventJpaEntity poison = row("CUST-1");
         when(outbox.tryRelayLock(anyLong())).thenReturn(true);
         when(outbox.findUnpublishedBatch(50)).thenReturn(List.of(poison), List.of());
-        when(outbox.findParkedNotCounted()).thenAnswer(invocation ->
-            java.util.stream.Stream.of(poison).filter(r -> r.getParkedAt() != null && !r.isParkCounted()).toList());
         when(kafka.send(any(ProducerRecord.class)))
             .thenReturn(CompletableFuture.failedFuture(producerFailure(new RecordTooLargeException("too large"))));
 
@@ -455,17 +453,15 @@ class OutboxRelayTest {
     /** An operator park (runbook UPDATE, park_counted false) is counted once by the relay, as OperatorPark. */
     @Test
     void anOperatorParkIsCountedExactlyOnceAsOperatorPark() {
-        OutboxEventJpaEntity parkedByHand = row("CUST-1");
-        org.springframework.test.util.ReflectionTestUtils.setField(parkedByHand, "parkedAt", NOW);
         when(outbox.tryRelayLock(anyLong())).thenReturn(true);
-        when(outbox.findParkedNotCounted()).thenAnswer(invocation ->
-            java.util.stream.Stream.of(parkedByHand).filter(r -> !r.isParkCounted()).toList());
+        // The bulk update flips park_counted on the one operator-parked row on the first tick only.
+        when(outbox.markOperatorParksCounted()).thenReturn(1, 0, 0);
 
         for (int tick = 0; tick < 3; tick++) {
             relay.relayOnce();
         }
 
-        assertThat(parkedByHand.isParkCounted()).isTrue();
+        verify(outbox, times(3)).markOperatorParksCounted();
         assertThat(meters.get("outbox.parked.events").tag("exception", "OperatorPark").counter().count()).isEqualTo(1.0);
         assertThat(meters.get("outbox.parked.events").counters()).hasSize(1);
     }

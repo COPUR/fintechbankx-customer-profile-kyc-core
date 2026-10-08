@@ -35,7 +35,7 @@ import java.util.concurrent.TimeoutException;
  * <ul>
  *   <li>payload failures (RecordTooLarge, Serialization, InvalidTopic): the
  *   record itself can never be sent, so the row is parked (parked_at set,
- *   reason in last_error, outbox.parked.events alerts) and the batch
+ *   reason in last_error, counted once by outbox.parked.events) and the batch
  *   continues;</li>
  *   <li>everything else (Kafka retriable errors and the relay's send timeout,
  *   SASL, authentication and authorization errors, a generic KafkaException,
@@ -57,6 +57,7 @@ import java.util.concurrent.TimeoutException;
  */
 public class OutboxRelay {
 
+    static final String OPERATOR_PARK = "OperatorPark";
     static final long RELAY_LOCK_KEY = 0x6375735F6F7574L; // "cus_out"
     private static final Logger log = LoggerFactory.getLogger(OutboxRelay.class);
 
@@ -103,6 +104,7 @@ public class OutboxRelay {
                 return 0;
             }
             ran[0] = true;
+            countOperatorParks();
             List<OutboxEventJpaEntity> batch = outbox.findUnpublishedBatch(batchSize);
             int sent = 0;
             Set<String> heldAggregates = new HashSet<>();
@@ -130,6 +132,7 @@ public class OutboxRelay {
                     Instant now = clock.instant();
                     row.markFailed(describe(e), now);
                     row.park(now);
+                    countParked(rootClass(e).getSimpleName());
                     heldAggregates.add(aggregateKey(row));
                     log.error("Outbox relay parked event {} for {} after {} attempt(s): {}; replay it by hand",
                         row.getEventId(), row.getTopic(), row.getAttempts(), row.getLastError(), e);
@@ -143,6 +146,27 @@ public class OutboxRelay {
             backoff.batchCompleted();
         }
         return published == null ? 0 : published;
+    }
+
+    /**
+     * Rows an operator parked by hand are counted once, as OperatorPark, and
+     * marked counted in the same transaction. Only the replica holding the
+     * relay lock gets here, so no row is counted twice.
+     */
+    private void countOperatorParks() {
+        int operatorParks = outbox.markOperatorParksCounted();
+        for (int i = 0; i < operatorParks; i++) {
+            countParked(OPERATOR_PARK);
+        }
+    }
+
+    /** outbox.parked.events (Prometheus outbox_parked_events_total), once per parked row. */
+    private void countParked(String exception) {
+        Counter.builder("outbox.parked.events")
+            .description("Outbox rows parked, by root cause (OperatorPark for a manual park)")
+            .tag("exception", exception)
+            .register(meters)
+            .increment();
     }
 
     private void countFailure(Throwable failure) {

@@ -72,6 +72,10 @@ public class OutboxEventJpaEntity {
     @Column(name = "last_error", length = 512)
     private String lastError;
 
+    /** True once outbox.parked.events has counted this park (V9); the relay sets it, the runbook replay clears it. */
+    @Column(name = "park_counted", nullable = false)
+    private boolean parkCounted;
+
     // W3C trace context of the request that raised the event; null when none came in.
     @Column(name = "traceparent", length = 55, updatable = false)
     private String traceparent;
@@ -125,7 +129,11 @@ public class OutboxEventJpaEntity {
         this.lastError = error == null ? null : error.substring(0, Math.min(error.length(), 512));
     }
 
+    /** Relay park: parked and counted in the same update. */
     void park(Instant at) {
         this.parkedAt = at;
+        this.parkCounted = true;
     }
+
+    public boolean isParkCounted() { return parkCounted; }
 }
