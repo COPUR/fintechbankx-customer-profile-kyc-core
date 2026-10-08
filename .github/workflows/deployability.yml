@@ -37,7 +37,7 @@ jobs:
       - name: Lint and render chart
         run: |
           chart=deploy/helm/customer-profile-kyc-service
-          base="--set image.repository=ci/customer-profile-kyc-service --set image.tag=${{ github.sha }} --set externalSecret.remoteSecretName=ci/db-app"
+          base="--set image.repository=ci/customer-profile-kyc-service --set image.tag=${{ github.sha }} --set externalSecret.remoteSecretName=ci/customer-profile-kyc-service/db-app"
           args="$base --set config.DB_URL=ci-db-url --set config.OIDC_ISSUER_URI=ci-oidc-issuer-uri --set config.OIDC_JWK_SET_URI=ci-oidc-jwk-set-uri --set config.OIDC_AUDIENCE=ci-oidc-audience --set config.KAFKA_BOOTSTRAP_SERVERS=ci-kafka-bootstrap-servers"
           helm lint "$chart" $args
           helm template ci "$chart" $args > /dev/null
@@ -54,6 +54,21 @@ jobs:
             echo "chart rendered without its required runtime config" >&2
             exit 1
           fi
+          # Secret naming contract: each ExternalSecret is labelled with the service account
+          # and reads only <env>/<service account>/ keys (both secrets rendered).
+          secrets="--set externalSecret.oidcClientSecretName=ci/customer-profile-kyc-service/oidc-client"
+          python3 -c "import yaml" 2>/dev/null || python3 -m pip install --user pyyaml==6.0.2
+          helm template ci "$chart" $args $secrets | python3 scripts/ci/externalsecret-naming.py --env ci
+          helm template ci "$chart" -f "$chart/values-dev.yaml" $args $secrets | python3 scripts/ci/externalsecret-naming.py --env ci
+          # The check itself must catch a wrong render.
+          for wrong in "--set serviceAccount.name=some-other-service" \
+                       "--set externalSecret.remoteSecretName=ci/db-app" \
+                       "--set externalSecret.oidcClientSecretName=ci/other-service/oidc-client"; do
+            if helm template ci "$chart" $args $secrets $wrong | python3 scripts/ci/externalsecret-naming.py --env ci; then
+              echo "externalsecret-naming accepted a wrong render ($wrong)" >&2
+              exit 1
+            fi
+          done
 
   terraform:
     name: deploy/terraform
