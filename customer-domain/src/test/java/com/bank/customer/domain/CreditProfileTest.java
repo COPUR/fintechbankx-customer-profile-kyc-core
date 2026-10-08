@@ -61,7 +61,7 @@ class CreditProfileTest {
         );
 
         assertThatThrownBy(() -> profile.updateCreditLimit(Money.aed(new BigDecimal("1000.00"))))
-            .isInstanceOf(IllegalArgumentException.class)
+            .isInstanceOf(CreditLimitBelowUsedCreditException.class)
             .hasMessageContaining("cannot be less than used credit");
     }
 

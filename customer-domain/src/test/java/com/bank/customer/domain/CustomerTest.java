@@ -124,6 +124,21 @@ class CustomerTest {
     }
 
     @Test
+    void aLimitBelowTheUsedCreditIsRefusedAndNothingChanges() {
+        Customer customer = createCustomer();
+        customer.reserveCredit(Money.aed(new BigDecimal("6000.00")));
+        customer.clearDomainEvents();
+
+        assertThatThrownBy(() -> customer.updateCreditLimit(Money.aed(new BigDecimal("5999.99"))))
+            .isInstanceOf(CreditLimitBelowUsedCreditException.class);
+
+        assertThat(customer.getCreditProfile().getUsedCredit()).isEqualTo(Money.aed(new BigDecimal("6000.00")));
+        assertThat(customer.getDomainEvents()).isEmpty();
+        customer.updateCreditLimit(Money.aed(new BigDecimal("6000.00")));
+        assertThat(customer.getCreditProfile().getAvailableCredit()).isEqualTo(Money.aed(new BigDecimal("0.00")));
+    }
+
+    @Test
     void updateContactInformationShouldIgnoreInvalidEmailButUpdatePhone() {
         Customer customer = createCustomer();
 

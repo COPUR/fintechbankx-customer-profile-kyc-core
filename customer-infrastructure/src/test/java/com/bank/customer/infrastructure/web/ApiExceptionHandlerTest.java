@@ -51,6 +51,15 @@ class ApiExceptionHandlerTest {
         assertThat(handler.duplicate(new DataIntegrityViolationException("uq_customer_email")))
             .extracting(ResponseEntity::getStatusCode, r -> r.getBody().code())
             .containsExactly(HttpStatus.CONFLICT, "DUPLICATE_REQUEST");
+        // The database's own used_credit <= credit_limit check: a write raced past the aggregate's rule.
+        assertThat(handler.duplicate(new DataIntegrityViolationException(
+                "new row for relation \"customer\" violates check constraint \"ck_customer_credit\"")))
+            .extracting(ResponseEntity::getStatusCode, r -> r.getBody().code())
+            .containsExactly(HttpStatus.CONFLICT, "CONCURRENT_UPDATE");
+        assertThat(handler.limitBelowUsedCredit(new com.bank.customer.domain.CreditLimitBelowUsedCreditException(
+                "New credit limit cannot be less than used credit")))
+            .extracting(ResponseEntity::getStatusCode, r -> r.getBody().code())
+            .containsExactly(HttpStatus.UNPROCESSABLE_ENTITY, "CREDIT_LIMIT_BELOW_USED_CREDIT");
         assertThat(handler.badRequest(new IllegalArgumentException("Email must be valid")))
             .extracting(ResponseEntity::getStatusCode, r -> r.getBody().message())
             .containsExactly(HttpStatus.BAD_REQUEST, "Email must be valid");
