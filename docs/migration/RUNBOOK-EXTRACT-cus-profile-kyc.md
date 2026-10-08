@@ -99,23 +99,23 @@ flowing. Metrics (all tagged `service="svc-cus-profile-kyc"`):
   outage (`NetworkException`, `TimeoutException`). A non-payload failure is not written to the row (`last_error`
   stays empty); the relay log has the event id and the error.
 
-Outbox alerts: **proposed** to platform observability (fintechbankx-platform-observability-sre-operations); no rule on
-these two series exists there yet (review 5456636554), and this chart ships no PrometheusRule. Platform rules select on
-`service_id`, which comes from the pod label `fintechbankx.io/service-id: svc-cus-profile-kyc` (set in the chart and
-checked by the deploy/helm CI job). Proposed rules, with the severities platform has settled, owning squad **customer**
-(still proposed until platform's commit lands):
+Outbox alerts: shipped in platform observability (fintechbankx-platform-observability-sre-operations) PR #11 at
+commit `eca7aa0` (not merged yet). That PR owns the rules; this chart ships no PrometheusRule and this service ships no
+alert rule. The rules key on `service_id`, which comes from the pod label `fintechbankx.io/service-id:
+svc-cus-profile-kyc` (set in the chart and checked by the deploy/helm CI job), and route by squad (owning squad
+**customer**):
 
-- `max(outbox_oldest_pending_age_seconds{service_id="svc-cus-profile-kyc"}) > 900` for 5m: severity critical;
-- `increase(outbox_send_failures_total{service_id="svc-cus-profile-kyc"}[10m]) > 0`: severity warning (any send
-  failure);
-- parked rows: the platform alert **OutboxEventsParked** (owned by platform; services ship no parked alert rule):
-  any increase of `outbox_parked_events_total` over 15 minutes, no `for` clause, severity warning, routed by squad with
-  namespace fallback.
+- **OutboxRelayStalled**: `max(outbox_oldest_pending_age_seconds{service_id="svc-cus-profile-kyc"}) > 900` for 5m,
+  severity critical;
+- **OutboxSendFailures**: any increase of `outbox_send_failures_total{service_id="svc-cus-profile-kyc"}` over 10m,
+  severity warning;
+- **OutboxEventsParked**: any increase of `outbox_parked_events_total{service_id="svc-cus-profile-kyc"}` over 15m, no
+  `for` clause, severity warning. Operator parks (`OperatorPark`) also fire it.
 
-All depend on platform widening the AMP remote-write keep regex from `.*outbox_pending.*` to `outbox_.*` (in progress on
-the platform side); until then these series do not reach the alerting backend. Scraping relies on the pod annotations
+The same PR widens the AMP remote-write keep regex to the `outbox_` series, so they reach the alerting backend once it
+merges. Scraping relies on the pod annotations
 `prometheus.io/scrape`, `prometheus.io/port` and `prometheus.io/path` (the platform PodMonitor reads them); the
-deploy/helm CI job checks they are rendered. Until the rules exist, the customer squad watches these series on its
+deploy/helm CI job checks they are rendered. Until PR #11 merges, the customer squad watches these series on its
 dashboards.
 
 `outbox_parked_rows`: gauge of the rows currently parked (for dashboards and the replay check).

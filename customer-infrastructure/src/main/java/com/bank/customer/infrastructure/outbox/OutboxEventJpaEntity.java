@@ -59,9 +59,9 @@ public class OutboxEventJpaEntity {
     private Instant parkedAt;
 
     /**
-     * No longer written: the 24 h park ceiling that used it was removed by
-     * ADR-021 decision 4. The column stays (released migrations are never
-     * edited); rows from before the change may still carry a value.
+     * No longer written: under ADR-021 decision 4 the relay parks only on a
+     * payload error, never on how long a row has been failing. The column stays
+     * (released migrations are never edited); older rows may still carry a value.
      */
     @Column(name = "first_failed_at")
     private Instant firstFailedAt;

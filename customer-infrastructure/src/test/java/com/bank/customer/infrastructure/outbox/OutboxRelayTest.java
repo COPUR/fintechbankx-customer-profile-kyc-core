@@ -145,7 +145,7 @@ class OutboxRelayTest {
     /**
      * Failures of the relay's credentials or of unknown kind: they hit every
      * row alike and usually clear once the platform is fixed, so they stop the
-     * batch like a retryable failure and only park under the time ceiling.
+     * batch like a retryable failure and are retried with backoff, never parked.
      */
     static Stream<RuntimeException> failuresThatStopTheBatch() {
         return Stream.of(
