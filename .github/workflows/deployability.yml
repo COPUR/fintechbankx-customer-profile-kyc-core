@@ -215,14 +215,26 @@ jobs:
             --set-string config.LOGGING_LEVEL_ORG_POSTGRESQL=TRACE
           reject_render "config.logging.level.root must not be set: log levels are not install-time values" \
             --set-string 'config.logging\.level\.root=DEBUG'
-          # The TLS startup assertion (DatabaseTlsGuard, KafkaTlsGuard) runs whenever DB_SSL_ROOT_CERT is set,
-          # which the chart always does from the mounted bundle; no values key may offer the variable, in any
-          # spelling, as a switch (an empty value included), nor the services' TLS off switch.
+          # The TLS startup assertions (DatabaseTlsGuard, KafkaTlsGuard) are on by default and require DB_SSL_ROOT_CERT,
+          # which the chart always sets from the mounted bundle; no values key may offer the variable, in any
+          # spelling (an empty value included).
           for key in DB_SSL_ROOT_CERT 'db\.ssl\.root\.cert' db-ssl-root-cert PGSSLROOTCERT; do
             reject_render "config.${key//\\/} is not allowed: a TLS parameter name can replace the mounted CA" \
               --set-string "config.$key="
           done
-          reject_render "config.FINTECHBANKX_TLS_ENFORCE is not allowed: it can switch off" --set-string config.FINTECHBANKX_TLS_ENFORCE=false
+          # fintechbankx.tls.enforce (FINTECHBANKX_TLS_ENFORCE) is the test switch of the TLS startup assertions (only the
+          # local profile and tests turn them off): refused by the guard in every spelling it canonicalises.
+          for key in FINTECHBANKX_TLS_ENFORCE 'fintechbankx\.tls\.enforce' FINTECHBANKX-TLS-ENFORCE 'fintechbankx\.tls\.enforce\[0\]' \
+                     fintechbankx_tls_enforce 'Fintechbankx\.Tls\.Enforce'; do
+            reject_render "config.${key//\\/} is not allowed: it can switch off the service's startup TLS assertion" \
+              --set-string "config.$key=false"
+          done
+          # ...and by the chart's normalised rule in the separator-free spelling the guard's canonical form keeps apart
+          # (FINTECHBANKXTLSENFORCE binds to fintechbankx.tls.enforce too).
+          for key in FINTECHBANKXTLSENFORCE fintechbankxtlsenforce FINTECHBANKXTLS_ENFORCE; do
+            reject_render "config.$key must not be set: fintechbankx.tls.enforce is the test switch of the TLS startup assertions" \
+              --set-string "config.$key=false"
+          done
           reject_render "config.PGJDBC_SSL_FACTORY is not allowed" --set-string config.PGJDBC_SSL_FACTORY=org.postgresql.ssl.NonValidatingFactory
           reject_render "config.SPRING_SSL_BUNDLE_PEM_DB_TRUSTSTORE_CERTIFICATE is not allowed: an SSL bundle property" \
             --set-string config.SPRING_SSL_BUNDLE_PEM_DB_TRUSTSTORE_CERTIFICATE=/tmp/decoy.pem

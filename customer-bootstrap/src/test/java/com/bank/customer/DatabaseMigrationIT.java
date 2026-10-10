@@ -38,6 +38,8 @@ class DatabaseMigrationIT {
     private static final String JOB_SCHEMA = "sc_cus_profile_kyc_job_it";
     private static final String SERVICE_SCHEMA = "sc_cus_profile_kyc";
     private static final String RDS_BUNDLE = "/etc/fintechbankx/rds-ca/global-bundle.pem";
+    /** The test database has no TLS: the switch is for tests and the local profile only, never a shipped application*.yml. */
+    private static final String TLS_ASSERTIONS_OFF = "--fintechbankx.tls.enforce=false";
 
     private static JdbcTemplate owner;
 
@@ -63,7 +65,8 @@ class DatabaseMigrationIT {
             assertThat(job.getBeanNamesForType(KafkaTemplate.class)).as("no Kafka").isEmpty();
             assertThat(job.getBeanNamesForType(OutboxRelay.class)).as("no outbox relay").isEmpty();
             assertThat(job.getBeanNamesForType(DatabaseTlsGuard.class))
-                .as("the TLS guard is in the Job (inert without DB_SSL_ROOT_CERT, as in the pods)").hasSize(1);
+                .as("the test switch leaves the TLS guard out; theMigrationJobRefusesToRunWithoutTheBundle covers the default")
+                .isEmpty();
         }
 
         assertThat(appliedVersions(JOB_SCHEMA)).isEqualTo(resolvedMigrations());
@@ -98,13 +101,25 @@ class DatabaseMigrationIT {
     /** The Job gets DB_SSL_ROOT_CERT from the chart like the pods, so DatabaseTlsGuard runs there too. */
     @Test
     void theMigrationJobRefusesADatabaseUrlTheDriverWouldNotVerify() {
-        String[] arguments = with(job(JOB_SCHEMA), "--DB_SSL_ROOT_CERT=" + RDS_BUNDLE);
+        String[] arguments = with(tlsAssertingJob(JOB_SCHEMA), "--DB_SSL_ROOT_CERT=" + RDS_BUNDLE);
 
         // Thrown by the guard itself (a BeanFactoryPostProcessor), before any connection or Flyway bean.
         assertThatThrownBy(() -> DatabaseMigration.start(arguments))
             .isInstanceOf(IllegalStateException.class)
             .hasMessageContaining("spring.datasource.url")
             .hasMessageContaining("sslmode=verify-full");
+        assertThat(DatabaseMigration.run(arguments)).isNotZero();
+    }
+
+    /** The Job keeps asserting by default (guardrail 4a): outside the chart, without the bundle, it exits 1 before any connection. */
+    @Test
+    void theMigrationJobRefusesToRunWithoutTheBundleUnlessTheTestSwitchIsSet() {
+        String[] arguments = tlsAssertingJob(JOB_SCHEMA);
+
+        assertThatThrownBy(() -> DatabaseMigration.start(arguments))
+            .isInstanceOf(IllegalStateException.class)
+            .hasMessageContaining("DB_SSL_ROOT_CERT must name the mounted RDS CA bundle")
+            .hasMessageNotContaining(PostgresTestDatabase.ownerPassword());
         assertThat(DatabaseMigration.run(arguments)).isNotZero();
     }
 
@@ -159,8 +174,13 @@ class DatabaseMigrationIT {
             .isZero();
     }
 
-    /** What the Job's pod gets: DB_URL, DB_USERNAME (the role V13 grants) and the db-migration secret. */
+    /** What the Job's pod gets: DB_URL, DB_USERNAME (the role V13 grants) and the db-migration secret; TLS assertions off for the test database. */
     private static String[] job(String schema) {
+        return with(tlsAssertingJob(schema), TLS_ASSERTIONS_OFF);
+    }
+
+    /** The same Job with the TLS assertions on, as in the chart. */
+    private static String[] tlsAssertingJob(String schema) {
         return jobAs(schema, PostgresTestDatabase.ownerUser(), PostgresTestDatabase.ownerPassword());
     }
 
@@ -184,6 +204,7 @@ class DatabaseMigrationIT {
             "--server.port=0",
             "--management.server.port=0",
             "--customer.outbox.relay.enabled=false",
+            TLS_ASSERTIONS_OFF,
         }, extra);
         return new SpringApplicationBuilder(CustomerProfileKycApplication.class).run(arguments);
     }

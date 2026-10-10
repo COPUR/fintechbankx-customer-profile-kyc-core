@@ -34,7 +34,7 @@ import static org.springframework.test.web.servlet.request.MockMvcRequestBuilder
  * Idempotency-key replays answer with the position recorded for the original
  * movement (V12).
  */
-@SpringBootTest(properties = "customer.outbox.relay.enabled=false")
+@SpringBootTest(properties = {"customer.outbox.relay.enabled=false", "fintechbankx.tls.enforce=false"})
 @AutoConfigureMockMvc
 class CreditReservationIT {
 

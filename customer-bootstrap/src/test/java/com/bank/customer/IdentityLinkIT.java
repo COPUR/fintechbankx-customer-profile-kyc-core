@@ -44,7 +44,7 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
  * scoped permission (Keycloak FGAP v2, identity 8f9024b): users in group
  * /customers only, 403 for any other user; no realm-management manage-users.
  */
-@SpringBootTest(properties = "customer.outbox.relay.enabled=false")
+@SpringBootTest(properties = {"customer.outbox.relay.enabled=false", "fintechbankx.tls.enforce=false"})
 @AutoConfigureMockMvc
 class IdentityLinkIT {
 

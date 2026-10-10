@@ -35,7 +35,7 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
  * through the outbox. The loan service's credit allow-list does not open it,
  * and the KYC allow-list does not open credit.
  */
-@SpringBootTest(properties = "customer.outbox.relay.enabled=false")
+@SpringBootTest(properties = {"customer.outbox.relay.enabled=false", "fintechbankx.tls.enforce=false"})
 @AutoConfigureMockMvc
 class KycStatusIT {
 

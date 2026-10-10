@@ -63,7 +63,7 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
  * loan service calls it, as the runtime role, with their events landing in the
  * outbox and then on (a mocked) Kafka.
  */
-@SpringBootTest(properties = "customer.outbox.relay.enabled=false")
+@SpringBootTest(properties = {"customer.outbox.relay.enabled=false", "fintechbankx.tls.enforce=false"})
 @AutoConfigureMockMvc
 class CustomerServiceIT {
 

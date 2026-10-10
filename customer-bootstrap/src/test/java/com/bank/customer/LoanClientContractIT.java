@@ -48,7 +48,7 @@ import static org.springframework.test.web.servlet.request.MockMvcRequestBuilder
  *   CONCURRENT_UPDATE/DUPLICATE_REQUEST (retried with the same key).</li>
  * </ul>
  */
-@SpringBootTest(properties = "customer.outbox.relay.enabled=false")
+@SpringBootTest(properties = {"customer.outbox.relay.enabled=false", "fintechbankx.tls.enforce=false"})
 @AutoConfigureMockMvc
 class LoanClientContractIT {
 

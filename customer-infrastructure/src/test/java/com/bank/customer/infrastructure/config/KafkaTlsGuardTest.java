@@ -1,9 +1,12 @@
 package com.bank.customer.infrastructure.config;
 
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.extension.ExtendWith;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.ValueSource;
 import org.springframework.boot.test.context.runner.ApplicationContextRunner;
+import org.springframework.boot.test.system.CapturedOutput;
+import org.springframework.boot.test.system.OutputCaptureExtension;
 import org.springframework.mock.env.MockEnvironment;
 
 import static org.assertj.core.api.Assertions.assertThat;
@@ -12,22 +15,22 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 /**
  * The Kafka half of the startup TLS contract, the sibling of
- * {@link DatabaseTlsGuardTest}. In a deployed environment (the chart always
- * mounts the RDS CA bundle, so DB_SSL_ROOT_CERT is set) the outbox relay must
- * publish over TLS: SASL_SSL (Amazon MSK with IAM, profile kafka-msk) or SSL
- * (Strimzi mutual TLS with the KafkaUser certificate, profile kafka-strimzi).
- * PLAINTEXT, SASL_PLAINTEXT or no protocol at all (Kafka defaults to
- * PLAINTEXT) means a values override or a wrong profile, and the service
+ * {@link DatabaseTlsGuardTest}. The outbox relay must publish over TLS:
+ * SASL_SSL (Amazon MSK with IAM, profile kafka-msk) or SSL (Strimzi mutual
+ * TLS with the KafkaUser certificate, profile kafka-strimzi). PLAINTEXT,
+ * SASL_PLAINTEXT or no protocol at all (Kafka defaults to PLAINTEXT) means a
+ * values override, a wrong profile or a run outside the chart, and the service
  * refuses to start rather than publish customer events in clear.
  *
- * <p>The guard is armed by DB_SSL_ROOT_CERT alone, exactly like
- * {@link DatabaseTlsGuard}: with the relay off nothing publishes yet, but the
- * producer configuration is what runbook step 6 will switch on with a plain
+ * <p>The guard is on by default, relay on or off (guardrail 4a): with the
+ * relay off nothing publishes yet, but the producer configuration is what
+ * runbook step 6 will switch on with a plain
  * {@code --reuse-values --set config.OUTBOX_RELAY_ENABLED=true}, so a cluster
  * pod refuses a plain-text producer from its first deploy. The relay flag
- * gates publishing only. Without DB_SSL_ROOT_CERT (local runs and tests) the
- * guard is off.
+ * gates publishing only. Only the local profile and the test switch
+ * fintechbankx.tls.enforce=false turn the guard off.
  */
+@ExtendWith(OutputCaptureExtension.class)
 class KafkaTlsGuardTest {
 
     private static final String BUNDLE = "/etc/fintechbankx/rds-ca/global-bundle.pem";
@@ -114,13 +117,14 @@ class KafkaTlsGuardTest {
             .run(context -> assertThat(context).hasNotFailed().hasSingleBean(KafkaTlsGuard.class));
     }
 
-    /** The bundle alone arms the guard: the relay flag (unset or false) gates publishing, not the check. */
+    /** The relay flag (unset or false) gates publishing, not the check. */
     @Test
     void theContextRefusesToStartWithAPlaintextProducerWhenTheRelayIsOffAndTheBundleIsMounted() {
         contextRunner
             .withPropertyValues("DB_SSL_ROOT_CERT=" + BUNDLE, "spring.kafka.security.protocol=PLAINTEXT")
             .run(context -> assertThat(context).hasFailed().getFailure().hasMessageContaining(REFUSED)
-                .hasMessageContaining("DB_SSL_ROOT_CERT"));
+                .hasMessageContaining("relay on or off")
+                .hasMessageContaining("profile local").hasMessageContaining("fintechbankx.tls.enforce=false"));
         contextRunner
             .withPropertyValues("DB_SSL_ROOT_CERT=" + BUNDLE, "customer.outbox.relay.enabled=false",
                 "spring.kafka.security.protocol=PLAINTEXT")
@@ -137,15 +141,42 @@ class KafkaTlsGuardTest {
             .run(context -> assertThat(context).hasNotFailed().hasSingleBean(KafkaTlsGuard.class));
     }
 
-    /** Local runs and tests have no RDS bundle (and application.yml defaults to PLAINTEXT) and keep working. */
-    @Test
-    void staysInactiveWithoutTheBundleSoLocalRunsStillStart() {
+    /** On by default: a run outside the chart (no bundle, no profile) with application.yml's PLAINTEXT default is refused. */
+    @ParameterizedTest
+    @ValueSource(strings = {"true", "false"})
+    void staysOnWithoutTheBundleSoARunOutsideTheChartIsRefused(String relayEnabled) {
         contextRunner
-            .withPropertyValues("customer.outbox.relay.enabled=true", "spring.kafka.security.protocol=PLAINTEXT")
+            .withPropertyValues("customer.outbox.relay.enabled=" + relayEnabled, "spring.kafka.security.protocol=PLAINTEXT")
+            .run(context -> assertThat(context).hasFailed().getFailure()
+                .hasMessageContaining(REFUSED).hasMessageContaining("PLAINTEXT"));
+        contextRunner
+            .withPropertyValues("customer.outbox.relay.enabled=" + relayEnabled)
+            .run(context -> assertThat(context).hasFailed().getFailure()
+                .hasMessageContaining(REFUSED).hasMessageContaining("none"));
+        contextRunner
+            .run(context -> assertThat(context).hasFailed().getFailure().hasMessageContaining(REFUSED));
+    }
+
+    /** The local profile and the test switch are the only ways off; the guard is then not registered and the log says so. */
+    @ParameterizedTest
+    @ValueSource(strings = {"spring.profiles.active=local", "fintechbankx.tls.enforce=false"})
+    void staysOffOnlyWithTheLocalProfileOrTheTestSwitch(String property, CapturedOutput output) {
+        contextRunner
+            .withPropertyValues(property, "customer.outbox.relay.enabled=true", "spring.kafka.security.protocol=PLAINTEXT")
             .run(context -> assertThat(context).hasNotFailed().doesNotHaveBean(KafkaTlsGuard.class));
         contextRunner
-            .withPropertyValues("customer.outbox.relay.enabled=true")
+            .withPropertyValues(property)
             .run(context -> assertThat(context).hasNotFailed().doesNotHaveBean(KafkaTlsGuard.class));
+        assertThat(output.getOut()).contains("WARN").contains("TLS startup assertions are off");
+    }
+
+    @ParameterizedTest
+    @ValueSource(strings = {"fintechbankx.tls.enforce=true", "fintechbankx.tls.enforce=", "spring.profiles.active=LOCAL",
+        "spring.profiles.active=localstack"})
+    void staysOnForAnyOtherValueOrProfile(String property) {
+        contextRunner
+            .withPropertyValues(property, "spring.kafka.security.protocol=PLAINTEXT")
+            .run(context -> assertThat(context).hasFailed().getFailure().hasMessageContaining(REFUSED));
     }
 
     private static KafkaTlsGuard guard(String protocol) {
