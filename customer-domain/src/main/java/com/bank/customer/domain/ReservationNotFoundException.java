@@ -8,6 +8,10 @@ import com.bank.shared.kernel.domain.Money;
  *   <li>a release carries a reference that matches none of the customer's
  *   reservations. It is always refused, whatever untracked credit exists, so
  *   an unknown loan id can never free migrated or unreferenced credit;</li>
+ *   <li>a release carries a reference whose reservation holds nothing any
+ *   more (fully released). Same answer as an unknown reference, so a caller
+ *   sweeping loans can tell "nothing left" from "released too much"
+ *   (RELEASE_EXCEEDS_RESERVATION, which needs 0 &lt; held &lt; amount);</li>
  *   <li>a release without a reference asks for more than the customer's
  *   untracked used credit (used credit minus every open reservation). Such a
  *   release may free balances migrated from the monolith or reserved without
@@ -24,6 +28,12 @@ public class ReservationNotFoundException extends RuntimeException {
 
     private ReservationNotFoundException(String message) {
         super(message);
+    }
+
+    /** The release names a reservation that holds nothing any more; the reference itself stays out of the message. */
+    public static ReservationNotFoundException forSettledReservation(Money requested) {
+        return new ReservationNotFoundException("The release of " + requested
+            + " names a reservation that holds nothing any more (fully released)");
     }
 
     /** The release names a reference with no reservation; the reference itself stays out of the message. */

@@ -157,10 +157,13 @@ public class CustomerManagementService implements RegisterCustomerUseCase, GetCu
 
     /**
      * FR-003: release reserved credit once per idempotency key. A release
-     * whose reference names a reservation takes at most what it still holds;
-     * a release whose reference matches no reservation is always refused
-     * (RESERVATION_NOT_FOUND); only a release without a reference takes the
-     * untracked used credit, at most.
+     * whose reference names a reservation that still holds credit takes at
+     * most what it holds (more is RELEASE_EXCEEDS_RESERVATION); a release
+     * whose reference names a reservation that holds nothing any more, or
+     * matches no reservation at all, is always refused with
+     * RESERVATION_NOT_FOUND, whatever the amount (loan's sweep relies on that
+     * answer); only a release without a reference takes the untracked used
+     * credit, at most.
      */
     @Override
     public CreditPosition releaseCredit(CreditMovementCommand command) {
@@ -190,8 +193,12 @@ public class CustomerManagementService implements RegisterCustomerUseCase, GetCu
                     CreditReservation.none(command.customerId(), command.reference(), creditCurrency(customer)));
                 changed = Optional.of(customer.reserveCredit(command.amount(), open));
             }
-        } else if (reservation.isPresent()) {
+        } else if (reservation.isPresent() && reservation.get().remaining().isPositive()) {
             changed = Optional.of(customer.releaseCredit(command.amount(), reservation.get()));
+        } else if (reservation.isPresent()) {
+            // Fully released already: the same answer as an unknown reference, so loan's sweep can
+            // tell "nothing left under this loan id" from "released too much".
+            throw ReservationNotFoundException.forSettledReservation(command.amount());
         } else if (command.reference() != null) {
             // An unknown loan id can never touch migrated or unreferenced credit (loan auto-release).
             throw ReservationNotFoundException.forUnknownReference(command.amount());

@@ -398,10 +398,12 @@ paths:
         Release by reference: a reference that names one of the customer's
         reservations (the reference sent with earlier reserves) releases at
         most what that reservation still holds; partial releases are fine,
-        more is 422 RELEASE_EXCEEDS_RESERVATION. A release that carries a
-        reference matching no reservation is always 422 RESERVATION_NOT_FOUND,
-        whatever the amount, so an unknown loan id never touches migrated
-        credit. Only a release without a reference releases untracked used
+        more is 422 RELEASE_EXCEEDS_RESERVATION (0 < held < amount). A release
+        whose reference names a reservation that holds nothing any more (fully
+        released), or matches no reservation at all, is always 422
+        RESERVATION_NOT_FOUND, whatever the amount, so an unknown loan id never
+        touches migrated credit and a loan sweep can tell "nothing left under
+        this loan id" from "released too much". Only a release without a reference releases untracked used
         credit, at most used credit minus all open reservations (for example
         a balance migrated from the monolith); more is 422
         RESERVATION_NOT_FOUND. Nothing is floored at zero. An idempotency-key
@@ -458,7 +460,7 @@ paths:
               schema:
                 $ref: '#/components/schemas/ErrorResponse'
         '422':
-          description: CURRENCY_MISMATCH, a valid ISO 4217 currency other than the customer's credit currency (a malformed currency is 400); RELEASE_EXCEEDS_RESERVATION, the release is larger than what the named reservation still holds; RESERVATION_NOT_FOUND, the reference matches no reservation, or a release without a reference is larger than the untracked used credit. Nothing is released in any of these cases
+          description: CURRENCY_MISMATCH, a valid ISO 4217 currency other than the customer's credit currency (a malformed currency is 400); RELEASE_EXCEEDS_RESERVATION, the named reservation still holds something but less than the release; RESERVATION_NOT_FOUND, the reference matches no reservation or names one that holds nothing any more, or a release without a reference is larger than the untracked used credit. Nothing is released in any of these cases
           content:
             application/json:
               schema:
