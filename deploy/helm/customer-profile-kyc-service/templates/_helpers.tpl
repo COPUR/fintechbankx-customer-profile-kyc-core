@@ -98,9 +98,9 @@ message:
 - JAVATOOLOPTIONS, JDKJAVAOPTIONS, JAVAOPTIONS (also _JAVA_OPTIONS), JAVAOPTS:
   set system properties or load an agent before application.yml is read; the
   image fixes them.
-- LOGGINGLEVEL*: a log level is not an install-time value;
-  LOGGING_LEVEL_ORG_POSTGRESQL=TRACE would write the wire protocol, with row
-  data, to the pod log.
+- LOGGINGLEVEL*: a log level is not an install-time value; a verbose level
+  for the PostgreSQL driver would write the wire protocol, with row data, to
+  the pod log.
 - DBSSLROOTCERT: the only switch of the TLS startup assertion (DatabaseTlsGuard
   and KafkaTlsGuard run whenever DB_SSL_ROOT_CERT is set). The chart sets it
   from the mounted bundle on every container; a values key, empty or not, is
