@@ -48,23 +48,25 @@ podDisruptionBudget:
 # Non-secret runtime settings, rendered into a ConfigMap.
 config:
   # jdbc:postgresql://<aurora-writer-endpoint>:5432/db_cus_profile_kyc_<env>?sslmode=verify-full&sslrootcert=/etc/fintechbankx/rds-ca/global-bundle.pem
-  # (Terraform output jdbc_url). Rendering fails for a jdbc:postgresql URL without sslmode=verify-full.
-  # No other config key may carry a database URL or driver property (SPRING_DATASOURCE_*, SPRING_FLYWAY_*,
-  # SPRING_LIQUIBASE_*, SPRING_R2DBC_*, SPRING_APPLICATION_JSON), none may set a Spring config location, import
-  # or name (SPRING_CONFIG_*), JVM options (JAVA_TOOL_OPTIONS, JDK_JAVA_OPTIONS, _JAVA_OPTIONS, JAVA_OPTS), a
-  # LOGGING_LEVEL_*, DB_SSL_ROOT_CERT (the TLS startup assertion has no off switch) or the local profile in
-  # SPRING_PROFILES_ACTIVE / _INCLUDE / _DEFAULT or a SPRING_PROFILES_GROUP_* list. Keys
-  # are matched in every spelling (case, dash, dot, underscore, index) Spring's relaxed binding accepts
-  # (templates/_helpers.tpl, customer.validateConfigKeys).
+  # (Terraform output jdbc_url). Every key and value here goes through the platform guard fbx.guard
+  # (templates/_fbx_helpers.tpl, vendored unchanged from cicd-templates a4f0072) and this chart's
+  # customer.validate (templates/_helpers.tpl): DB_URL must be jdbc:postgresql: with exactly one
+  # sslmode=verify-full and one sslrootcert=<databaseCa mount>/<key>; no other key may carry a database URL,
+  # driver, Flyway, Liquibase or R2DBC property (SPRING_DATASOURCE_* including USERNAME and PASSWORD), a JDBC or
+  # TLS parameter name (DB_SSL_ROOT_CERT, PGSSLROOTCERT, *_SSL_MODE: the chart renders DB_SSL_ROOT_CERT, and the
+  # TLS startup assertion has no off switch), SPRING_APPLICATION_JSON, a Spring config location, import, name or
+  # activation (SPRING_CONFIG_*), any Spring profile (SPRING_PROFILES_*: kafka.runtime renders the only one), an
+  # SSL bundle (SPRING_SSL_*), FINTECHBANKX_TLS_*, JVM options (JAVA_TOOL_OPTIONS, JDK_JAVA_OPTIONS,
+  # _JAVA_OPTIONS, JAVA_OPTS) or a LOGGING_LEVEL_*; a Kafka security.protocol key must match kafka.runtime and
+  # an endpoint.identification.algorithm key must be https. Names are matched as given and in every spelling
+  # Spring's relaxed binding accepts (case, dash, dot, underscore, index). Keys must be ConfigMap keys
+  # ([-._a-zA-Z0-9]+); the templates quote every key and value.
   DB_URL: ""
   # Runtime role (least privilege, granted by V13); Flyway runs as the schema
   # owner from the db-migration secret in the migration Job (decision 0001).
   DB_USERNAME: customer_profile_app
   DB_POOL_MAX: "10"
   KAFKA_BOOTSTRAP_SERVERS: ""
-  # kafka-msk: SASL_SSL + AWS_MSK_IAM through the service IRSA role (AWS).
-  # kafka-strimzi: TLS listener of the in-cluster Strimzi cluster (local, kind).
-  SPRING_PROFILES_ACTIVE: kafka-msk
   OIDC_ISSUER_URI: ""
   OIDC_JWK_SET_URI: ""
   OIDC_AUDIENCE: svc-cus-profile-kyc   # token aud must contain the service id
@@ -146,10 +148,18 @@ databaseCa:
   key: global-bundle.pem
   mountPath: /etc/fintechbankx/rds-ca
 
+# Kafka auth profile, rendered as SPRING_PROFILES_ACTIVE on the Deployment (the
+# only Spring profile; fbx.kafkaProfile, platform Kafka client guide):
+#   msk     -> kafka-msk: SASL_SSL + AWS_MSK_IAM through the service IRSA role (AWS).
+#   strimzi -> kafka-strimzi: TLS listener of the in-cluster Strimzi cluster
+#              (local, kind); needs kafkaTls.secretName.
+# Anything else, including "", is refused: the service publishes to Kafka.
+kafka:
+  runtime: msk
+
 # Kafka client certificate for the kafka-strimzi profile (local, kind): the
 # Secret holding the PEM files; rendered as KAFKA_TLS_CERT, KAFKA_TLS_KEY and
-# KAFKA_TLS_CA only when config.SPRING_PROFILES_ACTIVE includes kafka-strimzi,
-# and required then.
+# KAFKA_TLS_CA only with kafka.runtime strimzi, and required then.
 kafkaTls:
   secretName: ""
   certKey: user.crt

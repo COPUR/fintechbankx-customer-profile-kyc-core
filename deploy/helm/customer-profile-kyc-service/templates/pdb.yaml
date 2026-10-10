@@ -5,7 +5,8 @@ metadata:
   labels:
     {{- include "customer.labels" . | nindent 4 }}
 spec:
-  minAvailable: {{ .Values.podDisruptionBudget.minAvailable }}
+  {{- $min := .Values.podDisruptionBudget.minAvailable }}
+  minAvailable: {{ if kindIs "string" $min }}{{ $min | quote }}{{ else }}{{ $min | int }}{{ end }}
   selector:
     matchLabels:
       {{- include "customer.podSelectorLabels" . | nindent 6 }}

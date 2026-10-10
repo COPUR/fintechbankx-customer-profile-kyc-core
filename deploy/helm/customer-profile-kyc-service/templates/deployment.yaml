@@ -1,3 +1,4 @@
+{{- include "customer.guard" . -}}
 apiVersion: apps/v1
 kind: Deployment
 metadata:
@@ -6,7 +7,7 @@ metadata:
     {{- include "customer.labels" . | nindent 4 }}
 spec:
   {{- if not .Values.autoscaling.enabled }}
-  replicas: {{ .Values.replicaCount }}
+  replicas: {{ .Values.replicaCount | int }}
   {{- end }}
   revisionHistoryLimit: 5
   strategy:
@@ -29,18 +30,18 @@ spec:
         prometheus.io/port: {{ .Values.service.managementPort | quote }}
         prometheus.io/path: /actuator/prometheus
     spec:
-      serviceAccountName: {{ .Values.serviceAccount.name }}
+      serviceAccountName: {{ .Values.serviceAccount.name | quote }}
       terminationGracePeriodSeconds: 45
       securityContext:
         {{- include "customer.podSecurityContext" . | nindent 8 }}
       topologySpreadConstraints:
-        - maxSkew: {{ .Values.topologySpread.maxSkew }}
+        - maxSkew: {{ .Values.topologySpread.maxSkew | int }}
           topologyKey: topology.kubernetes.io/zone
           whenUnsatisfiable: DoNotSchedule
           labelSelector:
             matchLabels:
               {{- include "customer.podSelectorLabels" . | nindent 14 }}
-        - maxSkew: {{ .Values.topologySpread.maxSkew }}
+        - maxSkew: {{ .Values.topologySpread.maxSkew | int }}
           topologyKey: kubernetes.io/hostname
           whenUnsatisfiable: ScheduleAnyway
           labelSelector:
@@ -49,32 +50,37 @@ spec:
       containers:
         - name: customer-profile-kyc-service
           image: {{ include "customer.image" . | quote }}
-          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          imagePullPolicy: {{ .Values.image.pullPolicy | quote }}
           ports:
             - name: http
-              containerPort: {{ .Values.service.port }}
+              containerPort: {{ .Values.service.port | int }}
             - name: http-management
-              containerPort: {{ .Values.service.managementPort }}
+              containerPort: {{ .Values.service.managementPort | int }}
           env:
             # Aurora server certificate trust (cicd-templates 4f0f266); DB_URL names the same file as sslrootcert.
             - name: DB_SSL_ROOT_CERT
-              value: {{ include "customer.databaseCaFile" . | quote }}
-          {{- if has "kafka-strimzi" (splitList "," (.Values.config.SPRING_PROFILES_ACTIVE | toString | nospace)) }}
+              value: {{ include "customer.envValue" (dict "where" "databaseCa.mountPath/key" "value" (include "customer.databaseCaFile" .)) }}
+            # The only Spring profile, from kafka.runtime (msk -> kafka-msk, strimzi -> kafka-strimzi); the guard
+            # refuses every spring.profiles.* key in config.
+            {{- $profile := include "customer.kafkaProfile" . }}
+            - name: SPRING_PROFILES_ACTIVE
+              value: {{ include "customer.envValue" (dict "where" "kafka.runtime" "value" $profile) }}
+          {{- if eq $profile "kafka-strimzi" }}
             - name: KAFKA_TLS_CERT
               valueFrom:
                 secretKeyRef:
-                  name: {{ required "kafkaTls.secretName is required for the kafka-strimzi profile" .Values.kafkaTls.secretName }}
-                  key: {{ .Values.kafkaTls.certKey }}
+                  name: {{ required "kafkaTls.secretName is required for the kafka-strimzi profile" .Values.kafkaTls.secretName | quote }}
+                  key: {{ .Values.kafkaTls.certKey | quote }}
             - name: KAFKA_TLS_KEY
               valueFrom:
                 secretKeyRef:
-                  name: {{ .Values.kafkaTls.secretName }}
-                  key: {{ .Values.kafkaTls.keyKey }}
+                  name: {{ .Values.kafkaTls.secretName | quote }}
+                  key: {{ .Values.kafkaTls.keyKey | quote }}
             - name: KAFKA_TLS_CA
               valueFrom:
                 secretKeyRef:
-                  name: {{ .Values.kafkaTls.secretName }}
-                  key: {{ .Values.kafkaTls.caKey }}
+                  name: {{ .Values.kafkaTls.secretName | quote }}
+                  key: {{ .Values.kafkaTls.caKey | quote }}
           {{- end }}
           envFrom:
             - configMapRef:

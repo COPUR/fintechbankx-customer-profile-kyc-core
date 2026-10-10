@@ -53,8 +53,9 @@ run Flyway as a Job: its pods carry `app.kubernetes.io/name=<service account>`
    1 otherwise. It starts no web server, JPA, Kafka, security, identity client
    or outbox relay.
 4. **Only the Job sees the owner credential.** The Job gets the `db-migration`
-   ExternalSecret, the same verified `DB_URL` (from values, checked by
-   `customer.validateDatabaseTls`), `DB_USERNAME`, the `rds-ca-bundle` mount
+   ExternalSecret, the same verified `DB_URL` (from values, checked by the
+   platform guard the Job template calls itself, `customer.guard`),
+   `DB_USERNAME`, the `rds-ca-bundle` mount
    and `DB_SSL_ROOT_CERT`. It has the app's pod and container security
    contexts (non-root, read-only root filesystem, all capabilities dropped).
    The `db-migration` ExternalSecret and the Job's own ServiceAccount (no IAM

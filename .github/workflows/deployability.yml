@@ -94,7 +94,8 @@ jobs:
             exit 1
           fi
           # The outbox relay stays off in the chart until mesh #11's MSK egress is applied (runbook step 6).
-          grep -qE '^  OUTBOX_RELAY_ENABLED: "false"$' <<<"$rendered"
+          # (ConfigMap keys are quoted, so a newline in a key cannot open another one.)
+          grep -qE '^  "OUTBOX_RELAY_ENABLED": "false"$' <<<"$rendered"
           # Kafka TLS env only for the kafka-strimzi profile, from the Secret named by kafkaTls.secretName. The
           # chart renders the only Spring profile, SPRING_PROFILES_ACTIVE on the Deployment, from kafka.runtime
           # (default msk -> kafka-msk); the ConfigMap carries none.
@@ -275,12 +276,13 @@ jobs:
           inject="$(mktemp -d)"
           printf 'config:\n  "LOG: \\"x\\"\\n  SPRING_CONFIG_IMPORT": "optional:file:/tmp/x.yml"\n' > "$inject/config-key.yaml"
           reject_render "is not a ConfigMap key" -f "$inject/config-key.yaml"
-          printf 'externalSecret:\n  remoteSecretName: "ci/customer-profile-kyc-service/db-app\\n        property: url\\n    - secretKey: SPRING_DATASOURCE_URL\\n      remoteRef:\\n        key: ci/customer-profile-kyc-service/db-app"\n' > "$inject/remote.yaml"
-          reject_render "externalSecret.data remoteSecretName" -f "$inject/remote.yaml"
-          printf 'externalSecret:\n  oidcClientSecretName: "ci/customer-profile-kyc-service/oidc-client\\n        property: x"\n' > "$inject/oidc.yaml"
-          reject_render "externalSecret.data remoteSecretName" -f "$inject/oidc.yaml"
-          printf 'externalSecret:\n  migrationSecretName: "ci/customer-profile-kyc-service/db-migration\\n        property: x"\n' > "$inject/migration.yaml"
-          reject_render "externalSecret.extraData remoteSecretName" -f "$inject/migration.yaml"
+          # --set-file takes precedence over the --set in $args, so these values really carry the newline.
+          printf 'ci/customer-profile-kyc-service/db-app\n        property: url\n    - secretKey: SPRING_DATASOURCE_URL\n      remoteRef:\n        key: ci/customer-profile-kyc-service/db-app' > "$inject/remote"
+          reject_render "externalSecret.data remoteSecretName" --set-file "externalSecret.remoteSecretName=$inject/remote"
+          printf 'ci/customer-profile-kyc-service/oidc-client\n        property: x' > "$inject/oidc"
+          reject_render "externalSecret.data remoteSecretName" --set-file "externalSecret.oidcClientSecretName=$inject/oidc"
+          printf 'ci/customer-profile-kyc-service/db-migration\n        property: x' > "$inject/migration"
+          reject_render "externalSecret.extraData remoteSecretName" --set-file "externalSecret.migrationSecretName=$inject/migration"
           printf 'serviceAccount:\n  name: "customer-profile-kyc-service\\n      hostNetwork: true"\n' > "$inject/sa.yaml"
           reject_render "serviceAccount.name must be a DNS-1123 label" -f "$inject/sa.yaml"
           # An env value the templates render is expanded by Kubernetes ($(VAR) from earlier entries and envFrom
@@ -319,7 +321,7 @@ jobs:
             echo "database-ca accepted a render without the rds-ca-bundle volume" >&2
             exit 1
           fi
-          grep -q "name: aws-secrets-manager" <<<"$rendered"
+          grep -qE 'name: "?aws-secrets-manager"?$' <<<"$rendered"
           grep -q "app: customer-profile-kyc-service" <<<"$rendered"
           if helm template ci "$chart" $base > /dev/null 2>&1; then
             echo "chart rendered without its required runtime config" >&2
@@ -354,7 +356,7 @@ jobs:
           helm template ci "$chart" $args --set kafka.runtime=strimzi --set kafkaTls.secretName=kafka-client-tls \
             | python3 scripts/ci/check-migration-job.py "$sa"
           grep -q "secretKey: DB_MIGRATION_USERNAME" <<<"$rendered"
-          grep -q "name: customer-profile-kyc-service-db-migration" <<<"$rendered"
+          grep -qE 'name: "?customer-profile-kyc-service-db-migration"?$' <<<"$rendered"
           # ...and the check catches each way back to the old shape.
           mutated() {
             python3 -c '

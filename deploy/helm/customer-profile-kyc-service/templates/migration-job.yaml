@@ -1,4 +1,4 @@
-{{- include "customer.validateDatabaseTls" . -}}
+{{- include "customer.guard" . -}}
 {{- include "customer.requireMigrationSecret" . -}}
 # Flyway runs here, never in the service pods (decision 0001). Helm runs this
 # Job before it creates or updates any regular resource of the release, on
@@ -12,7 +12,7 @@
 apiVersion: v1
 kind: ServiceAccount
 metadata:
-  name: {{ include "customer.migrationName" . }}
+  name: {{ include "customer.migrationName" . | quote }}
   labels:
     {{- include "customer.migrationLabels" . | nindent 4 }}
   annotations:
@@ -22,7 +22,7 @@ automountServiceAccountToken: false
 apiVersion: batch/v1
 kind: Job
 metadata:
-  name: {{ include "customer.migrationName" . }}
+  name: {{ include "customer.migrationName" . | quote }}
   labels:
     {{- include "customer.migrationLabels" . | nindent 4 }}
   annotations:
@@ -32,9 +32,9 @@ metadata:
     # or the next install or upgrade, which replaces it.
     helm.sh/hook-delete-policy: before-hook-creation
 spec:
-  backoffLimit: {{ .Values.migrationJob.backoffLimit }}
-  activeDeadlineSeconds: {{ .Values.migrationJob.activeDeadlineSeconds }}
-  ttlSecondsAfterFinished: {{ .Values.migrationJob.ttlSecondsAfterFinished }}
+  backoffLimit: {{ .Values.migrationJob.backoffLimit | int }}
+  activeDeadlineSeconds: {{ .Values.migrationJob.activeDeadlineSeconds | int }}
+  ttlSecondsAfterFinished: {{ .Values.migrationJob.ttlSecondsAfterFinished | int }}
   template:
     metadata:
       labels:
@@ -46,7 +46,7 @@ spec:
         # native sidecars an injected proxy would keep the Job from completing.
         sidecar.istio.io/inject: "false"
     spec:
-      serviceAccountName: {{ include "customer.migrationName" . }}
+      serviceAccountName: {{ include "customer.migrationName" . | quote }}
       restartPolicy: Never
       securityContext:
         {{- include "customer.podSecurityContext" . | nindent 8 }}
@@ -55,23 +55,25 @@ spec:
           # The service image in migrate-only mode (DatabaseMigration): Flyway
           # migrates as the schema owner, then the process exits.
           image: {{ include "customer.image" . | quote }}
-          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          imagePullPolicy: {{ .Values.image.pullPolicy | quote }}
           args: ["migrate"]
           envFrom:
             # DB_MIGRATION_USERNAME / DB_MIGRATION_PASSWORD (schema owner).
             - secretRef:
                 name: {{ include "customer.migrationSecretName" . }}
           env:
-            # The verified DB_URL of the app's ConfigMap (validateDatabaseTls), set
-            # here because the ConfigMap does not exist yet on a first install.
+            # The DB_URL of the app's ConfigMap, checked by the guard call at the top
+            # of this file, set here because the ConfigMap does not exist yet on a
+            # first install. No env value may hold '$(' (customer.envValue): it would
+            # expand from the db-migration secret's keys.
             - name: DB_URL
-              value: {{ .Values.config.DB_URL | quote }}
+              value: {{ include "customer.envValue" (dict "where" "config.DB_URL" "value" .Values.config.DB_URL) }}
             # The runtime role V13 grants (Flyway placeholder runtime_role).
             - name: DB_USERNAME
-              value: {{ .Values.config.DB_USERNAME | quote }}
+              value: {{ include "customer.envValue" (dict "where" "config.DB_USERNAME" "value" .Values.config.DB_USERNAME) }}
             # Aurora CA bundle; also turns on DatabaseTlsGuard.
             - name: DB_SSL_ROOT_CERT
-              value: {{ include "customer.databaseCaFile" . | quote }}
+              value: {{ include "customer.envValue" (dict "where" "databaseCa.mountPath/key" "value" (include "customer.databaseCaFile" .)) }}
           resources:
             {{- toYaml .Values.migrationJob.resources | nindent 12 }}
           securityContext:
