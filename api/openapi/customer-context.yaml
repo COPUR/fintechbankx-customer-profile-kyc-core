@@ -156,11 +156,17 @@ paths:
       operationId: getKycStatus
       description: |-
         KYC fields only, for the payment service and other callers that must
-        not see personal data. Callers: SERVICE tokens whose client (azp) is
-        on SERVICE_CALLERS_KYC (default svc-pay-initiation-settlement; the
-        credit allow-list does not apply here), BANKER, ADMIN, and the
-        customer themselves (customer_id claim). New capability with no
-        monolith counterpart.
+        not see personal data. Two services depend on this contract:
+        svc-pay-initiation-settlement reads the status before screening a
+        payment and refuses the payment, before any screening runs, when the
+        status is unknown (the customer cannot be read, the call fails, or
+        kycStatus is outside the enum); svc-cmp-evidence records the status
+        in its evidence. The kycStatus values, kycVerified and the response
+        shape are a breaking-change boundary for both. Callers: SERVICE
+        tokens whose client (azp) is on SERVICE_CALLERS_KYC (default
+        svc-pay-initiation-settlement; the credit allow-list does not apply
+        here), BANKER, ADMIN, and the customer themselves (customer_id
+        claim). New capability with no monolith counterpart.
       security:
         - bearerAuth: []
       parameters:
@@ -656,7 +662,11 @@ components:
 
     KycStatusResponse:
       type: object
-      description: KYC fields only; no name, e-mail, phone or address.
+      description: |-
+        KYC fields only; no name, e-mail, phone or address. Depended on by
+        svc-pay-initiation-settlement (refuses a payment before screening
+        when the status is unknown) and svc-cmp-evidence (evidence record):
+        the enum values and kycVerified are a breaking-change boundary.
       required: [customerId, kycVerified, kycStatus, kycSource]
       properties:
         customerId:
