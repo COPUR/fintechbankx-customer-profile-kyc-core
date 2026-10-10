@@ -62,6 +62,9 @@ final class PostgresTestDatabase {
         // Migration owner: what Flyway connects as.
         registry.add("DB_MIGRATION_USERNAME", () -> ownerUser);
         registry.add("DB_MIGRATION_PASSWORD", () -> ownerPassword);
+        // In the cluster the migration Job migrates and the service only validates
+        // (DatabaseMigrationIT covers both); test contexts keep migrating as the owner.
+        registry.add("customer.database.flyway", () -> "migrate");
     }
 
     static synchronized String url() {
