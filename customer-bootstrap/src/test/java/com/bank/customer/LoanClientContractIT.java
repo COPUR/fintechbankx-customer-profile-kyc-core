@@ -135,7 +135,11 @@ class LoanClientContractIT {
             422, "RESERVATION_NOT_FOUND");
         assertCreditPosition(ok(move("release", customerId, "LOAN-81:reserve:compensation", "2500.00", "AED", "LOAN-81")),
             customerId, "10000.00", "1000.00", "9000.00");
+        // Fully released: the reservation holds nothing any more, so the loan's sweep reads "nothing left"
+        // (RESERVATION_NOT_FOUND), not "released too much", whatever the amount.
         assertError(move("release", customerId, "LOAN-81:release", "0.01", "AED", "LOAN-81"),
+            422, "RESERVATION_NOT_FOUND");
+        assertError(move("release", customerId, "LOAN-82:release", "1000.01", "AED", "LOAN-82"),
             422, "RELEASE_EXCEEDS_RESERVATION");
     }
 
