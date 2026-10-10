@@ -142,6 +142,26 @@ class CustomerCreditReleaseTest {
         assertThat(none.remaining()).isEqualTo(aed("0.00"));
     }
 
+    /** Loan reconciliation: the events name the loan (reservation reference); untracked movements carry none. */
+    @Test
+    void creditEventsCarryTheReferenceOfTheReservationTheyTouch() {
+        Customer customer = customer("10000.00");
+        CreditReservation loan1 = customer.reserveCredit(aed("3000.00"), none(customer, "LOAN-1"));
+        customer.reserveCredit(aed("500.00"));                      // untracked
+        customer.releaseCredit(aed("1000.00"), loan1);
+        customer.releaseUntrackedCredit(aed("500.00"), aed("2000.00"));
+
+        assertThat(customer.getDomainEvents()).hasSize(4);
+        assertThat(customer.getDomainEvents().get(0)).isInstanceOfSatisfying(CustomerCreditReservedEvent.class,
+            event -> assertThat(event.getReference()).contains("LOAN-1"));
+        assertThat(customer.getDomainEvents().get(1)).isInstanceOfSatisfying(CustomerCreditReservedEvent.class,
+            event -> assertThat(event.getReference()).isEmpty());
+        assertThat(customer.getDomainEvents().get(2)).isInstanceOfSatisfying(CustomerCreditReleasedEvent.class,
+            event -> assertThat(event.getReference()).contains("LOAN-1"));
+        assertThat(customer.getDomainEvents().get(3)).isInstanceOfSatisfying(CustomerCreditReleasedEvent.class,
+            event -> assertThat(event.getReference()).isEmpty());
+    }
+
     private static CreditReservation none(Customer customer, String reference) {
         return CreditReservation.none(customer.getId(), reference, AED);
     }

@@ -155,6 +155,27 @@ class CustomerEventEnvelopeFactoryTest {
         assertThat(envelope.at("/data/reservedAmount/currency").asText()).isEqualTo("AED");
     }
 
+    /** The payload names the loan (the reservation reference) so consumers can reconcile; untracked movements omit it. */
+    @Test
+    void creditEventsCarryTheReservationReferenceWhenThereIsOne() throws Exception {
+        Customer customer = customer("CUST-ENV-REF");
+        com.bank.customer.domain.CreditReservation loan = customer.reserveCredit(Money.aed(new BigDecimal("3000.00")),
+            com.bank.customer.domain.CreditReservation.none(customer.getId(), "LOAN-7", java.util.Currency.getInstance("AED")));
+        customer.releaseCredit(Money.aed(new BigDecimal("1000.00")), loan);
+        customer.reserveCredit(Money.aed(new BigDecimal("500.00")));
+        customer.releaseUntrackedCredit(Money.aed(new BigDecimal("500.00")), Money.aed(new BigDecimal("2000.00")));
+        List<DomainEvent> events = customer.getDomainEvents();
+
+        assertThat(CustomerEventEnvelopeFactory.map(events.get(1)).data())
+            .containsOnlyKeys("customerId", "reservedAmount", "reference").containsEntry("reference", "LOAN-7");
+        assertThat(CustomerEventEnvelopeFactory.map(events.get(2)).data())
+            .containsOnlyKeys("customerId", "releasedAmount", "reference").containsEntry("reference", "LOAN-7");
+        assertThat(CustomerEventEnvelopeFactory.map(events.get(3)).data()).containsOnlyKeys("customerId", "reservedAmount");
+        assertThat(CustomerEventEnvelopeFactory.map(events.get(4)).data()).containsOnlyKeys("customerId", "releasedAmount");
+        JsonNode untracked = json.readTree(factory.toOutboxRow(customer, events.get(4), "corr-ref").getPayload());
+        assertThat(untracked.at("/data/reference").isMissingNode()).as("no null reference on the wire").isTrue();
+    }
+
     @Test
     void eventsWithoutAPublicContractAreRejected() {
         DomainEvent unknown = new DomainEvent() {

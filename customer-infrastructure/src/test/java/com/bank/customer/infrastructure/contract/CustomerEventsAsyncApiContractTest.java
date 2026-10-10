@@ -119,6 +119,21 @@ class CustomerEventsAsyncApiContractTest {
         return (String) ((Map<String, Object>) properties.get("eventType")).get("const");
     }
 
+    /** Additive: CreditReserved and CreditReleased name the loan through an optional reference (absent when untracked). */
+    @Test
+    @SuppressWarnings("unchecked")
+    void creditEventsDeclareAnOptionalReference() throws IOException {
+        Map<String, Object> spec = new Yaml().load(Files.readString(SPEC));
+        Map<String, Object> schemas = (Map<String, Object>) ((Map<String, Object>) spec.get("components")).get("schemas");
+
+        for (String name : List.of("CustomerCreditReservedData", "CustomerCreditReleasedData")) {
+            Map<String, Object> schema = (Map<String, Object>) schemas.get(name);
+            Map<String, Object> reference = (Map<String, Object>) ((Map<String, Object>) schema.get("properties")).get("reference");
+            assertThat(reference).as("%s.reference", name).isNotNull().containsEntry("type", "string");
+            assertThat((List<String>) schema.get("required")).as("%s required", name).doesNotContain("reference");
+        }
+    }
+
     /**
      * The contract is unreleased (absent on main, topics not created, catalog
      * #11 unmerged): edits such as the credit score removal stay at 1.0.0
