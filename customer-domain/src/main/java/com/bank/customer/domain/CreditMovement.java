@@ -5,13 +5,17 @@ import com.bank.shared.kernel.domain.Money;
 
 import java.time.Instant;
 import java.util.Objects;
+import java.util.Optional;
 import java.util.UUID;
 
 /**
  * One reserve or release of a customer's credit, keyed by the caller's
  * idempotency key so a retried request is applied once. The optional
  * reference names what the credit was moved for (for example a loan id), so
- * reservations can be released and reconciled per loan.
+ * reservations can be released and reconciled per loan. The position the
+ * movement left behind (limit, used and available credit, in the movement's
+ * currency) is kept so a replay answers exactly as the original call did;
+ * movements journalled before that was recorded (Flyway V12) carry none.
  */
 public record CreditMovement(
     UUID movementId,
@@ -20,7 +24,8 @@ public record CreditMovement(
     Type type,
     Money amount,
     String reference,
-    Instant occurredAt
+    Instant occurredAt,
+    CreditProfile positionAfter
 ) {
 
     public static final int MAX_KEY_LENGTH = 128;
@@ -40,6 +45,20 @@ public record CreditMovement(
         if (reference != null && (reference.isBlank() || reference.length() > MAX_REFERENCE_LENGTH)) {
             throw new IllegalArgumentException("Reference must be 1 to " + MAX_REFERENCE_LENGTH + " characters");
         }
+        if (positionAfter != null && !positionAfter.getCreditLimit().getCurrency().equals(amount.getCurrency())) {
+            throw new IllegalArgumentException("The position left behind must be in the movement's currency");
+        }
+    }
+
+    /** A movement whose position is unknown: journalled before V12 recorded it. */
+    public CreditMovement(UUID movementId, CustomerId customerId, String idempotencyKey, Type type, Money amount,
+                          String reference, Instant occurredAt) {
+        this(movementId, customerId, idempotencyKey, type, amount, reference, occurredAt, null);
+    }
+
+    /** The position this movement left behind, if it was recorded. */
+    public Optional<CreditProfile> position() {
+        return Optional.ofNullable(positionAfter);
     }
 
     /**

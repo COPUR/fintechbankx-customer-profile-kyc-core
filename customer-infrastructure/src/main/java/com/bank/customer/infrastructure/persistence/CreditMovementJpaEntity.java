@@ -11,7 +11,8 @@ import java.util.UUID;
 
 /**
  * Row of sc_cus_profile_kyc.credit_movement: one applied reserve or release,
- * unique per (customer_id, idempotency_key).
+ * unique per (customer_id, idempotency_key), with the position it left behind
+ * (V12; null on rows journalled before it).
  */
 @Entity
 @Table(name = "credit_movement")
@@ -42,11 +43,21 @@ public class CreditMovementJpaEntity {
     @Column(name = "occurred_at", nullable = false, updatable = false)
     private Instant occurredAt;
 
+    @Column(name = "credit_limit_after", precision = 19, scale = 4, updatable = false)
+    private BigDecimal creditLimitAfter;
+
+    @Column(name = "used_credit_after", precision = 19, scale = 4, updatable = false)
+    private BigDecimal usedCreditAfter;
+
+    @Column(name = "available_credit_after", precision = 19, scale = 4, updatable = false)
+    private BigDecimal availableCreditAfter;
+
     protected CreditMovementJpaEntity() {
     }
 
     CreditMovementJpaEntity(UUID movementId, String customerId, String idempotencyKey, String movementType,
-                            String currency, BigDecimal amount, String reference, Instant occurredAt) {
+                            String currency, BigDecimal amount, String reference, Instant occurredAt,
+                            BigDecimal creditLimitAfter, BigDecimal usedCreditAfter, BigDecimal availableCreditAfter) {
         this.movementId = movementId;
         this.customerId = customerId;
         this.idempotencyKey = idempotencyKey;
@@ -55,6 +66,9 @@ public class CreditMovementJpaEntity {
         this.amount = amount;
         this.reference = reference;
         this.occurredAt = occurredAt;
+        this.creditLimitAfter = creditLimitAfter;
+        this.usedCreditAfter = usedCreditAfter;
+        this.availableCreditAfter = availableCreditAfter;
     }
 
     public UUID getMovementId() { return movementId; }
@@ -65,4 +79,7 @@ public class CreditMovementJpaEntity {
     public BigDecimal getAmount() { return amount; }
     public String getReference() { return reference; }
     public Instant getOccurredAt() { return occurredAt; }
+    public BigDecimal getCreditLimitAfter() { return creditLimitAfter; }
+    public BigDecimal getUsedCreditAfter() { return usedCreditAfter; }
+    public BigDecimal getAvailableCreditAfter() { return availableCreditAfter; }
 }

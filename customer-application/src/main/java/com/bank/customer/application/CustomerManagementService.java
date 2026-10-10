@@ -152,7 +152,7 @@ public class CustomerManagementService implements RegisterCustomerUseCase, GetCu
     /** FR-003: reserve credit once per idempotency key. */
     @Override
     public CreditPosition reserveCredit(CreditMovementCommand command) {
-        return CreditPosition.of(moveCredit(CreditMovement.Type.RESERVE, command));
+        return moveCredit(CreditMovement.Type.RESERVE, command);
     }
 
     /**
@@ -167,10 +167,18 @@ public class CustomerManagementService implements RegisterCustomerUseCase, GetCu
      */
     @Override
     public CreditPosition releaseCredit(CreditMovementCommand command) {
-        return CreditPosition.of(moveCredit(CreditMovement.Type.RELEASE, command));
+        return moveCredit(CreditMovement.Type.RELEASE, command);
     }
 
-    private Customer moveCredit(CreditMovement.Type type, CreditMovementCommand command) {
+    /**
+     * Applies the movement once per idempotency key and answers with the
+     * position it left behind. A replay (same key, same instruction) answers
+     * with the position recorded for the original movement (V12), so the
+     * caller gets the same answer as the first call whatever has moved since;
+     * movements journalled before V12 carry no position and answer with the
+     * current one.
+     */
+    private CreditPosition moveCredit(CreditMovement.Type type, CreditMovementCommand command) {
         Customer customer = load(command.customerId());
 
         Optional<CreditMovement> previous = creditMovements.find(command.customerId(), command.idempotencyKey());
@@ -178,7 +186,9 @@ public class CustomerManagementService implements RegisterCustomerUseCase, GetCu
             if (!previous.get().sameInstruction(type, command.amount(), command.reference())) {
                 throw IdempotencyKeyConflictException.forKey(command.idempotencyKey());
             }
-            return customer;
+            return previous.get().position()
+                .map(position -> CreditPosition.of(customer.getId(), position))
+                .orElseGet(() -> CreditPosition.of(customer));
         }
 
         Optional<CreditReservation> reservation = command.reference() == null
@@ -211,8 +221,8 @@ public class CustomerManagementService implements RegisterCustomerUseCase, GetCu
         Customer saved = saveAndPublish(customer);
         changed.ifPresent(creditReservations::save);
         creditMovements.record(new CreditMovement(UUID.randomUUID(), command.customerId(), command.idempotencyKey(),
-            type, command.amount(), command.reference(), clock.instant()));
-        return saved;
+            type, command.amount(), command.reference(), clock.instant(), saved.getCreditProfile()));
+        return CreditPosition.of(saved);
     }
 
     /**

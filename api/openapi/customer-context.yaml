@@ -319,10 +319,13 @@ paths:
         Called by other services (SERVICE realm role, calling client on the
         service's allowed list) and staff. x-idempotency-key is required. A
         repeat is recognised only when the whole movement matches: the same
-        key, movement type, amount, currency and reference return the current
-        position without moving credit again; the same key with any of these
-        different is 409 IDEMPOTENCY_KEY_REUSED. The answer is the credit
-        position only (no personal data).
+        key, movement type, amount, currency and reference return the position
+        the original movement left behind (the same answer as the first call,
+        whatever has moved since) without moving credit again; movements
+        journalled before that position was recorded (Flyway V12) answer with
+        the current position. The same key with any of these different is 409
+        IDEMPOTENCY_KEY_REUSED. The answer is the credit position only (no
+        personal data).
       security:
         - bearerAuth: []
       parameters:
@@ -390,10 +393,13 @@ paths:
         Called by other services (SERVICE realm role, calling client on the
         service's allowed list) and staff. x-idempotency-key is required. A
         repeat is recognised only when the whole movement matches: the same
-        key, movement type, amount, currency and reference return the current
-        position without moving credit again; the same key with any of these
-        different is 409 IDEMPOTENCY_KEY_REUSED. The answer is the credit
-        position only (no personal data).
+        key, movement type, amount, currency and reference return the position
+        the original movement left behind (the same answer as the first call,
+        whatever has moved since) without moving credit again; movements
+        journalled before that position was recorded (Flyway V12) answer with
+        the current position. The same key with any of these different is 409
+        IDEMPOTENCY_KEY_REUSED. The answer is the credit position only (no
+        personal data).
 
         Release by reference: a reference that names one of the customer's
         reservations (the reference sent with earlier reserves) releases at

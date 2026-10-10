@@ -1,5 +1,6 @@
 package com.bank.customer.domain.port.in;
 
+import com.bank.customer.domain.CreditProfile;
 import com.bank.customer.domain.Customer;
 import com.bank.shared.kernel.domain.CustomerId;
 import com.bank.shared.kernel.domain.Money;
@@ -16,8 +17,11 @@ public record CreditPosition(
 ) {
 
     public static CreditPosition of(Customer customer) {
-        var credit = customer.getCreditProfile();
-        return new CreditPosition(customer.getId(), credit.getCreditLimit(), credit.getUsedCredit(),
-            credit.getAvailableCredit());
+        return of(customer.getId(), customer.getCreditProfile());
+    }
+
+    /** The position a credit profile describes, for example the one a journalled movement left behind. */
+    public static CreditPosition of(CustomerId customerId, CreditProfile credit) {
+        return new CreditPosition(customerId, credit.getCreditLimit(), credit.getUsedCredit(), credit.getAvailableCredit());
     }
 }

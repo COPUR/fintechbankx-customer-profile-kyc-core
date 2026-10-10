@@ -1,6 +1,7 @@
 package com.bank.customer.infrastructure.persistence;
 
 import com.bank.customer.domain.CreditMovement;
+import com.bank.customer.domain.CreditProfile;
 import com.bank.customer.domain.port.out.CreditMovementJournal;
 import com.bank.shared.kernel.domain.CustomerId;
 import com.bank.shared.kernel.domain.Money;
@@ -36,6 +37,7 @@ public class JpaCreditMovementJournal implements CreditMovementJournal {
     @Override
     @Transactional(propagation = Propagation.MANDATORY)
     public void record(CreditMovement movement) {
+        Optional<CreditProfile> position = movement.position();
         movements.saveAndFlush(new CreditMovementJpaEntity(
             movement.movementId(),
             movement.customerId().getValue(),
@@ -44,17 +46,26 @@ public class JpaCreditMovementJournal implements CreditMovementJournal {
             movement.amount().getCurrency().getCurrencyCode(),
             movement.amount().getAmount(),
             movement.reference(),
-            movement.occurredAt()));
+            movement.occurredAt(),
+            position.map(p -> p.getCreditLimit().getAmount()).orElse(null),
+            position.map(p -> p.getUsedCredit().getAmount()).orElse(null),
+            position.map(p -> p.getAvailableCredit().getAmount()).orElse(null)));
     }
 
     static CreditMovement toDomain(CreditMovementJpaEntity row) {
+        Currency currency = Currency.getInstance(row.getCurrency());
+        // Rows journalled before V12 have no position (the replay then answers with the current one).
+        CreditProfile position = row.getCreditLimitAfter() == null || row.getUsedCreditAfter() == null
+            ? null
+            : CreditProfile.create(Money.of(row.getCreditLimitAfter(), currency), Money.of(row.getUsedCreditAfter(), currency));
         return new CreditMovement(
             row.getMovementId(),
             CustomerId.of(row.getCustomerId()),
             row.getIdempotencyKey(),
             CreditMovement.Type.valueOf(row.getMovementType()),
-            Money.of(row.getAmount(), Currency.getInstance(row.getCurrency())),
+            Money.of(row.getAmount(), currency),
             row.getReference(),
-            row.getOccurredAt());
+            row.getOccurredAt(),
+            position);
     }
 }
