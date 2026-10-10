@@ -31,7 +31,8 @@ import static org.springframework.test.web.servlet.request.MockMvcRequestBuilder
  * reservation still holds (else 422 RELEASE_EXCEEDS_RESERVATION); a release
  * naming no known reservation releases at most the untracked used credit,
  * used credit minus all open reservations (else 422 RESERVATION_NOT_FOUND).
- * Idempotency-key replays answer as before.
+ * Idempotency-key replays answer with the position recorded for the original
+ * movement (V12).
  */
 @SpringBootTest(properties = "customer.outbox.relay.enabled=false")
 @AutoConfigureMockMvc
@@ -73,8 +74,10 @@ class CreditReservationIT {
         // Nothing held any more: the same answer as an unknown reference (loan's sweep relies on it).
         assertRefused(move("release", customerId, "LOAN-1:part-4", "0.01", "LOAN-1"), "RESERVATION_NOT_FOUND");
 
-        // A replay of an applied release still answers 200 with the current position and moves nothing.
-        assertPosition(move("release", customerId, "LOAN-1:part-1", "1000.00", "LOAN-1"), "0.00");
+        // A replay of an applied release answers 200 with the position recorded for the original call
+        // (used 2000.00 after part-1), not the current position (0.00), and moves nothing.
+        assertPosition(move("release", customerId, "LOAN-1:part-1", "1000.00", "LOAN-1"), "2000.00");
+        assertUsed(customerId, "0.00");
         assertThat(jdbc.queryForObject("select count(*) from sc_cus_profile_kyc.credit_movement where customer_id = ?",
             Integer.class, customerId)).isEqualTo(3);
         assertThat(jdbc.queryForObject("select count(*) from sc_cus_profile_kyc.outbox_event where aggregate_id = ? "

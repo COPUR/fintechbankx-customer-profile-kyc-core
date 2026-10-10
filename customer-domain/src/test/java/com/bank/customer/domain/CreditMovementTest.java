@@ -42,6 +42,25 @@ class CreditMovementTest {
         assertThat(forLoan1.sameInstruction(CreditMovement.Type.RESERVE, AMOUNT, null)).isFalse();
     }
 
+    /**
+     * The position the movement left behind (V12) is kept so a replay answers
+     * as the original call did; movements journalled before V12 have none.
+     */
+    @Test
+    void thePositionLeftBehindIsOptional() {
+        CreditProfile after = CreditProfile.create(Money.aed(new BigDecimal("5000.00")), Money.aed(new BigDecimal("250.00")));
+        CreditMovement withPosition = new CreditMovement(UUID.randomUUID(), CustomerId.of("C-1"), "key-p",
+            CreditMovement.Type.RESERVE, AMOUNT, null, Instant.EPOCH, after);
+
+        assertThat(withPosition.position()).contains(after);
+        assertThat(movement("key-legacy").position()).isEmpty();
+        assertThatThrownBy(() -> new CreditMovement(UUID.randomUUID(), CustomerId.of("C-1"), "key-x",
+            CreditMovement.Type.RESERVE, AMOUNT, null, Instant.EPOCH,
+            CreditProfile.create(Money.usd(new BigDecimal("5000.00")), Money.usd(new BigDecimal("250.00")))))
+            .as("the position is in the movement's currency")
+            .isInstanceOf(IllegalArgumentException.class);
+    }
+
     @Test
     void keyMustBePresentAndBounded() {
         assertThatThrownBy(() -> movement(" ")).isInstanceOf(IllegalArgumentException.class);

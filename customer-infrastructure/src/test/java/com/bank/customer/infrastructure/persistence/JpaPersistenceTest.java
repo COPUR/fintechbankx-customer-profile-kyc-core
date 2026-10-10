@@ -135,6 +135,36 @@ class JpaPersistenceTest {
             .isInstanceOf(DataIntegrityViolationException.class);
     }
 
+    /** V12: the position a movement left behind round-trips; rows from before V12 read back without one. */
+    @Test
+    void theJournalKeepsThePositionAMovementLeftBehind() {
+        repository.save(newCustomer("CUST-JPA-POS", "jpapos@example.com"));
+        CustomerId id = CustomerId.of("CUST-JPA-POS");
+        Instant at = Instant.now().truncatedTo(ChronoUnit.MICROS);
+        com.bank.customer.domain.CreditProfile after = com.bank.customer.domain.CreditProfile.create(
+            Money.aed(new BigDecimal("10000.00")), Money.aed(new BigDecimal("1250.50")));
+
+        journal.record(new CreditMovement(UUID.randomUUID(), id, "LOAN-P:reserve", CreditMovement.Type.RESERVE,
+            Money.aed(new BigDecimal("1250.50")), "LOAN-P", at, after));
+        jdbc.update("insert into sc_cus_profile_kyc.credit_movement (movement_id, customer_id, idempotency_key, movement_type, "
+            + "currency, amount, reference, occurred_at) values (gen_random_uuid(), 'CUST-JPA-POS', 'pre-v12', 'RESERVE', 'AED', "
+            + "100.00, null, now())");
+
+        assertThat(journal.find(id, "LOAN-P:reserve")).get().satisfies(found -> {
+            assertThat(found.position()).contains(after);
+            assertThat(found.position().orElseThrow().getAvailableCredit()).isEqualTo(Money.aed(new BigDecimal("8749.50")));
+        });
+        assertThat(journal.find(id, "pre-v12")).get().satisfies(found -> assertThat(found.position()).isEmpty());
+        assertThat(jdbc.queryForObject("select available_credit_after from sc_cus_profile_kyc.credit_movement "
+            + "where customer_id = 'CUST-JPA-POS' and idempotency_key = 'LOAN-P:reserve'", BigDecimal.class))
+            .isEqualByComparingTo("8749.50");
+        // ck_credit_movement_position: all three columns or none, consistent with each other.
+        assertViolates("update sc_cus_profile_kyc.credit_movement set available_credit_after = 1 "
+            + "where customer_id = 'CUST-JPA-POS' and idempotency_key = 'LOAN-P:reserve'");
+        assertViolates("update sc_cus_profile_kyc.credit_movement set used_credit_after = null "
+            + "where customer_id = 'CUST-JPA-POS' and idempotency_key = 'LOAN-P:reserve'");
+    }
+
     /** V10: one row per (customer, reference); the open amount sums what is still reserved. */
     @Test
     void reservationsAreStoredPerReferenceAndTheirOpenAmountIsSummed() {

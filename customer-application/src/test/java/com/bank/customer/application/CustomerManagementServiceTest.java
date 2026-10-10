@@ -2,6 +2,7 @@ package com.bank.customer.application;
 
 import com.bank.customer.application.dto.CreateCustomerRequestWithCreditScore;
 import com.bank.customer.domain.CreditMovement;
+import com.bank.customer.domain.CreditProfile;
 import com.bank.customer.domain.Customer;
 import com.bank.customer.domain.CustomerCreditReservedEvent;
 import com.bank.customer.domain.CustomerNotFoundException;
@@ -321,6 +322,59 @@ class CustomerManagementServiceTest {
         assertThat(response.usedCredit().isZero()).isTrue();
         verifyNoInteractions(creditReservations, eventPublisher);
         verify(customerRepository, never()).save(any(Customer.class));
+    }
+
+    /**
+     * Review 5478760715 (customer #13): a replay returns the answer the
+     * original call gave, not the position after later movements. The journal
+     * keeps the position each movement left behind (V12) and the replay is
+     * built from it.
+     */
+    @Test
+    void aReplayAnswersWithThePositionRecordedForTheOriginalMovement() {
+        Customer customer = existingCustomer();                       // limit 5000, used 0 today
+        when(customerRepository.findById(CustomerId.of("CUST-IDEM"))).thenReturn(Optional.of(customer));
+        when(creditMovements.find(CustomerId.of("CUST-IDEM"), "LOAN-7:reserve")).thenReturn(Optional.of(
+            new CreditMovement(UUID.randomUUID(), CustomerId.of("CUST-IDEM"), "LOAN-7:reserve", CreditMovement.Type.RESERVE,
+                aed("1000.00"), "LOAN-7", NOW, CreditProfile.create(aed("5000.00"), aed("1000.00")))));
+
+        CreditPosition response = service.reserveCredit(move("CUST-IDEM", "1000.00", "LOAN-7:reserve", "LOAN-7"));
+
+        assertThat(response).isEqualTo(new CreditPosition(CustomerId.of("CUST-IDEM"), aed("5000.00"), aed("1000.00"), aed("4000.00")));
+        assertThat(customer.getCreditProfile().getUsedCredit()).as("nothing moved").isEqualTo(aed("0.00"));
+        verify(customerRepository, never()).save(any(Customer.class));
+        verifyNoInteractions(creditReservations, eventPublisher);
+    }
+
+    /** Movements journalled before V12 carry no position: the replay falls back to the current position. */
+    @Test
+    void aReplayOfAMovementWithoutARecordedPositionAnswersTheCurrentPosition() {
+        Customer customer = existingCustomer();
+        customer.reserveCredit(aed("300.00"));
+        when(customerRepository.findById(CustomerId.of("CUST-IDEM"))).thenReturn(Optional.of(customer));
+        when(creditMovements.find(CustomerId.of("CUST-IDEM"), "old-key")).thenReturn(Optional.of(
+            new CreditMovement(UUID.randomUUID(), CustomerId.of("CUST-IDEM"), "old-key", CreditMovement.Type.RESERVE,
+                aed("1000.00"), null, NOW)));
+
+        CreditPosition response = service.reserveCredit(move("CUST-IDEM", "1000.00", "old-key", null));
+
+        assertThat(response.usedCredit()).isEqualTo(aed("300.00"));
+        assertThat(response.availableCredit()).isEqualTo(aed("4700.00"));
+    }
+
+    /** Every new movement is journalled with the position it left behind, which is also the answer. */
+    @Test
+    void aMovementIsJournalledWithThePositionItLeftBehind() {
+        Customer customer = existingCustomer();
+        when(customerRepository.findById(CustomerId.of("CUST-IDEM"))).thenReturn(Optional.of(customer));
+        when(customerRepository.save(any(Customer.class))).thenAnswer(invocation -> invocation.getArgument(0));
+
+        CreditPosition response = service.reserveCredit(move("CUST-IDEM", "1250.50", "key-p", null));
+
+        ArgumentCaptor<CreditMovement> movement = ArgumentCaptor.forClass(CreditMovement.class);
+        verify(creditMovements).record(movement.capture());
+        assertThat(movement.getValue().position()).contains(CreditProfile.create(aed("5000.00"), aed("1250.50")));
+        assertThat(response).isEqualTo(new CreditPosition(CustomerId.of("CUST-IDEM"), aed("5000.00"), aed("1250.50"), aed("3749.50")));
     }
 
     @Test
