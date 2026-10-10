@@ -60,15 +60,17 @@ AsyncAPI breaking-change gate (ADR-019 section 5): `scripts/ci/asyncapi/asyncapi
 
 Published events (contract: [`api/asyncapi/svc-cus-profile-kyc.yaml`](api/asyncapi/svc-cus-profile-kyc.yaml), written through the transactional outbox):
 
-| Topic | When |
+All customer events go to one topic per aggregate (ADR-019), `evt.cus.customer.v1`, keyed by customer id, so each customer's events stay in order in one partition. Each record carries the UTF-8 headers `eventType` (same as the envelope `eventType`), `eventId` and `correlationId`, plus `traceparent` when the request carried one. Consumers read the `eventType` header and skip event types they do not handle: they commit the offset, never fail and never dead-letter them, so a new event type is additive. A breaking change to one event is a new eventType `...v2` on the same topic, published alongside the old one until consumers move; the topic major changes only for a key, partition-count or cleanup-policy change. Pending outbox rows from before this change are moved to the aggregate topic by Flyway V11.
+
+| Event type (header `eventType`) on `evt.cus.customer.v1` | When |
 |---|---|
-| `evt.cus.customer.created.v1` | A customer is registered |
-| `evt.cus.customer.contact-updated.v1` | Contact details change |
-| `evt.cus.customer.credit-limit-updated.v1` | The credit limit changes |
-| `evt.cus.customer.credit-reserved.v1` | Credit is reserved (for example for a loan) |
-| `evt.cus.customer.credit-released.v1` | Reserved credit is released |
-| `evt.cus.customer.credit-score-updated.v1` | The credit score changes (customer id and time only; the score is read through `GET .../credit`) |
-| `evt.cus.customer.kyc-status-changed.v1` | Staff verify or reject the KYC status |
+| `Customer.Customer.Created.v1` | A customer is registered |
+| `Customer.Customer.ContactUpdated.v1` | Contact details change |
+| `Customer.Customer.CreditLimitUpdated.v1` | The credit limit changes |
+| `Customer.Customer.CreditReserved.v1` | Credit is reserved (for example for a loan) |
+| `Customer.Customer.CreditReleased.v1` | Reserved credit is released |
+| `Customer.Customer.CreditScoreUpdated.v1` | The credit score changes (customer id and time only; the score is read through `GET .../credit`) |
+| `Customer.Customer.KycStatusChanged.v1` | Staff verify or reject the KYC status |
 
 Credit release by reference (Flyway V10, table `credit_reservation`): a reserve with a `reference` (the loan id) is tracked per customer and reference. A release naming that reference releases at most what the reservation still holds (partial releases are fine), otherwise 422 `RELEASE_EXCEEDS_RESERVATION`. A release with no reference, or one that matches no reservation, releases at most the untracked used credit (used credit minus all open reservations, for example a balance migrated from the monolith), otherwise 422 `RESERVATION_NOT_FOUND`. Nothing is floored at zero. A replayed `x-idempotency-key` is answered as before. See the runbook, section 1.
 
