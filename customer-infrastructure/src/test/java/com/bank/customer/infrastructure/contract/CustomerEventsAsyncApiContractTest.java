@@ -41,7 +41,34 @@ class CustomerEventsAsyncApiContractTest {
         });
 
         assertThat(suffixes).as("one topic version across the contract").hasSize(1);
-        assertThat(version.split("\\.")[0]).as("info.version %s major", version).isEqualTo(suffixes.iterator().next());
+        // Unreleased contract (absent on main, topics not created): exactly <topic major>.0.0. A 1.1.0 or 2.0.0 on a
+        // .v1 topic fails here; a minor bump becomes legitimate only once the contract has been released.
+        Matcher released = Pattern.compile("^(\\d+)\\.0\\.0$").matcher(version);
+        assertThat(released.matches()).as("info.version %s is <topic major>.0.0 while unreleased", version).isTrue();
+        assertThat(released.group(1)).as("info.version %s major", version).isEqualTo(suffixes.iterator().next());
+    }
+
+    /**
+     * ADR-019 s1: this service consumes nothing, so it owns no dead-letter
+     * topic and the contract describes none. Every component message is bound
+     * to the aggregate channel; no message or schema is a DeadLetter.
+     */
+    @Test
+    @SuppressWarnings("unchecked")
+    void theContractDescribesNoDeadLetterTopicAndBindsEveryMessageToTheChannel() throws IOException {
+        Map<String, Object> spec = new Yaml().load(Files.readString(SPEC));
+        Map<String, Object> components = (Map<String, Object>) spec.get("components");
+        Map<String, Object> channel = (Map<String, Object>) ((Map<String, Object>) spec.get("channels")).values()
+            .iterator().next();
+        Set<String> bound = new TreeSet<>();
+        for (Object ref : ((Map<String, Object>) channel.get("messages")).values()) {
+            bound.add(((String) ((Map<String, Object>) ref).get("$ref")).substring("#/components/messages/".length()));
+        }
+
+        assertThat(((Map<String, Object>) components.get("messages")).keySet())
+            .as("every component message is bound to the channel").containsExactlyInAnyOrderElementsOf(bound);
+        assertThat(((Map<String, Object>) components.get("schemas")).keySet()).noneMatch(name -> name.contains("DeadLetter"));
+        assertThat(Files.readString(SPEC)).doesNotContainIgnoringCase("DeadLetter");
     }
 
     private static final String TOPIC = "evt.cus.customer.v1";
