@@ -1,2 +1,4 @@
-# Waivers of the OpenAPI breaking-change gate need the API owner's review.
+# Waivers of the OpenAPI and AsyncAPI breaking-change gates need the API owner's review
+# (any *.accepted-breaking.txt, as in delivery-iac-cicd-templates #11 13d09a1).
 api/openapi/*.accepted-breaking.txt @COPUR
+**/*.accepted-breaking.txt @COPUR
