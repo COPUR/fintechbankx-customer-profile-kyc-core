@@ -1,0 +1,25 @@
+package com.bank.customer.infrastructure.config;
+
+import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
+import org.springframework.context.annotation.Bean;
+import org.springframework.context.annotation.Configuration;
+import org.springframework.core.env.Environment;
+
+/**
+ * Registers {@link KafkaTlsGuard} when the outbox relay is on and the chart
+ * has mounted the RDS CA bundle (DB_SSL_ROOT_CERT is always set there, so the
+ * service runs in a cluster and must publish over SASL_SSL or SSL). With the
+ * relay off nothing publishes; without the bundle (local runs, tests) the
+ * guard stays off, as {@link DatabaseTlsGuard} does.
+ */
+@Configuration(proxyBeanMethods = false)
+@ConditionalOnProperty(name = KafkaTlsGuard.RELAY_PROPERTY, havingValue = "true")
+public class KafkaTlsGuardConfiguration {
+
+    /** Static: a BeanFactoryPostProcessor runs before any Kafka producer or relay bean exists. */
+    @Bean
+    @ConditionalOnProperty(DatabaseTlsGuard.ROOT_CERT_VARIABLE)
+    static KafkaTlsGuard kafkaTlsGuard(Environment environment) {
+        return new KafkaTlsGuard(environment);
+    }
+}
