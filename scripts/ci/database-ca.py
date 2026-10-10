@@ -1,10 +1,12 @@
 #!/usr/bin/env python3
-"""Check the rendered Deployment trusts the Aurora CA bundle (cicd-templates 4f0f266).
+"""Check every rendered workload that connects to Aurora trusts the CA bundle (cicd-templates 4f0f266).
 
 The platform publishes ConfigMap rds-ca-bundle (key global-bundle.pem) in every
-service namespace. The pod must mount it read-only at /etc/fintechbankx/rds-ca,
-not optional (a missing bundle stops the pod instead of connecting unverified),
-and export the file as DB_SSL_ROOT_CERT. Reads `helm template` output on stdin.
+service namespace. The Deployment's pods and the Flyway migration Job's pods
+(decision 0001; exactly one Job is expected) must mount it read-only at
+/etc/fintechbankx/rds-ca, not optional (a missing bundle stops the pod instead
+of connecting unverified), and export the file as DB_SSL_ROOT_CERT, which also
+turns on the startup TLS assertion. Reads `helm template` output on stdin.
 Usage: helm template ... | scripts/ci/database-ca.py
 """
 import sys
@@ -17,10 +19,10 @@ MOUNT_PATH = "/etc/fintechbankx/rds-ca"
 ROOT_CERT = f"{MOUNT_PATH}/{KEY}"
 
 
-def check(deployment):
+def check(workload):
     errors = []
-    name = deployment["metadata"]["name"]
-    spec = deployment["spec"]["template"]["spec"]
+    name = workload["kind"] + "/" + workload["metadata"]["name"]
+    spec = workload["spec"]["template"]["spec"]
     volumes = [v for v in spec.get("volumes") or [] if (v.get("configMap") or {}).get("name") == CONFIGMAP]
     if len(volumes) != 1:
         return [f"{name}: expected one volume from ConfigMap {CONFIGMAP}, found {len(volumes)}"]
@@ -42,16 +44,21 @@ def check(deployment):
 
 
 def main():
-    deployments = [d for d in yaml.safe_load_all(sys.stdin) if isinstance(d, dict) and d.get("kind") == "Deployment"]
-    if not deployments:
-        print("database-ca: no Deployment rendered", file=sys.stderr)
-        return 1
-    errors = [e for d in deployments for e in check(d)]
+    docs = [d for d in yaml.safe_load_all(sys.stdin) if isinstance(d, dict)]
+    workloads = [d for d in docs if d.get("kind") in ("Deployment", "Job")]
+    errors = []
+    if not any(d["kind"] == "Deployment" for d in workloads):
+        errors.append("no Deployment rendered")
+    jobs = [d["kind"] for d in workloads].count("Job")
+    if jobs != 1:
+        errors.append(f"expected one migration Job, found {jobs}")
+    errors += [e for d in workloads for e in check(d)]
     for error in errors:
         print(f"database-ca: {error}", file=sys.stderr)
     if errors:
         return 1
-    print(f"database-ca: {CONFIGMAP}/{KEY} mounted read-only at {MOUNT_PATH}, DB_SSL_ROOT_CERT={ROOT_CERT}")
+    print(f"database-ca: {CONFIGMAP}/{KEY} mounted read-only at {MOUNT_PATH}, DB_SSL_ROOT_CERT={ROOT_CERT}"
+          f" in {len(workloads)} workloads")
     return 0
 
 

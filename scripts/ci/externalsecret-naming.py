@@ -1,7 +1,10 @@
 #!/usr/bin/env python3
 """Check every rendered ExternalSecret against the platform secret naming contract.
 
-Reads `helm template` output on stdin. For each ExternalSecret:
+Reads `helm template` output on stdin. The chart's ServiceAccount is the one
+the app pods use (exactly one ServiceAccount that is not a Helm hook; the
+migration Job's hook ServiceAccount, decision 0001, is not it). For each
+ExternalSecret, the migration Job's hook included:
   - metadata.labels["app.kubernetes.io/name"] equals the chart's ServiceAccount name;
   - every spec.data[].remoteRef.key and spec.dataFrom[].extract.key starts with
     "<env>/<service account>/" (the ClusterSecretStore reads only <env>/* and IRSA
@@ -29,11 +32,12 @@ def main():
     args = parser.parse_args()
 
     docs = [d for d in yaml.safe_load_all(sys.stdin) if isinstance(d, dict)]
-    accounts = [d["metadata"]["name"] for d in docs if d.get("kind") == "ServiceAccount"]
+    accounts = [d["metadata"]["name"] for d in docs if d.get("kind") == "ServiceAccount"
+                and "helm.sh/hook" not in (d["metadata"].get("annotations") or {})]
     secrets = [d for d in docs if d.get("kind") == "ExternalSecret"]
     errors = []
     if len(accounts) != 1:
-        errors.append(f"expected exactly one ServiceAccount, rendered {len(accounts)}")
+        errors.append(f"expected exactly one ServiceAccount that is not a Helm hook, rendered {len(accounts)}")
     if not secrets:
         errors.append("no ExternalSecret rendered")
     account = accounts[0] if len(accounts) == 1 else None

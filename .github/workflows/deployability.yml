@@ -48,6 +48,8 @@ jobs:
         run: |
           chart=deploy/helm/customer-profile-kyc-service
           base="--set image.repository=ci/customer-profile-kyc-service --set image.tag=${{ github.sha }} --set externalSecret.remoteSecretName=ci/customer-profile-kyc-service/db-app"
+          # Schema owner credential, read only by the Flyway migration Job (decision 0001).
+          base="$base --set externalSecret.migrationSecretName=ci/customer-profile-kyc-service/db-migration"
           # Aurora verify-full (cicd-templates 4f0f266): the chart refuses a jdbc:postgresql DB_URL without it.
           db_url='jdbc:postgresql://ci-db:5432/db_cus_profile_kyc_ci?sslmode=verify-full&sslrootcert=/etc/fintechbankx/rds-ca/global-bundle.pem'
           args="$base --set-string config.DB_URL=$db_url --set config.OIDC_ISSUER_URI=ci-oidc-issuer-uri --set config.OIDC_JWK_SET_URI=ci-oidc-jwk-set-uri --set config.OIDC_AUDIENCE=ci-oidc-audience --set config.KAFKA_BOOTSTRAP_SERVERS=ci-kafka-bootstrap-servers"
@@ -97,7 +99,8 @@ jobs:
             exit 1
           fi
           # RDS CA bundle (cicd-templates 4f0f266): ConfigMap rds-ca-bundle mounted read-only, not optional,
-          # exported as DB_SSL_ROOT_CERT; a DB_URL that does not verify the server must not render.
+          # exported as DB_SSL_ROOT_CERT, on the Deployment and on the Flyway migration Job (decision 0001), which
+          # both connect to Aurora; a DB_URL that does not verify the server must not render.
           python3 scripts/ci/database-ca.py <<<"$rendered"
           helm template ci "$chart" -f "$chart/values-dev.yaml" $args | python3 scripts/ci/database-ca.py
           # Review 5478458791: the query is parsed, not substring-matched. Exactly one sslmode=verify-full and one
@@ -213,6 +216,86 @@ jobs:
               exit 1
             fi
           done
+          # Flyway runs only in the pre-install/pre-upgrade migration Job (decision 0001; cicd-templates 335a345
+          # labels): the app pods never reference the db-migration secret, the Job runs the app image with args
+          # [migrate] without an Istio sidecar, its ServiceAccount and the db-migration ExternalSecret are hooks
+          # before it and go away once the hooks succeed, and no Service, PDB, NetworkPolicy or Deployment selector
+          # matches its component=db-migration pods.
+          sa="$(helm show values "$chart" | python3 -c 'import sys, yaml; print(yaml.safe_load(sys.stdin)["serviceAccount"]["name"])')"
+          reject_render "externalSecret.migrationSecretName is required" --set externalSecret.migrationSecretName=
+          reject_render "externalSecret.migrationSecretName must be <env>/customer-profile-kyc-service/" \
+            --set externalSecret.migrationSecretName=ci/other-service/db-migration
+          python3 scripts/ci/check-migration-job.py "$sa" <<<"$rendered"
+          helm template ci "$chart" -f "$chart/values-dev.yaml" $args | python3 scripts/ci/check-migration-job.py "$sa"
+          helm template ci "$chart" $args --set config.SPRING_PROFILES_ACTIVE=kafka-strimzi --set kafkaTls.secretName=kafka-client-tls \
+            | python3 scripts/ci/check-migration-job.py "$sa"
+          grep -q "secretKey: DB_MIGRATION_USERNAME" <<<"$rendered"
+          grep -q "name: customer-profile-kyc-service-db-migration" <<<"$rendered"
+          # ...and the check catches each way back to the old shape.
+          mutated() {
+            python3 -c '
+          import sys, yaml
+          docs = [d for d in yaml.safe_load_all(sys.stdin) if d]
+          one = lambda kind: [d for d in docs if d["kind"] == kind][0]
+          app = one("Deployment")["spec"]["template"]
+          job = one("Job")
+          migration_secret = [d for d in docs if d["kind"] == "ExternalSecret" and d["metadata"]["name"].endswith("-db-migration")][0]
+          exec(sys.argv[1])
+          yaml.safe_dump_all(docs, sys.stdout)
+          ' "$1" <<<"$rendered"
+          }
+          reject_mutation() {
+            if mutated "$2" | python3 scripts/ci/check-migration-job.py "$sa" 2>/dev/null; then
+              echo "migration Job check accepted $1" >&2; exit 1
+            fi
+          }
+          reject_mutation "the migration secret in the app pods (envFrom)" \
+            'app["spec"]["containers"][0]["envFrom"].append({"secretRef": {"name": "customer-profile-kyc-service-db-migration"}})'
+          reject_mutation "the migration secret in the app pods (secretKeyRef)" \
+            'app["spec"]["containers"][0]["env"].append({"name": "DB_MIGRATION_PASSWORD", "valueFrom": {"secretKeyRef": {"name": "customer-profile-kyc-service-db-migration", "key": "DB_MIGRATION_PASSWORD"}}})'
+          reject_mutation "Job pods labelled component=service" \
+            'job["spec"]["template"]["metadata"]["labels"]["app.kubernetes.io/component"] = "service"'
+          reject_mutation "Job pods without the service account name label" \
+            'job["spec"]["template"]["metadata"]["labels"]["app.kubernetes.io/name"] = "flyway"'
+          # The Job's pods run without the Istio sidecar: Aurora egress is a NetworkPolicy on the name label, and
+          # without native sidecars an injected proxy keeps the Job from completing.
+          reject_mutation "Job pods with the sidecar injected (podLabels value)" \
+            'job["spec"]["template"]["metadata"]["labels"]["sidecar.istio.io/inject"] = "true"'
+          reject_mutation "Job pods without the sidecar.istio.io/inject label" \
+            'del job["spec"]["template"]["metadata"]["labels"]["sidecar.istio.io/inject"]'
+          reject_mutation "Job pods whose annotation turns injection back on" \
+            'job["spec"]["template"]["metadata"].setdefault("annotations", {})["sidecar.istio.io/inject"] = "true"'
+          reject_mutation "a Job that is not a pre-upgrade hook" \
+            'job["metadata"]["annotations"]["helm.sh/hook"] = "pre-install"'
+          reject_mutation "a Job without ttlSecondsAfterFinished" 'del job["spec"]["ttlSecondsAfterFinished"]'
+          reject_mutation "a Job without activeDeadlineSeconds" 'del job["spec"]["activeDeadlineSeconds"]'
+          reject_mutation "a Job without backoffLimit" 'del job["spec"]["backoffLimit"]'
+          reject_mutation "a Job with another DB_URL" \
+            '[e.update(value="jdbc:postgresql://other:5432/db") for e in job["spec"]["template"]["spec"]["containers"][0]["env"] if e["name"] == "DB_URL"]'
+          reject_mutation "a Job with a writable root filesystem" \
+            'job["spec"]["template"]["spec"]["containers"][0]["securityContext"]["readOnlyRootFilesystem"] = False'
+          reject_mutation "a Job that does not run the migrate mode" \
+            'job["spec"]["template"]["spec"]["containers"][0]["args"] = []'
+          reject_mutation "a Job on the app ServiceAccount (IAM role, API token)" \
+            'job["spec"]["template"]["spec"]["serviceAccountName"] = "customer-profile-kyc-service"'
+          reject_mutation "a Job ServiceAccount that mounts an API token" \
+            '[s.update(automountServiceAccountToken=True) for s in docs if s["kind"] == "ServiceAccount" and s["metadata"]["name"].endswith("-db-migration")]'
+          reject_mutation "a migration ExternalSecret kept after the hooks succeed" \
+            'migration_secret["metadata"]["annotations"]["helm.sh/hook-delete-policy"] = "before-hook-creation"'
+          reject_mutation "a Service selecting by name only" \
+            'del one("Service")["spec"]["selector"]["app.kubernetes.io/component"]'
+          reject_mutation "a NetworkPolicy selecting the Job pods" \
+            'docs.append({"kind": "NetworkPolicy", "metadata": {"name": "np"}, "spec": {"podSelector": {"matchExpressions": [{"key": "app.kubernetes.io/component", "operator": "In", "values": ["db-migration"]}]}}})'
+          reject_mutation "a PDB selecting by name only" \
+            'del one("PodDisruptionBudget")["spec"]["selector"]["matchLabels"]["app.kubernetes.io/component"]'
+          # The database CA check covers the Job: a Job without DB_SSL_ROOT_CERT, or without the Job at all, fails it.
+          if mutated 'job["spec"]["template"]["spec"]["containers"][0]["env"] = [e for e in job["spec"]["template"]["spec"]["containers"][0]["env"] if e["name"] != "DB_SSL_ROOT_CERT"]' \
+              | python3 scripts/ci/database-ca.py 2>/dev/null; then
+            echo "database-ca accepted a migration Job without DB_SSL_ROOT_CERT" >&2; exit 1
+          fi
+          if mutated 'docs.remove(job)' | python3 scripts/ci/database-ca.py 2>/dev/null; then
+            echo "database-ca accepted a render without the migration Job" >&2; exit 1
+          fi
 
   terraform:
     name: deploy/terraform

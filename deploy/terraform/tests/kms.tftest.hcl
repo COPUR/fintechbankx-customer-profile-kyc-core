@@ -90,6 +90,16 @@ run "secrets_and_database_use_separate_keys" {
   }
 
   assert {
+    condition     = aws_secretsmanager_secret.migration_database.kms_key_id == aws_kms_key.secrets.arn
+    error_message = "the db-migration secret (Flyway's schema owner, read only by the migration Job) must be encrypted with aws_kms_key.secrets"
+  }
+
+  assert {
+    condition     = aws_secretsmanager_secret.migration_database.name == "dev/customer-profile-kyc-service/db-migration"
+    error_message = "the db-migration secret lives under <env>/<service account>/, the only path the platform ESO role may read"
+  }
+
+  assert {
     condition     = aws_rds_cluster.database.master_user_secret_kms_key_id == aws_kms_key.database.key_id
     error_message = "the RDS-managed master user secret stays on the untagged aws_kms_key.database (External Secrets never syncs it)"
   }
