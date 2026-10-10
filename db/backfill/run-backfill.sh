@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
 # Copies customer data from the monolith database into svc-cus-profile-kyc's
 # own database and reconciles the two. Re-runnable until cut-over: a re-run
-# refreshes customers the service has not changed yet (see 02_*.sql).
+# refreshes customers the service has not changed yet (see 02_*.sql) and never
+# touches used_credit, which runbook step 3a sets from credit_reservation.
 #
 #   db/backfill/run-backfill.sh <monolith-conninfo> <customer-service-conninfo> <currency>
 #
@@ -32,11 +33,15 @@ fi
 
 run() { psql -X -q -v ON_ERROR_STOP=1 "$@"; }
 
+# used_credit_limit is left out on purpose: the live monolith never writes it
+# (credit moves in an in-memory map), so the service starts every migrated
+# customer at used_credit = 0 and runbook step 3a sets it from the open
+# credit_reservation rows. See 02_transform_into_customer_service.sql.
 echo "Exporting customers from the monolith (read-only snapshot)..."
 run "$source_db" <<SQL
 BEGIN ISOLATION LEVEL REPEATABLE READ READ ONLY;
-\copy (SELECT id, name, surname, credit_limit, used_credit_limit, created_at, updated_at, version FROM customers ORDER BY id) TO '$work/customers.csv' WITH (FORMAT csv, HEADER true)
-\copy (SELECT count(*), coalesce(sum(credit_limit), 0)::numeric(19,2), coalesce(sum(used_credit_limit), 0)::numeric(19,2) FROM customers) TO '$work/source_figures.csv' WITH (FORMAT csv, DELIMITER '|')
+\copy (SELECT id, name, surname, credit_limit, created_at, updated_at, version FROM customers ORDER BY id) TO '$work/customers.csv' WITH (FORMAT csv, HEADER true)
+\copy (SELECT count(*), coalesce(sum(credit_limit), 0)::numeric(19,2) FROM customers) TO '$work/source_figures.csv' WITH (FORMAT csv, DELIMITER '|')
 COMMIT;
 SQL
 
@@ -53,8 +58,8 @@ reconcile="$(psql -X -At "$target_db" -f "$here/03_reconcile.sql")"
 target_figures="$(echo "$reconcile" | sed -n '1p')"
 problems="$(echo "$reconcile" | sed -n '2,$p')"
 
-echo "monolith snapshot rows|limit|used: $source_figures"
-echo "staged copy       rows|limit|used: $target_figures"
+echo "monolith snapshot rows|limit: $source_figures"
+echo "staged copy       rows|limit: $target_figures"
 if [ "$source_figures" != "$target_figures" ]; then
   echo "RECONCILIATION FAILED: totals differ" >&2
   exit 1
