@@ -484,7 +484,8 @@ class OutboxRelayTest {
         assertThat(header(record, "eventType")).isEqualTo("Customer.Customer.Created.v1");
         assertThat(header(record, "eventId")).isEqualTo(row.getEventId().toString());
         assertThat(header(record, "correlationId")).isEqualTo("corr-9");
-        assertThat(header(record, "x-fapi-interaction-id")).isEqualTo("corr-9");
+        assertThat(record.headers().lastHeader("x-fapi-interaction-id"))
+            .as("not a FAPI flow (ADR-019 s3)").isNull();
         assertThat(record.headers().lastHeader("traceparent")).isNull();
     }
 
