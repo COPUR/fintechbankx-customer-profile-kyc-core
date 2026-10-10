@@ -79,6 +79,14 @@ Identity link: staff link a customer to an existing Keycloak user (`PUT /api/v1/
 
 Relay failures follow ADR-021 decision 4: payload errors (`RecordTooLargeException`, `SerializationException`, `InvalidTopicException`) park the row and the relay continues; every other failure, including authorization, SASL/IAM and unclassified errors, stops the batch without marking the row, retries with backoff and alerts, and never parks or skips the row. See the runbook section "Parked outbox events". Outbox alerts are shipped in fintechbankx-platform-observability-sre-operations PR #11 (not merged, commit `eca7aa0`), keyed by the `service_id` pod label (`svc-cus-profile-kyc`) and routed by squad (customer): OutboxRelayStalled, `max(outbox_oldest_pending_age_seconds) > 900` for 5m, critical; OutboxSendFailures, any increase in `outbox_send_failures_total` over 10m, warning; OutboxEventsParked, any increase in `outbox_parked_events_total` over 15m, warning, no `for` clause (operator parks also fire it). This service ships no alert rule. The same PR widens the AMP keep regex to the `outbox_` series.
 
+KYC status contract (`GET /api/v1/customers/{id}/kyc-status`, `KycStatusResponse` with `kycStatus` PENDING, VERIFIED or REJECTED and `kycVerified`; event `Customer.Customer.KycStatusChanged.v1`): compliance (`svc-cmp-evidence`) and payments (`svc-pay-initiation-settlement`, on `SERVICE_CALLERS_KYC`) depend on it. Payments reads the status before screening a payment and refuses the payment, before any screening runs, when the status is unknown (the customer cannot be read, the call fails, or the value is outside the contract); compliance records the status in its evidence. The status values, `kycVerified` and the response shape are therefore a breaking-change boundary for both (`ci/test` oasdiff gate).
+
+## Accepted risks
+
+| Risk | Record |
+|---|---|
+| The customer service's Keycloak account (`manage-members` on `/customers`) can change any customer login, and an e-mail change does not alert; a stolen credential could redirect a customer's e-mail and take the account over through forgot-password. Accepted for now (2026-10-10, Platform thread), with the pinned six-key PUT, Keycloak admin events and platform's runbook as safeguards, until an identity-owned link service takes the grant away | [0002](docs/architecture/decisions/0002-customer-service-keycloak-profile-write-risk-accepted.md) |
+
 Module layout: `customer-domain` (aggregate, events, ports) ← `customer-application` (use cases) ← `customer-infrastructure` (JPA, outbox, web, security) ← `customer-bootstrap` (Spring Boot app).
 
 ## Dokümantasyon ve Referanslar
