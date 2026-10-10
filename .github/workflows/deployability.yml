@@ -469,3 +469,7 @@ jobs:
       - uses: actions/checkout@v4
       - name: Rehearse monolith-to-service customer backfill and reconciliation
         run: scripts/migration/verify-backfill.sh
+      # db/bootstrap/roles.sql (runbook, "Database roles"): run twice as a non-superuser CREATEROLE DBA, then
+      # the migrations as the owner, then once more; checks owner, runtime role and V13's grants.
+      - name: Rehearse the DBA role bootstrap
+        run: scripts/migration/verify-role-bootstrap.sh
