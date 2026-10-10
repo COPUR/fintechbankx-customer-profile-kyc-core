@@ -31,9 +31,14 @@ import java.util.Map;
 
 /**
  * {@link IdentityDirectoryPort} over the Keycloak admin REST API. Reads the
- * user, adds the customer_id attribute and writes the whole representation
- * back (Keycloak replaces the attribute map on update, so the other attributes
- * must be sent again). A user that already carries the customer id is not
+ * user and PUTs only username, email, firstName, lastName, emailVerified
+ * (each the stored value from the GET, left out when the GET had none) and
+ * attributes, the stored map plus customer_id (Keycloak replaces the
+ * attribute map on update, so the other attributes are sent again). Platform
+ * ruling on linkCustomer (option a), key set from observability #11 e06915f:
+ * never enabled, credentials, requiredActions, federated identities, roles,
+ * groups or access; Keycloak leaves absent top-level fields untouched, and
+ * KeycloakServiceAccountAdminEventOutOfScope alerts on those keys. A user that already carries the customer id is not
  * written; one that carries another id is a conflict. The client's scoped
  * permission (Keycloak FGAP v2, identity 8f9024b) covers users in group
  * /customers only, so a 403 on reading the user is the same outcome as an
@@ -45,6 +50,8 @@ import java.util.Map;
 public class KeycloakIdentityDirectoryAdapter implements IdentityDirectoryPort {
 
     static final String CUSTOMER_ID_ATTRIBUTE = "customer_id";
+    /** Root fields copied unchanged from the GET into the PUT; with attributes, the whole body. */
+    static final List<String> UNCHANGED_ROOT_FIELDS = List.of("username", "email", "firstName", "lastName", "emailVerified");
     private static final Logger log = LoggerFactory.getLogger(KeycloakIdentityDirectoryAdapter.class);
     private static final ParameterizedTypeReference<Map<String, Object>> JSON_OBJECT = new ParameterizedTypeReference<>() {
     };
@@ -76,11 +83,10 @@ public class KeycloakIdentityDirectoryAdapter implements IdentityDirectoryPort {
                 throw new IdentityLinkConflictException();
             }
             attributes.put(CUSTOMER_ID_ATTRIBUTE, List.of(customerId.getValue()));
-            user.put("attributes", attributes);
             http.put().uri(settings.userUrl(), userId.value())
                 .headers(h -> h.setBearerAuth(accessToken()))
                 .contentType(MediaType.APPLICATION_JSON)
-                .body(user)
+                .body(linkBody(user, attributes))
                 .retrieve()
                 .toBodilessEntity();
         } catch (RestClientResponseException e) {
@@ -131,6 +137,18 @@ public class KeycloakIdentityDirectoryAdapter implements IdentityDirectoryPort {
             .tag("status", Integer.toString(status))
             .register(meters)
             .increment();
+    }
+
+    /** The PUT body: the allowed root fields as stored, and the merged attributes; nothing else. */
+    static Map<String, Object> linkBody(Map<String, Object> user, Map<String, Object> attributes) {
+        Map<String, Object> body = new LinkedHashMap<>();
+        for (String field : UNCHANGED_ROOT_FIELDS) {
+            if (user.get(field) != null) {
+                body.put(field, user.get(field));
+            }
+        }
+        body.put("attributes", attributes);
+        return body;
     }
 
     @SuppressWarnings("unchecked")
