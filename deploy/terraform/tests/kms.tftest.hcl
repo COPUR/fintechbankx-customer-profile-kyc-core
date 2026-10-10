@@ -109,3 +109,16 @@ run "secrets_and_database_use_separate_keys" {
     error_message = "aws_kms_key.secrets must stay usable by External Secrets"
   }
 }
+
+# var.tags is merged into every resource's tags, the database key included, so
+# it may not carry fintechbankx.io/secrets: External Secrets could then decrypt
+# with aws_kms_key.database (ADR-023).
+run "extra_tags_cannot_carry_the_secrets_tag" {
+  command = plan
+
+  variables {
+    tags = { "fintechbankx.io/secrets" = "true", "cost-centre" = "cus" }
+  }
+
+  expect_failures = [var.tags]
+}
