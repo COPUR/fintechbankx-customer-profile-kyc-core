@@ -50,6 +50,30 @@ run "secrets_and_database_use_separate_keys" {
   # apply against the mocked provider: nothing is created, computed values become known.
   command = apply
 
+  # Distinct ARNs and ids per key (review minor): with one shared mock value, an
+  # assertion such as "the secret uses aws_kms_key.secrets" would also pass if
+  # the secret were wired to aws_kms_key.database.
+  override_resource {
+    target = aws_kms_key.secrets
+    values = {
+      arn    = "arn:aws:kms:me-central-1:111122223333:key/secrets-mock"
+      key_id = "secrets-mock"
+    }
+  }
+
+  override_resource {
+    target = aws_kms_key.database
+    values = {
+      arn    = "arn:aws:kms:me-central-1:111122223333:key/database-mock"
+      key_id = "database-mock"
+    }
+  }
+
+  assert {
+    condition     = aws_kms_key.secrets.arn != aws_kms_key.database.arn && aws_kms_key.secrets.key_id != aws_kms_key.database.key_id
+    error_message = "the test must mock distinct ARNs and ids for the two keys"
+  }
+
   assert {
     condition     = try(aws_kms_key.secrets.tags["fintechbankx.io/secrets"], "") == "true"
     error_message = "aws_kms_key.secrets must be tagged fintechbankx.io/secrets=true"
