@@ -11,6 +11,8 @@ import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.test.context.DynamicPropertyRegistry;
 import org.springframework.test.context.DynamicPropertySource;
+import org.springframework.transaction.annotation.Propagation;
+import org.springframework.transaction.annotation.Transactional;
 
 import javax.sql.DataSource;
 import java.util.Map;
@@ -34,6 +36,9 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
     "spring.jpa.properties.hibernate.default_schema=sc_cus_profile_kyc"
 })
 @AutoConfigureTestDatabase(replace = AutoConfigureTestDatabase.Replace.NONE)
+// Not in a test transaction: Flyway migrates on its own connection, and rows the
+// test inserted must be committed, or V11's UPDATE and ALTER TABLE wait on them.
+@Transactional(propagation = Propagation.NOT_SUPPORTED)
 class OutboxAggregateTopicMigrationTest {
 
     private static final String SCHEMA = "sc_cus_topic_migration_test";

@@ -14,9 +14,9 @@ info:
 
     Status: Proposed. Owner: Customer and KYC Squad, Lending and Money Movement Tribe. Event namespace: `evt.cus.customer`.
 
-    Implementation status: events are raised on the Customer aggregate and written by CustomerManagementService through the CustomerEventPublisher port (OutboxCustomerEventPublisher) to the transactional outbox sc_cus_profile_kyc.outbox_event, in the same transaction as the customer. OutboxRelay sends them to Kafka in insertion order, keyed by customer id (one relay at a time, PostgreSQL advisory lock); failures follow ADR-021 decision 4: a payload error (RecordTooLarge, Serialization, InvalidTopic) parks the row, which is replayed by hand (runbook "Parked outbox events"), and the relay continues; every other failure, including authorization, SASL/IAM and unclassified errors, stops the batch without marking the row, is retried with backoff and alerts, and never parks or skips the row, so each customer's events arrive complete and in order. Delivery is at least once: consumers de-duplicate on eventId. Topics are created by the platform catalog, never by the service.
+    Implementation status: events are raised on the Customer aggregate and written by CustomerManagementService through the CustomerEventPublisher port (OutboxCustomerEventPublisher) to the transactional outbox sc_cus_profile_kyc.outbox_event, in the same transaction as the customer. OutboxRelay sends them to Kafka in insertion order, keyed by customer id (one relay at a time, PostgreSQL advisory lock); failures follow ADR-021 decision 4: a payload error (RecordTooLarge, Serialization, InvalidTopic) parks the row, which is replayed by hand (runbook "Parked outbox events"), and the relay continues; every other failure, including authorization, SASL/IAM and unclassified errors, stops the batch without marking the row, is retried with backoff and alerts, and never parks or skips the row, so each customer's events arrive complete and in order. Delivery is at least once: consumers de-duplicate on eventId. The topic is created by the platform catalog, never by the service.
 
-    Every message uses the standard envelope (common/event-envelope.yaml). Record key is the aggregateId. Topics use cleanup.policy=delete. Adding an optional field is a minor change; any removal, rename or type change is a new major version on a new topic with dual-publish.
+    Every message uses the standard envelope (common/event-envelope.yaml). All events go to one topic per aggregate, `evt.cus.customer.v1`, with the record key = aggregateId and the eventType, eventId and correlationId record headers (ADR-019), plus traceparent when the request carried one. Consumers route on the eventType header and skip event types they do not handle (commit the offset, never fail or dead-letter them). The topic uses cleanup.policy=delete. Adding an optional field or a new event type is a minor change; a removal, rename or type change in one event is a new event major (eventType ...v2) published on the same topic alongside the old one until consumers move. The topic major changes only for a key, partition-count or cleanup-policy change.
   tags:
   - name: customer
   - name: evt.cus.customer
@@ -46,124 +46,33 @@ servers:
     security:
     - $ref: '#/components/securitySchemes/mtls'
 channels:
-  created:
-    address: evt.cus.customer.created.v1
-    title: evt.cus.customer.created.v1
-    description: Customer.Customer.Created.v1. A customer profile was created.
+  customer:
+    address: evt.cus.customer.v1
+    title: evt.cus.customer.v1
+    description: 'Every event of the customer aggregate, keyed by aggregateId so that the events of one aggregate instance
+      stay in order in one partition (ADR-019, one topic per aggregate). The eventType record header names the event:
+      Customer.Customer.Created.v1, Customer.Customer.ContactUpdated.v1, Customer.Customer.CreditLimitUpdated.v1,
+      Customer.Customer.CreditReserved.v1, Customer.Customer.CreditReleased.v1, Customer.Customer.CreditScoreUpdated.v1,
+      Customer.Customer.KycStatusChanged.v1.
+      Consumers skip event types they do not handle.'
     messages:
       CustomerCreated:
         $ref: '#/components/messages/CustomerCreated'
-    bindings:
-      kafka:
-        topic: evt.cus.customer.created.v1
-        partitions: 3
-        replicas: 3
-        topicConfiguration:
-          cleanup.policy:
-          - delete
-          retention.ms: 604800000
-          max.message.bytes: 1048576
-        bindingVersion: 0.5.0
-  contactUpdated:
-    address: evt.cus.customer.contact-updated.v1
-    title: evt.cus.customer.contact-updated.v1
-    description: Customer.Customer.ContactUpdated.v1. The customer's contact details changed.
-    messages:
       CustomerContactUpdated:
         $ref: '#/components/messages/CustomerContactUpdated'
-    bindings:
-      kafka:
-        topic: evt.cus.customer.contact-updated.v1
-        partitions: 3
-        replicas: 3
-        topicConfiguration:
-          cleanup.policy:
-          - delete
-          retention.ms: 604800000
-          max.message.bytes: 1048576
-        bindingVersion: 0.5.0
-  creditLimitUpdated:
-    address: evt.cus.customer.credit-limit-updated.v1
-    title: evt.cus.customer.credit-limit-updated.v1
-    description: Customer.Customer.CreditLimitUpdated.v1. The customer's credit limit changed.
-    messages:
       CustomerCreditLimitUpdated:
         $ref: '#/components/messages/CustomerCreditLimitUpdated'
-    bindings:
-      kafka:
-        topic: evt.cus.customer.credit-limit-updated.v1
-        partitions: 3
-        replicas: 3
-        topicConfiguration:
-          cleanup.policy:
-          - delete
-          retention.ms: 604800000
-          max.message.bytes: 1048576
-        bindingVersion: 0.5.0
-  creditReserved:
-    address: evt.cus.customer.credit-reserved.v1
-    title: evt.cus.customer.credit-reserved.v1
-    description: Customer.Customer.CreditReserved.v1. Credit was reserved against the customer's limit.
-    messages:
       CustomerCreditReserved:
         $ref: '#/components/messages/CustomerCreditReserved'
-    bindings:
-      kafka:
-        topic: evt.cus.customer.credit-reserved.v1
-        partitions: 3
-        replicas: 3
-        topicConfiguration:
-          cleanup.policy:
-          - delete
-          retention.ms: 604800000
-          max.message.bytes: 1048576
-        bindingVersion: 0.5.0
-  creditReleased:
-    address: evt.cus.customer.credit-released.v1
-    title: evt.cus.customer.credit-released.v1
-    description: Customer.Customer.CreditReleased.v1. Previously reserved credit was released.
-    messages:
       CustomerCreditReleased:
         $ref: '#/components/messages/CustomerCreditReleased'
-    bindings:
-      kafka:
-        topic: evt.cus.customer.credit-released.v1
-        partitions: 3
-        replicas: 3
-        topicConfiguration:
-          cleanup.policy:
-          - delete
-          retention.ms: 604800000
-          max.message.bytes: 1048576
-        bindingVersion: 0.5.0
-  creditScoreUpdated:
-    address: evt.cus.customer.credit-score-updated.v1
-    title: evt.cus.customer.credit-score-updated.v1
-    description: Customer.Customer.CreditScoreUpdated.v1. The customer's credit score changed.
-    messages:
       CustomerCreditScoreUpdated:
         $ref: '#/components/messages/CustomerCreditScoreUpdated'
-    bindings:
-      kafka:
-        topic: evt.cus.customer.credit-score-updated.v1
-        partitions: 3
-        replicas: 3
-        topicConfiguration:
-          cleanup.policy:
-          - delete
-          retention.ms: 604800000
-          max.message.bytes: 1048576
-        bindingVersion: 0.5.0
-  kycStatusChanged:
-    address: evt.cus.customer.kyc-status-changed.v1
-    title: evt.cus.customer.kyc-status-changed.v1
-    description: Customer.Customer.KycStatusChanged.v1. Staff verified or rejected the customer's KYC.
-    messages:
       CustomerKycStatusChanged:
         $ref: '#/components/messages/CustomerKycStatusChanged'
     bindings:
       kafka:
-        topic: evt.cus.customer.kyc-status-changed.v1
+        topic: evt.cus.customer.v1
         partitions: 3
         replicas: 3
         topicConfiguration:
@@ -178,63 +87,65 @@ operations:
     title: Publish Customer.Customer.Created.v1
     summary: svc-cus-profile-kyc publishes Customer.Customer.Created.v1 through its transactional outbox.
     channel:
-      $ref: '#/channels/created'
+      $ref: '#/channels/customer'
     messages:
-    - $ref: '#/channels/created/messages/CustomerCreated'
+    - $ref: '#/channels/customer/messages/CustomerCreated'
   publishCustomerContactUpdated:
     action: send
     title: Publish Customer.Customer.ContactUpdated.v1
     summary: svc-cus-profile-kyc publishes Customer.Customer.ContactUpdated.v1 through its transactional outbox.
     channel:
-      $ref: '#/channels/contactUpdated'
+      $ref: '#/channels/customer'
     messages:
-    - $ref: '#/channels/contactUpdated/messages/CustomerContactUpdated'
+    - $ref: '#/channels/customer/messages/CustomerContactUpdated'
   publishCustomerCreditLimitUpdated:
     action: send
     title: Publish Customer.Customer.CreditLimitUpdated.v1
     summary: svc-cus-profile-kyc publishes Customer.Customer.CreditLimitUpdated.v1 through its transactional outbox.
     channel:
-      $ref: '#/channels/creditLimitUpdated'
+      $ref: '#/channels/customer'
     messages:
-    - $ref: '#/channels/creditLimitUpdated/messages/CustomerCreditLimitUpdated'
+    - $ref: '#/channels/customer/messages/CustomerCreditLimitUpdated'
   publishCustomerCreditReserved:
     action: send
     title: Publish Customer.Customer.CreditReserved.v1
     summary: svc-cus-profile-kyc publishes Customer.Customer.CreditReserved.v1 through its transactional outbox.
     channel:
-      $ref: '#/channels/creditReserved'
+      $ref: '#/channels/customer'
     messages:
-    - $ref: '#/channels/creditReserved/messages/CustomerCreditReserved'
+    - $ref: '#/channels/customer/messages/CustomerCreditReserved'
   publishCustomerCreditReleased:
     action: send
     title: Publish Customer.Customer.CreditReleased.v1
     summary: svc-cus-profile-kyc publishes Customer.Customer.CreditReleased.v1 through its transactional outbox.
     channel:
-      $ref: '#/channels/creditReleased'
+      $ref: '#/channels/customer'
     messages:
-    - $ref: '#/channels/creditReleased/messages/CustomerCreditReleased'
+    - $ref: '#/channels/customer/messages/CustomerCreditReleased'
   publishCustomerCreditScoreUpdated:
     action: send
     title: Publish Customer.Customer.CreditScoreUpdated.v1
     summary: svc-cus-profile-kyc publishes Customer.Customer.CreditScoreUpdated.v1 through its transactional outbox.
     channel:
-      $ref: '#/channels/creditScoreUpdated'
+      $ref: '#/channels/customer'
     messages:
-    - $ref: '#/channels/creditScoreUpdated/messages/CustomerCreditScoreUpdated'
+    - $ref: '#/channels/customer/messages/CustomerCreditScoreUpdated'
   publishCustomerKycStatusChanged:
     action: send
     title: Publish Customer.Customer.KycStatusChanged.v1
     summary: svc-cus-profile-kyc publishes Customer.Customer.KycStatusChanged.v1 through its transactional outbox.
     channel:
-      $ref: '#/channels/kycStatusChanged'
+      $ref: '#/channels/customer'
     messages:
-    - $ref: '#/channels/kycStatusChanged/messages/CustomerKycStatusChanged'
+    - $ref: '#/channels/customer/messages/CustomerKycStatusChanged'
 components:
   schemas:
     EventEnvelope:
       $ref: ./common/event-envelope.yaml#/EventEnvelope
     EventHeaders:
       $ref: ./common/event-envelope.yaml#/EventHeaders
+    DeadLetterHeaders:
+      $ref: ./common/event-envelope.yaml#/DeadLetterHeaders
     MonetaryAmount:
       $ref: ./common/event-envelope.yaml#/MonetaryAmount
     DecimalAmount:
@@ -362,7 +273,12 @@ components:
       summary: A customer profile was created.
       contentType: application/json
       headers:
-        $ref: '#/components/schemas/EventHeaders'
+        allOf:
+        - $ref: '#/components/schemas/EventHeaders'
+        - type: object
+          properties:
+            eventType:
+              const: Customer.Customer.Created.v1
       payload:
         allOf:
         - $ref: '#/components/schemas/EventEnvelope'
@@ -389,7 +305,12 @@ components:
       summary: The customer's contact details changed.
       contentType: application/json
       headers:
-        $ref: '#/components/schemas/EventHeaders'
+        allOf:
+        - $ref: '#/components/schemas/EventHeaders'
+        - type: object
+          properties:
+            eventType:
+              const: Customer.Customer.ContactUpdated.v1
       payload:
         allOf:
         - $ref: '#/components/schemas/EventEnvelope'
@@ -417,7 +338,12 @@ components:
       summary: The customer's credit limit changed.
       contentType: application/json
       headers:
-        $ref: '#/components/schemas/EventHeaders'
+        allOf:
+        - $ref: '#/components/schemas/EventHeaders'
+        - type: object
+          properties:
+            eventType:
+              const: Customer.Customer.CreditLimitUpdated.v1
       payload:
         allOf:
         - $ref: '#/components/schemas/EventEnvelope'
@@ -442,7 +368,12 @@ components:
       summary: Credit was reserved against the customer's limit.
       contentType: application/json
       headers:
-        $ref: '#/components/schemas/EventHeaders'
+        allOf:
+        - $ref: '#/components/schemas/EventHeaders'
+        - type: object
+          properties:
+            eventType:
+              const: Customer.Customer.CreditReserved.v1
       payload:
         allOf:
         - $ref: '#/components/schemas/EventEnvelope'
@@ -467,7 +398,12 @@ components:
       summary: Previously reserved credit was released.
       contentType: application/json
       headers:
-        $ref: '#/components/schemas/EventHeaders'
+        allOf:
+        - $ref: '#/components/schemas/EventHeaders'
+        - type: object
+          properties:
+            eventType:
+              const: Customer.Customer.CreditReleased.v1
       payload:
         allOf:
         - $ref: '#/components/schemas/EventEnvelope'
@@ -492,7 +428,12 @@ components:
       summary: The customer's credit score changed.
       contentType: application/json
       headers:
-        $ref: '#/components/schemas/EventHeaders'
+        allOf:
+        - $ref: '#/components/schemas/EventHeaders'
+        - type: object
+          properties:
+            eventType:
+              const: Customer.Customer.CreditScoreUpdated.v1
       payload:
         allOf:
         - $ref: '#/components/schemas/EventEnvelope'
@@ -517,7 +458,12 @@ components:
       summary: Staff verified or rejected the customer's KYC.
       contentType: application/json
       headers:
-        $ref: '#/components/schemas/EventHeaders'
+        allOf:
+        - $ref: '#/components/schemas/EventHeaders'
+        - type: object
+          properties:
+            eventType:
+              const: Customer.Customer.KycStatusChanged.v1
       payload:
         allOf:
         - $ref: '#/components/schemas/EventEnvelope'
@@ -536,6 +482,23 @@ components:
             description: aggregateId (customerId).
           bindingVersion: 0.5.0
       x-source-class: com.bank.customer.domain.CustomerKycStatusChangedEvent
+    DeadLetter:
+      name: DeadLetter
+      title: Dead letter for evt.cus.customer
+      summary: 'A customer event that a consumer could not process after bounded retries, as the consumer writes it to
+        the dead-letter topic in its own namespace (consumer-owned DLQ, ADR-019). Not bound to a channel here: this
+        service publishes no dead-letter topic.'
+      contentType: application/json
+      headers:
+        $ref: '#/components/schemas/DeadLetterHeaders'
+      payload:
+        $ref: '#/components/schemas/EventEnvelope'
+      bindings:
+        kafka:
+          key:
+            type: string
+            description: Original record key (aggregateId).
+          bindingVersion: 0.5.0
   securitySchemes:
     mskIam:
       type: userPassword

@@ -132,6 +132,6 @@ variable "db_pool_max" {
 
 variable "msk_cluster_arn" {
   type        = string
-  description = "ARN of the platform MSK cluster. When set, the workload role may connect with IAM auth and write evt.cus.customer.* topics. Empty disables Kafka access."
+  description = "ARN of the platform MSK cluster. When set, the workload role may connect with IAM auth and write the aggregate topic evt.cus.customer.v1. Empty disables Kafka access."
   default     = ""
 }

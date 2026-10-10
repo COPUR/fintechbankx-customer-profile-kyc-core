@@ -223,6 +223,15 @@ public class OutboxRelay {
         return cause;
     }
 
+    /**
+     * The record for one outbox row (ADR-019 s3): the row's topic (the
+     * aggregate topic evt.cus.customer.v1), key = aggregateId, value = the
+     * envelope, and the UTF-8 headers eventType, eventId and correlationId,
+     * equal to the envelope, so consumers route on eventType without parsing
+     * the value and skip types they do not handle; traceparent when the
+     * request carried one. x-fapi-interaction-id repeats the correlation id,
+     * which CorrelationIdFilter takes from that request header when present.
+     */
     static ProducerRecord<String, String> toRecord(OutboxEventJpaEntity row) {
         ProducerRecord<String, String> record = new ProducerRecord<>(row.getTopic(), row.getAggregateId(), row.getPayload());
         record.headers().add("eventType", row.getEventType().getBytes(StandardCharsets.UTF_8));

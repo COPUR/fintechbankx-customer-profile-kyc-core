@@ -239,7 +239,8 @@ resource "aws_iam_role" "workload" {
 
 # The pods read no AWS secret themselves (External Secrets Operator syncs the
 # database credential). The only AWS access is MSK IAM auth for the outbox
-# relay, limited to this service's own event namespace.
+# relay, limited to the customer aggregate topic evt.cus.customer.v1 (ADR-019:
+# one topic per aggregate; this service consumes nothing, so it has no DLQ).
 data "aws_iam_policy_document" "workload" {
   count = var.msk_cluster_arn == "" ? 0 : 1
 
@@ -252,7 +253,7 @@ data "aws_iam_policy_document" "workload" {
   statement {
     sid       = "WriteOwnEventNamespace"
     actions   = ["kafka-cluster:DescribeTopic", "kafka-cluster:WriteData"]
-    resources = ["${replace(var.msk_cluster_arn, ":cluster/", ":topic/")}/evt.cus.customer.*"]
+    resources = ["${replace(var.msk_cluster_arn, ":cluster/", ":topic/")}/evt.cus.customer.v1"]
   }
 }
 
