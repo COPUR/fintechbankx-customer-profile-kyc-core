@@ -135,7 +135,13 @@ class CreditConcurrencyIT {
         assertThat(limit).isIn(new BigDecimal("5000.0000"), new BigDecimal("10000.0000"));
     }
 
-    /** Several cancels for one loan at once: the reservation is released once in total, never beyond it. */
+    /**
+     * Several cancels for one loan at once: the reservation is released once in
+     * total, never beyond it. A release of 1000 fits while the reservation holds
+     * 3000, 2000 or 1000; once it holds nothing the reservation is settled and a
+     * further release answers RESERVATION_NOT_FOUND (never
+     * RELEASE_EXCEEDS_RESERVATION, which needs 0 &lt; held &lt; amount).
+     */
     @Test
     void concurrentReleasesOfOneReservationNeverReleaseMoreThanItHolds() throws Exception {
         String customerId = create("release-race@example.com", "10000.00");
@@ -152,7 +158,7 @@ class CreditConcurrencyIT {
         assertThat(countStatuses(responses)).as("status -> count").containsOnlyKeys(200, 422)
             .containsEntry(200, 3L).containsEntry(422, 5L);
         for (MockHttpServletResponse refused : responses.stream().filter(r -> r.getStatus() == 422).toList()) {
-            assertThat(json.readTree(refused.getContentAsString()).get("code").asText()).isEqualTo("RELEASE_EXCEEDS_RESERVATION");
+            assertThat(json.readTree(refused.getContentAsString()).get("code").asText()).isEqualTo("RESERVATION_NOT_FOUND");
         }
         assertCreditInvariant(customerId, "10000.00", "0.00");
         assertThat(jdbc.queryForObject("select released_amount from sc_cus_profile_kyc.credit_reservation "
