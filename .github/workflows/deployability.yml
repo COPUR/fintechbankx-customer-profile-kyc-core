@@ -351,6 +351,14 @@ jobs:
           reject_render "externalSecret.migrationSecretName is required" --set externalSecret.migrationSecretName=
           reject_render "externalSecret.migrationSecretName must be <env>/customer-profile-kyc-service/" \
             --set externalSecret.migrationSecretName=ci/other-service/db-migration
+          # ...and it must be another secret than the runtime one: a single credential for both would run Flyway
+          # and the service as the same role, and V13's least-privilege split (decision 0001) would not hold.
+          # Compared trimmed and without a trailing "/", so a spelling variant of the same name is refused too.
+          single_user="externalSecret.migrationSecretName must not be the runtime secret (externalSecret.remoteSecretName)"
+          reject_render "$single_user" --set externalSecret.migrationSecretName=ci/customer-profile-kyc-service/db-app
+          reject_render "$single_user" --set externalSecret.remoteSecretName=ci/customer-profile-kyc-service/db-migration
+          reject_render "$single_user" --set externalSecret.migrationSecretName=ci/customer-profile-kyc-service/db-app/
+          reject_render "$single_user" --set 'externalSecret.migrationSecretName= ci/customer-profile-kyc-service/db-app '
           python3 scripts/ci/check-migration-job.py "$sa" <<<"$rendered"
           helm template ci "$chart" -f "$chart/values-dev.yaml" $args | python3 scripts/ci/check-migration-job.py "$sa"
           helm template ci "$chart" $args --set kafka.runtime=strimzi --set kafkaTls.secretName=kafka-client-tls \
