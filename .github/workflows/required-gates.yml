@@ -190,9 +190,10 @@ jobs:
           BASE_REF: origin/main
         shell: bash
         run: |
-          # asyncapi-breaking.mjs and lib/asyncapi-model.mjs are copied unchanged from the asyncapi catalog at b0e31ee,
-          # which added ASYNCAPI_DIR so providers run the script as is; invoked the way the catalog's wrapper
-          # (scripts/ci/asyncapi-breaking.sh at b0e31ee) does: from the repository root, BASE_REF exported.
+          # asyncapi-breaking.mjs and lib/asyncapi-model.mjs are copied unchanged from the asyncapi catalog at 44837cc
+          # (one topic per aggregate, TOPIC_RE evt.<ctx>.<aggregate>(.dlq)?.v<N>; ASYNCAPI_DIR since b0e31ee lets
+          # providers run the script as is); invoked the way the catalog's wrapper
+          # (scripts/ci/asyncapi-breaking.sh at 44837cc) does: from the repository root, BASE_REF exported.
           # A spec not yet on main is reported "new file (not at base)" and skipped.
           (cd scripts/ci/asyncapi && npm ci --no-audit --no-fund)
           cd "$(git rev-parse --show-toplevel)"

@@ -2,7 +2,7 @@
   "name": "customer-asyncapi-breaking-gate",
   "version": "0.1.0",
   "private": true,
-  "description": "AsyncAPI breaking-change gate, copied unchanged from the asyncapi catalog (b0e31ee) until the shared CI template carries it; run with ASYNCAPI_DIR=api/asyncapi.",
+  "description": "AsyncAPI breaking-change gate, copied unchanged from the asyncapi catalog (44837cc) until the shared CI template carries it; run with ASYNCAPI_DIR=api/asyncapi.",
   "type": "module",
   "engines": {
     "node": ">=22"
