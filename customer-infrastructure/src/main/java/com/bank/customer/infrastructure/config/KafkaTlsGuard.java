@@ -23,15 +23,16 @@ import java.util.Set;
  * settings win over the common ones) and refuses to start unless the
  * effective {@code security.protocol} is one of {@link #ACCEPTED_PROTOCOLS}.
  *
- * <p>Registered by {@link KafkaTlsGuardConfiguration} only when
+ * <p>Registered by {@link KafkaTlsGuardConfiguration} whenever
  * DB_SSL_ROOT_CERT is set (the chart always sets it from the mounted RDS CA
- * bundle) and the relay is on ({@value #RELAY_PROPERTY}=true). Local runs and
- * tests have neither, so the guard is off for them. Messages name the property
- * and the value, never a broker address.
+ * bundle), relay on or off: the relay flag gates publishing, not the check,
+ * so a cluster pod refuses a plain-text producer from its first deploy, before
+ * runbook step 6 switches the relay on with {@code --reuse-values}. Local runs
+ * and tests have no bundle, so the guard is off for them. Messages name the
+ * property and the value, never a broker address.
  */
 public final class KafkaTlsGuard implements BeanFactoryPostProcessor {
 
-    static final String RELAY_PROPERTY = "customer.outbox.relay.enabled";
     static final Set<String> ACCEPTED_PROTOCOLS = Set.of("SASL_SSL", "SSL");
 
     private static final String KAFKA_PREFIX = "spring.kafka";
@@ -56,9 +57,9 @@ public final class KafkaTlsGuard implements BeanFactoryPostProcessor {
         Object protocol = producer.get(SECURITY_PROTOCOL);
         if (protocol == null || !ACCEPTED_PROTOCOLS.contains(protocol.toString())) {
             throw new IllegalStateException(KAFKA_PREFIX + " producer " + SECURITY_PROTOCOL
-                + " must be SASL_SSL or SSL when the outbox relay is on and " + DatabaseTlsGuard.ROOT_CERT_VARIABLE
-                + " is set (Amazon MSK with IAM authentication, profile kafka-msk, or Strimzi mutual TLS, profile"
-                + " kafka-strimzi), got " + (protocol == null ? "none (Kafka defaults to PLAINTEXT)" : protocol));
+                + " must be SASL_SSL or SSL when " + DatabaseTlsGuard.ROOT_CERT_VARIABLE
+                + " is set, whether or not the outbox relay is on (Amazon MSK with IAM authentication, profile"
+                + " kafka-msk, or Strimzi mutual TLS, profile kafka-strimzi), got " + (protocol == null ? "none (Kafka defaults to PLAINTEXT)" : protocol));
         }
     }
 }

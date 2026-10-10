@@ -56,8 +56,8 @@ spring:
     bootstrap-servers: ${KAFKA_BOOTSTRAP_SERVERS:localhost:9092}
     client-id: svc-cus-profile-kyc
     security:
-      # PLAINTEXT only for a developer machine. In a cluster (DB_SSL_ROOT_CERT set)
-      # with the relay on, KafkaTlsGuard refuses to start unless the effective
+      # PLAINTEXT only for a developer machine. In a cluster (DB_SSL_ROOT_CERT set),
+      # relay on or off, KafkaTlsGuard refuses to start unless the effective
       # producer protocol is SASL_SSL (kafka-msk) or SSL (kafka-strimzi).
       protocol: ${KAFKA_SECURITY_PROTOCOL:PLAINTEXT}
     admin:
