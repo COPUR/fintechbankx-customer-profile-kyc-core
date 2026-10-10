@@ -66,12 +66,19 @@ helm.sh/hook-weight: "-10"
 helm.sh/hook-delete-policy: before-hook-creation,hook-succeeded
 {{- end -}}
 
-{{/* The migration Job reads the schema owner's credential; refuse a render without it, or outside <env>/<service account>/. */}}
+{{/* The migration Job reads the schema owner's credential; refuse a render without it, equal to the runtime secret, or outside <env>/<service account>/. */}}
 {{- define "customer.requireMigrationSecret" -}}
 {{- if not .Values.externalSecret.enabled -}}
 {{- fail "externalSecret.enabled must be true: the migration Job reads the schema owner's credential (externalSecret.migrationSecretName)" -}}
 {{- end -}}
 {{- $key := required "externalSecret.migrationSecretName is required: the migration Job runs Flyway as the schema owner (Secrets Manager <env>/<service account>/db-migration)" .Values.externalSecret.migrationSecretName -}}
+{{- /* The single-user fallback: one credential for the Job and the service would run Flyway and the
+       service as the same role (decision 0001). Names are compared trimmed and without a trailing "/". */ -}}
+{{- $migration := trimSuffix "/" (trim (toString $key)) -}}
+{{- $runtime := trimSuffix "/" (trim (toString (default "" .Values.externalSecret.remoteSecretName))) -}}
+{{- if eq $migration $runtime -}}
+{{- fail "externalSecret.migrationSecretName must not be the runtime secret (externalSecret.remoteSecretName): the migration Job runs Flyway as the schema owner and the service as the runtime role, never one credential for both" -}}
+{{- end -}}
 {{- if not (regexMatch (printf "^[a-z0-9-]+/%s/" (regexQuoteMeta .Values.serviceAccount.name)) $key) -}}
 {{- fail (printf "externalSecret.migrationSecretName must be <env>/%s/..., got %s" .Values.serviceAccount.name $key) -}}
 {{- end -}}

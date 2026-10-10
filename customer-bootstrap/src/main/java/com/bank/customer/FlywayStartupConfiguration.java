@@ -15,6 +15,10 @@ import org.springframework.core.env.Environment;
  * migration Job ({@link DatabaseMigration}, profile db-migrate) migrates, as
  * the schema owner, so the service pods never hold the owner's credential
  * (decision 0001). A value other than validate or migrate fails the startup.
+ *
+ * <p>Also registers {@link MigrationRoleGuard}: whenever both DB_MIGRATION_USERNAME
+ * and DB_USERNAME are known they must be two roles, so a migration secret that
+ * holds the runtime credential never migrates (decision 0001).
  */
 @Configuration(proxyBeanMethods = false)
 public class FlywayStartupConfiguration {
@@ -22,6 +26,12 @@ public class FlywayStartupConfiguration {
     static final String PROPERTY = "customer.database.flyway";
 
     enum Mode { VALIDATE, MIGRATE }
+
+    /** Static: a BeanFactoryPostProcessor runs before the datasource and Flyway beans exist. */
+    @Bean
+    static MigrationRoleGuard migrationRoleGuard(Environment environment) {
+        return new MigrationRoleGuard(environment);
+    }
 
     @Bean
     FlywayMigrationStrategy flywayMigrationStrategy(Environment environment) {

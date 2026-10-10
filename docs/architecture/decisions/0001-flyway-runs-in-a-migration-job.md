@@ -80,9 +80,17 @@ run Flyway as a Job: its pods carry `app.kubernetes.io/name=<service account>`
    Any local, ephemeral or CI environment therefore runs the migrate step
    before the application: `java -jar customer-profile-kyc-service.jar migrate`
    or `./gradlew :customer-bootstrap:bootRun --args=migrate`.
-7. **`externalSecret.migrationSecretName` is required** and must be under
-   `<env>/customer-profile-kyc-service/`. The chart no longer renders without
-   it, so the service can no longer migrate silently as the runtime role.
+7. **`externalSecret.migrationSecretName` is required, is not the runtime
+   secret, and must be under `<env>/customer-profile-kyc-service/`.** The
+   chart no longer renders without it, so the service can no longer migrate
+   silently as the runtime role; it also refuses the same Secrets Manager
+   name for `migrationSecretName` and `remoteSecretName` (compared trimmed
+   and without a trailing `/`). The single-user fallback is refused in the
+   image too: `MigrationRoleGuard` (a `BeanFactoryPostProcessor`, before any
+   connection) fails the context when both `DB_MIGRATION_USERNAME` and
+   `DB_USERNAME` are known and name the same role, case-insensitively, so a
+   `db-migration` secret that holds the runtime credential exits the Job
+   with 1 (`DatabaseMigrationIT`, `MigrationRoleGuardTest`).
 8. CI (`deploy/helm`, `scripts/ci/check-migration-job.py`) asserts the split.
    The app pods never reference the `db-migration` secret. The Job exists with
    the hooks, limits, labels and sidecar opt-out above. No Service, PDB,
