@@ -1,0 +1,167 @@
+# Defaults are production-shaped (multi-replica, spread across zones).
+# Override per environment with values-<env>.yaml.
+
+image:
+  repository: ""   # e.g. <account>.dkr.ecr.<region>.amazonaws.com/fintechbankx/customer-profile-kyc-service
+  tag: ""          # immutable tag (git SHA); never "latest"
+  pullPolicy: IfNotPresent
+
+replicaCount: 3
+
+# Owning squad; tags every metric (squad) for the platform alert routing.
+squad: customer
+
+serviceAccount:
+  name: customer-profile-kyc-service
+  # IAM role from deploy/terraform output workload_role_arn (IRSA).
+  roleArn: ""
+
+# Mesh labels from the platform contract. app.kubernetes.io/name (= the chart
+# name, which is the service account name) and version are set by the chart.
+podLabels:
+  app: customer-profile-kyc-service
+  app.kubernetes.io/part-of: fintechbankx-customer
+  fintechbankx.io/service-id: svc-cus-profile-kyc
+  sidecar.istio.io/inject: "true"
+
+service:
+  port: 8080
+  managementPort: 8081
+
+resources:
+  requests:
+    cpu: 500m
+    memory: 768Mi
+  limits:
+    memory: 1Gi
+
+autoscaling:
+  enabled: true
+  minReplicas: 3
+  maxReplicas: 12
+  # CPU only: the JVM keeps committed heap, so a memory target would pin replicas at max.
+  targetCPUUtilizationPercentage: 65
+
+podDisruptionBudget:
+  minAvailable: 2
+
+# Non-secret runtime settings, rendered into a ConfigMap.
+config:
+  # jdbc:postgresql://<aurora-writer-endpoint>:5432/db_cus_profile_kyc_<env>?sslmode=verify-full&sslrootcert=/etc/fintechbankx/rds-ca/global-bundle.pem
+  # (Terraform output jdbc_url). Every key and value here goes through the platform guard fbx.guard
+  # (templates/_fbx_helpers.tpl, vendored unchanged from cicd-templates a4f0072) and this chart's
+  # customer.validate (templates/_helpers.tpl): DB_URL must be jdbc:postgresql: with exactly one
+  # sslmode=verify-full and one sslrootcert=<databaseCa mount>/<key>; no other key may carry a database URL,
+  # driver, Flyway, Liquibase or R2DBC property (SPRING_DATASOURCE_* including USERNAME and PASSWORD), a JDBC or
+  # TLS parameter name (DB_SSL_ROOT_CERT, PGSSLROOTCERT, *_SSL_MODE: the chart renders DB_SSL_ROOT_CERT, and the
+  # TLS startup assertion has no off switch), SPRING_APPLICATION_JSON, a Spring config location, import, name or
+  # activation (SPRING_CONFIG_*), any Spring profile (SPRING_PROFILES_*: kafka.runtime renders the only one), an
+  # SSL bundle (SPRING_SSL_*), FINTECHBANKX_TLS_*, JVM options (JAVA_TOOL_OPTIONS, JDK_JAVA_OPTIONS,
+  # _JAVA_OPTIONS, JAVA_OPTS) or a LOGGING_LEVEL_*; a Kafka security.protocol key must match kafka.runtime and
+  # an endpoint.identification.algorithm key must be https. Names are matched as given and in every spelling
+  # Spring's relaxed binding accepts (case, dash, dot, underscore, index). Keys must be ConfigMap keys
+  # ([-._a-zA-Z0-9]+); the templates quote every key and value.
+  DB_URL: ""
+  # Runtime role (least privilege, granted by V13); Flyway runs as the schema
+  # owner from the db-migration secret in the migration Job (decision 0001).
+  DB_USERNAME: customer_profile_app
+  DB_POOL_MAX: "10"
+  KAFKA_BOOTSTRAP_SERVERS: ""
+  OIDC_ISSUER_URI: ""
+  OIDC_JWK_SET_URI: ""
+  OIDC_AUDIENCE: svc-cus-profile-kyc   # token aud must contain the service id
+  SERVICE_CALLERS: svc-ln-loan-lifecycle   # token azp values allowed to read and move credit
+  SERVICE_CALLERS_KYC: svc-pay-initiation-settlement   # token azp values allowed to read the KYC status
+  # Off (as the application default): the relay cannot reach
+  # MSK until mesh #11's egress is applied. Turn it on with
+  # --set config.OUTBOX_RELAY_ENABLED=true (runbook step 6). Events wait in the
+  # outbox meanwhile; nothing is lost.
+  OUTBOX_RELAY_ENABLED: "false"
+  # Onboarding sets the Keycloak user attribute customer_id (identity link).
+  # Off until the service client holds the scoped FGAP v2 permission (users in
+  # group /customers, identity 8f9024b) and externalSecret.oidcClientSecretName
+  # is set; while off, linking fails closed (503).
+  IDENTITY_ADMIN_ENABLED: "false"
+  KEYCLOAK_BASE_URL: http://keycloak.identity.svc.cluster.local:8080
+  KEYCLOAK_REALM: fintechbankx
+  IDENTITY_ADMIN_CLIENT_ID: svc-cus-profile-kyc
+
+# Database credential, synced from AWS Secrets Manager by External Secrets Operator.
+externalSecret:
+  enabled: true
+  # The platform ClusterSecretStore (External Secrets Operator in namespace
+  # external-secrets reads only <env>/* secrets).
+  storeName: aws-secrets-manager
+  # Secrets Manager secret from deploy/terraform output app_db_secret_name.
+  remoteSecretName: ""
+  # Secrets Manager secret <env>/customer-profile-kyc-service/oidc-client (platform
+  # contract); its client_secret becomes IDENTITY_ADMIN_CLIENT_SECRET. Empty: not synced.
+  oidcClientSecretName: ""
+  # Secrets Manager secret <env>/customer-profile-kyc-service/db-migration
+  # (Terraform output migration_db_secret_name): the schema owner's
+  # {"username","password"}, read only by the migration Job below. The service
+  # pods never mount it; the chart refuses to render without it.
+  migrationSecretName: ""
+  refreshInterval: 1h
+
+topologySpread:
+  maxSkew: 1
+
+# Flyway migration Job (templates/migration-job.yaml, decision 0001): Helm
+# pre-install and pre-upgrade hook running this image with the argument
+# "migrate" as the schema owner, before any pod of the release starts or is
+# replaced. A failed Job fails the install or upgrade; give helm --timeout more
+# than activeDeadlineSeconds (runbook, "Database migrations (Flyway Job)"). Its
+# pods carry app.kubernetes.io/name=<serviceAccount.name>,
+# app.kubernetes.io/component=db-migration and sidecar.istio.io/inject "false"
+# (no proxy: Aurora egress is a NetworkPolicy on the name label, and an injected
+# proxy would keep the Job from completing).
+migrationJob:
+  # One retry: each migration is transactional in PostgreSQL, so a retry after a
+  # dropped connection starts from the last applied version.
+  backoffLimit: 1
+  activeDeadlineSeconds: 600
+  # Finished Jobs (and their logs) are removed after a day, or replaced by the
+  # next install or upgrade.
+  ttlSecondsAfterFinished: 86400
+  resources:
+    requests:
+      cpu: 250m
+      memory: 512Mi
+    limits:
+      memory: 768Mi
+
+# Settings the pod cannot start without; rendering fails while any is empty.
+requiredConfig: [DB_URL, OIDC_ISSUER_URI, OIDC_JWK_SET_URI, OIDC_AUDIENCE, KAFKA_BOOTSTRAP_SERVERS]
+
+# Mesh-wide STRICT mTLS, default deny, the ALLOW rules per caller principal
+# and the ingress NetworkPolicy (mesh #11) are owned by
+# fintechbankx-platform-mesh-security-service-mesh; this chart ships no
+# PeerAuthentication, AuthorizationPolicy or NetworkPolicy.
+
+# Aurora CA bundle (cicd-templates 4f0f266): the platform publishes ConfigMap
+# rds-ca-bundle (key global-bundle.pem) in every service namespace (mesh repo
+# trust-manager Bundle). Always mounted read-only and not optional; its file is
+# exported as DB_SSL_ROOT_CERT and named by sslrootcert in DB_URL.
+databaseCa:
+  configMapName: rds-ca-bundle
+  key: global-bundle.pem
+  mountPath: /etc/fintechbankx/rds-ca
+
+# Kafka auth profile, rendered as SPRING_PROFILES_ACTIVE on the Deployment (the
+# only Spring profile; fbx.kafkaProfile, platform Kafka client guide):
+#   msk     -> kafka-msk: SASL_SSL + AWS_MSK_IAM through the service IRSA role (AWS).
+#   strimzi -> kafka-strimzi: TLS listener of the in-cluster Strimzi cluster
+#              (local, kind); needs kafkaTls.secretName.
+# Anything else, including "", is refused: the service publishes to Kafka.
+kafka:
+  runtime: msk
+
+# Kafka client certificate for the kafka-strimzi profile (local, kind): the
+# Secret holding the PEM files; rendered as KAFKA_TLS_CERT, KAFKA_TLS_KEY and
+# KAFKA_TLS_CA only with kafka.runtime strimzi, and required then.
+kafkaTls:
+  secretName: ""
+  certKey: user.crt
+  keyKey: user.key
+  caKey: ca.crt

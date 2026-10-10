@@ -1,0 +1,586 @@
+package com.bank.customer;
+
+import com.bank.customer.domain.Customer;
+import com.bank.customer.domain.port.in.CreditMovementCommand;
+import com.bank.customer.domain.port.in.MoveCreditUseCase;
+import com.bank.customer.domain.port.out.CustomerRepository;
+import com.bank.customer.infrastructure.outbox.OutboxRelay;
+import com.bank.customer.infrastructure.outbox.SpringDataOutboxRepository;
+import com.bank.shared.kernel.domain.CustomerId;
+import com.bank.shared.kernel.domain.Money;
+import com.fasterxml.jackson.databind.JsonNode;
+import com.fasterxml.jackson.databind.ObjectMapper;
+import org.apache.kafka.clients.producer.ProducerRecord;
+import org.junit.jupiter.api.BeforeAll;
+import org.junit.jupiter.api.BeforeEach;
+import org.junit.jupiter.api.Test;
+import org.mockito.ArgumentCaptor;
+import org.mockito.Mockito;
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.boot.test.autoconfigure.web.servlet.AutoConfigureMockMvc;
+import org.springframework.boot.test.context.SpringBootTest;
+import org.springframework.boot.test.mock.mockito.MockBean;
+import org.springframework.dao.OptimisticLockingFailureException;
+import org.springframework.http.MediaType;
+import org.springframework.jdbc.core.JdbcTemplate;
+import org.springframework.kafka.core.KafkaTemplate;
+import org.springframework.kafka.support.SendResult;
+import org.springframework.security.core.authority.SimpleGrantedAuthority;
+import org.springframework.test.context.DynamicPropertyRegistry;
+import org.springframework.test.context.DynamicPropertySource;
+import org.springframework.test.web.servlet.MockMvc;
+import org.springframework.test.web.servlet.request.MockHttpServletRequestBuilder;
+import org.springframework.transaction.PlatformTransactionManager;
+import org.springframework.transaction.support.TransactionTemplate;
+
+import java.nio.charset.StandardCharsets;
+import java.math.BigDecimal;
+import java.time.Clock;
+import java.time.Duration;
+import java.util.List;
+import java.util.UUID;
+import java.util.concurrent.CompletableFuture;
+
+import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
+import static org.hamcrest.Matchers.containsString;
+import static org.hamcrest.Matchers.not;
+import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.Mockito.when;
+import static org.springframework.security.test.web.servlet.request.SecurityMockMvcRequestPostProcessors.jwt;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.put;
+import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.header;
+import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
+import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
+
+/**
+ * Boots the whole service against PostgreSQL: the test context migrates
+ * sc_cus_profile_kyc as the schema owner (what the chart's migration Job does;
+ * the service itself only validates), Hibernate validates the entities against
+ * it, and customers are created and have credit reserved over HTTP the way the
+ * loan service calls it, as the runtime role, with their events landing in the
+ * outbox and then on (a mocked) Kafka.
+ */
+@SpringBootTest(properties = "customer.outbox.relay.enabled=false")
+@AutoConfigureMockMvc
+class CustomerServiceIT {
+
+    @BeforeAll
+    static void requireDatabase() {
+        PostgresTestDatabase.assumeAvailable();
+    }
+
+    @DynamicPropertySource
+    static void database(DynamicPropertyRegistry registry) {
+        PostgresTestDatabase.register(registry);
+    }
+
+    @Autowired MockMvc mvc;
+    @Autowired ObjectMapper json;
+    @Autowired JdbcTemplate jdbc;
+    @Autowired CustomerRepository customers;
+    @Autowired MoveCreditUseCase moveCredit;
+    @Autowired SpringDataOutboxRepository outbox;
+    @Autowired PlatformTransactionManager transactionManager;
+    @Autowired io.micrometer.core.instrument.MeterRegistry meterRegistry;
+
+    /**
+     * Platform alert rules select on the common tags app (the chart's service
+     * account) and squad; application.yml sets them from METRICS_APP and
+     * METRICS_SQUAD, defaulting to this service.
+     */
+    @Test
+    void everyMeterCarriesTheAppAndSquadTags() {
+        io.micrometer.core.instrument.Meter.Id gauge = meterRegistry.get("outbox.oldest.pending.age.seconds").gauge().getId();
+
+        assertThat(gauge.getTag("app")).isEqualTo("customer-profile-kyc-service");
+        assertThat(gauge.getTag("squad")).isEqualTo("customer");
+        assertThat(gauge.getTag("service")).isEqualTo("svc-cus-profile-kyc");
+    }
+    @MockBean KafkaTemplate<String, String> kafka;
+    @MockBean org.springframework.security.oauth2.jwt.JwtDecoder jwtDecoder;
+
+    @BeforeEach
+    void cleanTables() {
+        // As the migration owner: the runtime role the service connects as may not DELETE customers or movements.
+        JdbcTemplate owner = PostgresTestDatabase.owner();
+        owner.update("delete from sc_cus_profile_kyc.outbox_event");
+        owner.update("delete from sc_cus_profile_kyc.credit_movement");
+        owner.update("delete from sc_cus_profile_kyc.credit_reservation");
+        owner.update("delete from sc_cus_profile_kyc.customer");
+    }
+
+    @Test
+    void flywayCreatesOnlyTheTablesThisServiceOwns() {
+        List<String> tables = jdbc.queryForList("""
+            select table_name from information_schema.tables
+            where table_schema = 'sc_cus_profile_kyc' and table_name <> 'flyway_schema_history'
+            order by table_name
+            """, String.class);
+
+        assertThat(tables).containsExactly("credit_movement", "credit_reservation", "customer", "outbox_event");
+    }
+
+    /**
+     * The service connects as a runtime role, not as the schema owner that
+     * Flyway migrates with: it may read, create and change customers, journal
+     * movements, keep reservations and work the outbox, but not delete a
+     * customer or a movement, rewrite a journalled movement, change the schema
+     * or record a migration.
+     */
+    @Test
+    void theRuntimeRoleCanOnlyDoWhatTheServiceDoes() throws Exception {
+        String customerId = create("runtime-role@example.com", "20000.00");
+        assertThat(jdbc.queryForObject("select current_user", String.class)).isEqualTo(PostgresTestDatabase.RUNTIME_ROLE);
+        JdbcTemplate runtime = PostgresTestDatabase.runtime();
+
+        // What the service does: update the customer, insert a movement and a reservation, work the outbox.
+        assertThat(runtime.update("update sc_cus_profile_kyc.customer set credit_limit = 30000 where customer_id = ?", customerId)).isOne();
+        runtime.update("update sc_cus_profile_kyc.outbox_event set attempts = attempts where aggregate_type = 'Customer'");
+        assertThat(runtime.update("delete from sc_cus_profile_kyc.outbox_event where published_at < now() - interval '1 year'"))
+            .isZero();
+        // What it never does.
+        assertThatThrownBy(() -> runtime.update("delete from sc_cus_profile_kyc.customer where customer_id = ?", customerId))
+            .rootCause().hasMessageContaining("permission denied for table customer");
+        assertThatThrownBy(() -> runtime.execute("truncate sc_cus_profile_kyc.customer"))
+            .rootCause().hasMessageContaining("permission denied for table customer");
+        assertThatThrownBy(() -> runtime.update("update sc_cus_profile_kyc.credit_movement set amount = 1"))
+            .rootCause().hasMessageContaining("permission denied for table credit_movement");
+        assertThatThrownBy(() -> runtime.update("delete from sc_cus_profile_kyc.credit_movement"))
+            .rootCause().hasMessageContaining("permission denied for table credit_movement");
+        assertThatThrownBy(() -> runtime.update("delete from sc_cus_profile_kyc.credit_reservation"))
+            .rootCause().hasMessageContaining("permission denied for table credit_reservation");
+        assertThatThrownBy(() -> runtime.execute(
+                "alter table sc_cus_profile_kyc.customer drop constraint ck_customer_credit"))
+            .rootCause().hasMessageContaining("must be owner of table customer");
+        assertThatThrownBy(() -> runtime.execute("create table sc_cus_profile_kyc.shadow (id int)"))
+            .rootCause().hasMessageContaining("permission denied for schema sc_cus_profile_kyc");
+        // The service validates the schema history at startup, so it may read but never write it.
+        assertThat(runtime.queryForObject(
+                "select count(*) from sc_cus_profile_kyc.flyway_schema_history where success", Integer.class))
+            .isGreaterThanOrEqualTo(13);
+        assertThatThrownBy(() -> runtime.update(
+                "insert into sc_cus_profile_kyc.flyway_schema_history (installed_rank, version, description, type,"
+                    + " script, checksum, installed_by, execution_time, success)"
+                    + " values (9999, '9999', 'forged', 'SQL', 'V9999__forged.sql', 0, current_user, 0, true)"))
+            .rootCause().hasMessageContaining("permission denied for table flyway_schema_history");
+
+        assertThat(runtime.queryForObject(
+                "select credit_limit from sc_cus_profile_kyc.customer where customer_id = ?", java.math.BigDecimal.class, customerId))
+            .isEqualByComparingTo("30000");
+    }
+
+    @Test
+    void createdCustomerIsStoredAndItsEventCarriesNoPersonalData() throws Exception {
+        String customerId = create("noor@example.com", "20000.00");
+
+        assertThat(jdbc.queryForMap("select first_name, email, currency, credit_limit, version from sc_cus_profile_kyc.customer where customer_id = ?", customerId))
+            .containsEntry("first_name", "Noor")
+            .containsEntry("email", "noor@example.com")
+            .containsEntry("currency", "AED")
+            .containsEntry("version", 0L)
+            .hasEntrySatisfying("credit_limit", v -> assertThat((BigDecimal) v).isEqualByComparingTo("20000.00"));
+
+        String payload = jdbc.queryForObject(
+            "select payload::text from sc_cus_profile_kyc.outbox_event where aggregate_id = ?", String.class, customerId);
+        JsonNode created = json.readTree(payload);
+        assertThat(created.get("eventType").asText()).isEqualTo("Customer.Customer.Created.v1");
+        assertThat(created.get("producer").asText()).isEqualTo("svc-cus-profile-kyc");
+        assertThat(created.get("correlationId").asText()).isEqualTo("it-interaction-1");
+        assertThat(payload).doesNotContain("Noor", "noor@example.com");
+    }
+
+    @Test
+    void duplicateEmailIsRejected() throws Exception {
+        create("dup@example.com", "5000.00");
+
+        String body = mvc.perform(asBanker(post("/api/v1/customers"))
+                .contentType(MediaType.APPLICATION_JSON)
+                .content(customerJson("DUP@example.com", "5000.00")))
+            .andExpect(status().isConflict())
+            .andExpect(jsonPath("$.code").value("CUSTOMER_ALREADY_EXISTS"))
+            .andReturn().getResponse().getContentAsString();
+        assertThat(body.toLowerCase()).doesNotContain("dup@example.com", "noor", "rahman");
+        assertThat(jdbc.queryForObject("select count(*) from sc_cus_profile_kyc.customer", Integer.class)).isEqualTo(1);
+    }
+
+    @Test
+    void retriedReservationFromTheLoanServiceMovesCreditOnce() throws Exception {
+        String customerId = create("retry@example.com", "10000.00");
+
+        // The loan service derives the key from the loan id, so its retry resends the same key.
+        reserve(customerId, "2500.00", "LOAN-1:reserve").andExpect(status().isOk())
+            .andExpect(jsonPath("$.availableCredit").value(7500.00));
+        reserve(customerId, "2500.00", "LOAN-1:reserve").andExpect(status().isOk())
+            .andExpect(jsonPath("$.availableCredit").value(7500.00));
+
+        assertThat(jdbc.queryForObject("select used_credit from sc_cus_profile_kyc.customer where customer_id = ?", BigDecimal.class, customerId))
+            .isEqualByComparingTo("2500.00");
+        assertThat(jdbc.queryForObject("select count(*) from sc_cus_profile_kyc.credit_movement", Integer.class)).isEqualTo(1);
+        assertThat(jdbc.queryForObject("select reference from sc_cus_profile_kyc.credit_movement", String.class)).isEqualTo("LOAN-1");
+        assertThat(jdbc.queryForList("select event_type from sc_cus_profile_kyc.outbox_event where aggregate_id = ? order by created_seq", String.class, customerId))
+            .containsExactly("Customer.Customer.Created.v1", "Customer.Customer.CreditReserved.v1");
+
+        reserve(customerId, "2600.00", "LOAN-1:reserve")
+            .andExpect(status().isConflict())
+            .andExpect(jsonPath("$.code").value("IDEMPOTENCY_KEY_REUSED"));
+        // Same key and amount, but for another loan: not a replay.
+        mvc.perform(asService(post("/api/v1/customers/{id}/credit/reserve", customerId))
+                .header("x-idempotency-key", "LOAN-1:reserve")
+                .contentType(MediaType.APPLICATION_JSON)
+                .content("{\"amount\": 2500.00, \"currency\": \"AED\", \"reference\": \"LOAN-2\"}"))
+            .andExpect(status().isConflict())
+            .andExpect(jsonPath("$.code").value("IDEMPOTENCY_KEY_REUSED"));
+        mvc.perform(asService(post("/api/v1/customers/{id}/credit/release", customerId))
+                .header("x-idempotency-key", "LOAN-1:release")
+                .contentType(MediaType.APPLICATION_JSON)
+                .content("{\"amount\": 2500.00, \"currency\": \"AED\", \"reference\": \"LOAN-1\"}"))
+            .andExpect(status().isOk())
+            .andExpect(jsonPath("$.usedCredit").value(0));
+    }
+
+    @Test
+    void reserveAndReleaseReturnOnlyTheCreditPosition() throws Exception {
+        String customerId = create("position@example.com", "10000.00");
+
+        for (var result : List.of(
+                reserve(customerId, "2500.00", "LOAN-9:reserve"),
+                mvc.perform(asService(post("/api/v1/customers/{id}/credit/release", customerId))
+                    .header("x-idempotency-key", "LOAN-9:release")
+                    .contentType(MediaType.APPLICATION_JSON)
+                    .content("{\"amount\": 1000.00, \"currency\": \"AED\", \"reference\": \"LOAN-9\"}")))) {
+            JsonNode body = json.readTree(result.andExpect(status().isOk()).andReturn().getResponse().getContentAsString());
+            assertThat(body.fieldNames()).toIterable()
+                .containsExactlyInAnyOrder("customerId", "currency", "creditLimit", "usedCredit", "availableCredit");
+            assertThat(body.has("firstName") || body.has("lastName") || body.has("email") || body.has("phoneNumber")
+                || body.has("monthlyIncome") || body.has("creditScore")).isFalse();
+            assertThat(body.get("customerId").asText()).isEqualTo(customerId);
+            assertThat(body.get("currency").asText()).isEqualTo("AED");
+        }
+        mvc.perform(asService(get("/api/v1/customers/{id}/credit", customerId)))
+            .andExpect(jsonPath("$.usedCredit").value(1500.00))
+            .andExpect(jsonPath("$.availableCredit").value(8500.00));
+    }
+
+    @Test
+    void invalidAmountsAndCurrenciesAreA400AndMoveNothing() throws Exception {
+        String customerId = create("invalid@example.com", "10000.00");
+        List<String> invalidBodies = List.of(
+            "{\"currency\": \"AED\", \"reference\": \"LOAN-5\"}",
+            "{\"amount\": 10.00, \"reference\": \"LOAN-5\"}",
+            "{\"amount\": 0, \"currency\": \"AED\", \"reference\": \"LOAN-5\"}",
+            "{\"amount\": -10.00, \"currency\": \"AED\", \"reference\": \"LOAN-5\"}",
+            "{\"amount\": 10.00, \"currency\": \"ZZZ\", \"reference\": \"LOAN-5\"}",
+            "{\"amount\": 10.00, \"currency\": \"dirham\", \"reference\": \"LOAN-5\"}",
+            // More decimals than AED allows: refused, never silently rounded to 2500.01.
+            "{\"amount\": 2500.005, \"currency\": \"AED\", \"reference\": \"LOAN-5\"}");
+
+        int key = 0;
+        for (String body : invalidBodies) {
+            for (String movement : List.of("reserve", "release")) {
+                mvc.perform(asService(post("/api/v1/customers/{id}/credit/" + movement, customerId))
+                        .header("x-idempotency-key", "invalid-" + key++)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(body))
+                    .andExpect(status().isBadRequest())
+                    .andExpect(jsonPath("$.code").value("INVALID_REQUEST"))
+                    .andExpect(jsonPath("$.message").isNotEmpty())
+                    .andExpect(jsonPath("$.interactionId").value("it-interaction-3"));
+            }
+            mvc.perform(asBanker(put("/api/v1/customers/{id}/credit-limit", customerId))
+                    .contentType(MediaType.APPLICATION_JSON)
+                    .content(body))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.code").value("INVALID_REQUEST"))
+                .andExpect(jsonPath("$.message").isNotEmpty());
+        }
+        assertThat(jdbc.queryForMap("select credit_limit, used_credit from sc_cus_profile_kyc.customer where customer_id = ?", customerId))
+            .hasEntrySatisfying("credit_limit", v -> assertThat((BigDecimal) v).isEqualByComparingTo("10000.00"))
+            .hasEntrySatisfying("used_credit", v -> assertThat((BigDecimal) v).isEqualByComparingTo("0"));
+        assertThat(jdbc.queryForObject("select count(*) from sc_cus_profile_kyc.credit_movement", Integer.class)).isZero();
+    }
+
+    @Test
+    void aCreditLimitWithMoreDecimalsThanTheCurrencyAllowsIsA400() throws Exception {
+        mvc.perform(asBanker(post("/api/v1/customers"))
+                .contentType(MediaType.APPLICATION_JSON)
+                .content(customerJson("scale@example.com", "10000.005")))
+            .andExpect(status().isBadRequest())
+            .andExpect(jsonPath("$.code").value("INVALID_REQUEST"))
+            .andExpect(jsonPath("$.message").value("AED amounts allow at most 2 decimal places"));
+        assertThat(jdbc.queryForObject("select count(*) from sc_cus_profile_kyc.customer", Integer.class)).isZero();
+    }
+
+    @Test
+    void aCreditMovementWithoutAnIdempotencyKeyIsRefused() throws Exception {
+        String customerId = create("nokey@example.com", "10000.00");
+
+        mvc.perform(asService(post("/api/v1/customers/{id}/credit/reserve", customerId))
+                .contentType(MediaType.APPLICATION_JSON)
+                .content("{\"amount\": 10.00, \"currency\": \"AED\"}"))
+            .andExpect(status().isBadRequest())
+            .andExpect(jsonPath("$.code").value("INVALID_REQUEST"))
+            .andExpect(jsonPath("$.message").value("x-idempotency-key header is required"));
+        assertThat(jdbc.queryForObject("select used_credit from sc_cus_profile_kyc.customer where customer_id = ?", BigDecimal.class, customerId))
+            .isEqualByComparingTo("0");
+    }
+
+    @Test
+    void insufficientCreditIsA422ThatDoesNotDiscloseTheLimit() throws Exception {
+        String customerId = create("small@example.com", "1000.00");
+
+        reserve(customerId, "1000.01", "LOAN-3:reserve")
+            .andExpect(status().isUnprocessableEntity())
+            .andExpect(jsonPath("$.code").value("INSUFFICIENT_CREDIT"))
+            .andExpect(jsonPath("$.message").value(not(containsString("1000"))));
+        assertThat(jdbc.queryForObject("select count(*) from sc_cus_profile_kyc.credit_movement", Integer.class)).isZero();
+    }
+
+    @Test
+    void servicesReadOnlyTheCreditPositionAndOnlyListedServicesMayUseIt() throws Exception {
+        String customerId = create("self@example.com", "3000.00");
+
+        mvc.perform(asIdentityCustomer(get("/api/v1/customers/{id}", customerId), "kc-user-1", customerId))
+            .andExpect(status().isOk());
+        mvc.perform(asIdentityCustomer(get("/api/v1/customers/{id}", customerId), "kc-user-2", "someone-else"))
+            .andExpect(status().isForbidden());
+        mvc.perform(asService(get("/api/v1/customers/{id}", customerId)))
+            .andExpect(status().isForbidden());
+        mvc.perform(asService(get("/api/v1/customers/{id}/credit", customerId)))
+            .andExpect(status().isOk())
+            .andExpect(jsonPath("$.availableCredit").value(3000.00))
+            .andExpect(jsonPath("$.currency").value("AED"))
+            .andExpect(jsonPath("$.email").doesNotExist())
+            .andExpect(jsonPath("$.firstName").doesNotExist());
+        mvc.perform(asUnlistedService(get("/api/v1/customers/{id}/credit", customerId)))
+            .andExpect(status().isForbidden());
+        mvc.perform(asUnlistedService(post("/api/v1/customers/{id}/credit/reserve", customerId))
+                .header("x-idempotency-key", "other-1")
+                .contentType(MediaType.APPLICATION_JSON)
+                .content("{\"amount\": 10.00, \"currency\": \"AED\"}"))
+            .andExpect(status().isForbidden());
+        mvc.perform(asIdentityCustomer(post("/api/v1/customers/{id}/credit/reserve", customerId), "kc-user-1", customerId)
+                .header("x-idempotency-key", "self-1")
+                .contentType(MediaType.APPLICATION_JSON)
+                .content("{\"amount\": 10.00, \"currency\": \"AED\"}"))
+            .andExpect(status().isForbidden());
+    }
+
+    /**
+     * Platform contract "End-user and caller claims": under Keycloak, sub is a UUID and the customer
+     * profile id comes in the customer_id claim. The real decoder chain runs here (bearer token through
+     * the resource-server filter and SecurityConfiguration's converter); only the signature check is mocked.
+     */
+    @Test
+    void aCustomerTokenIsMatchedOnItsCustomerIdClaimAndFallsBackToTheSubject() throws Exception {
+        loadParitySeed();
+        String identityUser = UUID.nameUUIDFromBytes("keycloak-user-1".getBytes(StandardCharsets.UTF_8)).toString();
+
+        for (String path : List.of("/api/v1/customers/{id}", "/api/v1/customers/{id}/credit")) {
+            mvc.perform(asIdentityCustomer(get(path, "CUST-12345678"), identityUser, "CUST-12345678"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.customerId").value("CUST-12345678"));
+            mvc.perform(asIdentityCustomer(get(path, "CUST-87654321"), identityUser, "CUST-12345678"))
+                .andExpect(status().isForbidden());
+            // No customer_id claim: the subject is the principal name.
+            mvc.perform(asIdentityCustomer(get(path, "CUST-87654321"), "CUST-87654321", null))
+                .andExpect(status().isOk());
+            mvc.perform(asIdentityCustomer(get(path, "CUST-87654321"), identityUser, null))
+                .andExpect(status().isForbidden());
+        }
+    }
+
+    @Test
+    void migratedMonolithCustomerLoadsAndCanReserveCredit() throws Exception {
+        jdbc.update("""
+            insert into sc_cus_profile_kyc.customer
+              (customer_id, first_name, last_name, currency, credit_limit, used_credit, legacy_customer_id, created_at, updated_at, version,
+               kyc_status, kyc_source, kyc_verified_at)
+            values ('42', 'Legacy', 'Customer', 'AED', 50000, 20000, 42, timestamp '2024-01-01 10:00', timestamp '2024-06-01 10:00', 3,
+               'VERIFIED', 'MIGRATED', timestamptz '2026-10-08 00:00:00+00')
+            """);
+
+        mvc.perform(asBanker(get("/api/v1/customers/{id}", "42")))
+            .andExpect(status().isOk())
+            .andExpect(jsonPath("$.email").doesNotExist());
+        mvc.perform(asService(get("/api/v1/customers/{id}/credit", "42")))
+            .andExpect(status().isOk())
+            .andExpect(jsonPath("$.availableCredit").value(30000.00));
+        reserve("42", "30000.00", "LOAN-42:reserve").andExpect(status().isOk());
+
+        assertThat(jdbc.queryForMap("select used_credit, version from sc_cus_profile_kyc.customer where customer_id = '42'"))
+            .containsEntry("version", 4L)
+            .hasEntrySatisfying("used_credit", v -> assertThat((BigDecimal) v).isEqualByComparingTo("50000.00"));
+    }
+
+    /**
+     * db/fixtures/parity_seed_customers.sql gives the regression parity runs the three customers the
+     * monolith's CustomerCreditServiceAdapter hard-codes; loading it again resets them.
+     */
+    @Test
+    void paritySeedLoadsTheMonolithAdapterCustomersAndResetsThemOnReload() throws Exception {
+        loadParitySeed();
+        reserve("CUST-11111111", "5000.00", "PARITY-1:reserve", "USD").andExpect(status().isOk())
+            .andExpect(jsonPath("$.availableCredit").value(0));
+        reserve("CUST-11111111", "0.01", "PARITY-2:reserve", "USD").andExpect(status().isUnprocessableEntity());
+
+        loadParitySeed();
+
+        for (String[] expected : List.of(
+                new String[] {"CUST-12345678", "100000.0", "0.0", "100000.0"},
+                new String[] {"CUST-87654321", "50000.0", "10000.0", "40000.0"},
+                new String[] {"CUST-11111111", "25000.0", "20000.0", "5000.0"})) {
+            mvc.perform(asService(get("/api/v1/customers/{id}/credit", expected[0])))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.currency").value("USD"))
+                .andExpect(jsonPath("$.creditLimit").value(Double.parseDouble(expected[1])))
+                .andExpect(jsonPath("$.usedCredit").value(Double.parseDouble(expected[2])))
+                .andExpect(jsonPath("$.availableCredit").value(Double.parseDouble(expected[3])));
+        }
+        assertThat(jdbc.queryForObject("select count(*) from sc_cus_profile_kyc.credit_movement", Integer.class)).isZero();
+        assertThat(jdbc.queryForObject("select count(*) from sc_cus_profile_kyc.credit_reservation", Integer.class)).isZero();
+        reserve("CUST-11111111", "5000.00", "PARITY-1:reserve", "USD").andExpect(status().isOk());
+    }
+
+    private void loadParitySeed() {
+        java.nio.file.Path seed = java.util.stream.Stream.of("db/fixtures/parity_seed_customers.sql",
+                "../db/fixtures/parity_seed_customers.sql")
+            .map(java.nio.file.Path::of).filter(java.nio.file.Files::exists).findFirst()
+            .orElseThrow(() -> new IllegalStateException("db/fixtures/parity_seed_customers.sql not found"));
+        // As the schema owner, the way an operator runs it with psql: the seed deletes movements and
+        // reservations and rewrites the three credit positions, which the runtime role may not do.
+        new org.springframework.jdbc.datasource.init.ResourceDatabasePopulator(
+                new org.springframework.core.io.FileSystemResource(seed))
+            .execute(PostgresTestDatabase.ownerDataSource());
+    }
+
+    @Test
+    void staleAggregateCannotOverwriteANewerVersion() throws Exception {
+        String customerId = create("stale@example.com", "8000.00");
+        Customer stale = customers.findById(CustomerId.of(customerId)).orElseThrow();
+        moveCredit.reserveCredit(new CreditMovementCommand(CustomerId.of(customerId), Money.aed(new BigDecimal("8000.00")), "stale-1", null));
+
+        stale.reserveCredit(Money.aed(new BigDecimal("8000.00")));
+
+        assertThatThrownBy(() -> new TransactionTemplate(transactionManager).executeWithoutResult(tx -> customers.save(stale)))
+            .isInstanceOf(OptimisticLockingFailureException.class);
+        assertThat(jdbc.queryForObject("select used_credit from sc_cus_profile_kyc.customer where customer_id = ?", BigDecimal.class, customerId))
+            .isEqualByComparingTo("8000.00");
+    }
+
+    @Test
+    @SuppressWarnings("unchecked")
+    void relayPublishesPendingEventsInOrderKeyedByCustomerId() throws Exception {
+        String customerId = create("relay@example.com", "4000.00");
+        moveCredit.reserveCredit(new CreditMovementCommand(CustomerId.of(customerId), Money.aed(new BigDecimal("100.00")), "relay-1", null));
+        when(kafka.send(any(ProducerRecord.class))).thenReturn(CompletableFuture.completedFuture((SendResult<String, String>) null));
+        OutboxRelay relay = new OutboxRelay(outbox, kafka, new TransactionTemplate(transactionManager),
+            Clock.systemUTC(), 100, Duration.ofSeconds(5), Duration.ofDays(7),
+            Duration.ofSeconds(1), Duration.ofMinutes(5), new io.micrometer.core.instrument.simple.SimpleMeterRegistry());
+
+        int published = relay.relayOnce();
+
+        assertThat(published).isEqualTo(2);
+        assertThat(outbox.countByPublishedAtIsNull()).isZero();
+        ArgumentCaptor<ProducerRecord<String, String>> records = ArgumentCaptor.forClass(ProducerRecord.class);
+        Mockito.verify(kafka, Mockito.times(2)).send(records.capture());
+        assertThat(records.getAllValues()).extracting(ProducerRecord::topic)
+            .containsExactly("evt.cus.customer.v1", "evt.cus.customer.v1");
+        assertThat(records.getAllValues()).extracting(r -> new String(r.headers().lastHeader("eventType").value(),
+                java.nio.charset.StandardCharsets.UTF_8))
+            .containsExactly("Customer.Customer.Created.v1", "Customer.Customer.CreditReserved.v1");
+        assertThat(records.getAllValues()).extracting(ProducerRecord::key).containsOnly(customerId);
+    }
+
+    /** IDENTITY_ADMIN_ENABLED defaults to false: linking fails closed and records nothing. */
+    @Test
+    void identityLinkFailsClosedWhileTheDirectoryIntegrationIsDisabled() throws Exception {
+        String customerId = create("closed@example.com", "5000.00");
+
+        mvc.perform(asBanker(put("/api/v1/customers/{id}/identity-link", customerId))
+                .contentType(MediaType.APPLICATION_JSON)
+                .content("{\"identityUserId\": \"6f1c2a7e-5b8d-4c3e-9a1f-0d2b3c4e5f60\"}"))
+            .andExpect(status().isServiceUnavailable())
+            .andExpect(jsonPath("$.code").value("IDENTITY_DIRECTORY_UNAVAILABLE"));
+
+        assertThat(jdbc.queryForObject("select identity_user_id from sc_cus_profile_kyc.customer where customer_id = ?",
+            String.class, customerId)).isNull();
+    }
+
+    @Test
+    void unknownCustomerIsA404WithTheInteractionId() throws Exception {
+        mvc.perform(asBanker(get("/api/v1/customers/{id}", "CUST-MISSING")))
+            .andExpect(status().isNotFound())
+            .andExpect(jsonPath("$.code").value("CUSTOMER_NOT_FOUND"))
+            .andExpect(jsonPath("$.interactionId").value("it-interaction-1"));
+    }
+
+    @Test
+    void apiRejectsCallsWithoutAToken() throws Exception {
+        mvc.perform(get("/api/v1/customers/{id}", "CUST-ANY")).andExpect(status().isUnauthorized());
+    }
+
+    private String create(String email, String limit) throws Exception {
+        String body = mvc.perform(asBanker(post("/api/v1/customers"))
+                .contentType(MediaType.APPLICATION_JSON)
+                .content(customerJson(email, limit)))
+            .andExpect(status().isCreated())
+            .andExpect(header().string("x-fapi-interaction-id", "it-interaction-1"))
+            .andReturn().getResponse().getContentAsString();
+        return json.readTree(body).get("customerId").asText();
+    }
+
+    private org.springframework.test.web.servlet.ResultActions reserve(String customerId, String amount, String key) throws Exception {
+        return reserve(customerId, amount, key, "AED");
+    }
+
+    private org.springframework.test.web.servlet.ResultActions reserve(String customerId, String amount, String key,
+                                                                       String currency) throws Exception {
+        return mvc.perform(asService(post("/api/v1/customers/{id}/credit/reserve", customerId))
+            .header("x-idempotency-key", key)
+            .contentType(MediaType.APPLICATION_JSON)
+            .content("{\"amount\": %s, \"currency\": \"%s\", \"reference\": \"%s\"}".formatted(amount, currency, key.split(":")[0])));
+    }
+
+    private static String customerJson(String email, String limit) {
+        return """
+            {"firstName": "Noor", "lastName": "Rahman", "email": "%s", "phoneNumber": "+971500000123",
+             "initialCreditLimit": %s, "currency": "AED"}
+            """.formatted(email, limit);
+    }
+
+    /** A bearer token decoded by the mocked JwtDecoder and converted by the service's real converter. */
+    private MockHttpServletRequestBuilder asIdentityCustomer(MockHttpServletRequestBuilder request, String subject,
+                                                          String customerIdClaim) {
+        String token = "customer-token-" + java.util.UUID.randomUUID();
+        org.springframework.security.oauth2.jwt.Jwt.Builder jwt = org.springframework.security.oauth2.jwt.Jwt.withTokenValue(token)
+            .header("alg", "RS256").subject(subject)
+            .claim("realm_access", java.util.Map.of("roles", List.of("customer")))
+            .issuedAt(java.time.Instant.now()).expiresAt(java.time.Instant.now().plusSeconds(60));
+        if (customerIdClaim != null) {
+            jwt.claim("customer_id", customerIdClaim);
+        }
+        when(jwtDecoder.decode(token)).thenReturn(jwt.build());
+        return request.header("x-fapi-interaction-id", "it-interaction-5").header("Authorization", "Bearer " + token);
+    }
+
+    private static MockHttpServletRequestBuilder asBanker(MockHttpServletRequestBuilder request) {
+        return request.header("x-fapi-interaction-id", "it-interaction-1")
+            .with(jwt().jwt(j -> j.subject("banker-1")).authorities(new SimpleGrantedAuthority("ROLE_BANKER")));
+    }
+
+    private static MockHttpServletRequestBuilder asService(MockHttpServletRequestBuilder request) {
+        return request.header("x-fapi-interaction-id", "it-interaction-3")
+            .with(jwt().jwt(j -> j.subject("service-account-loan").claim("azp", "svc-ln-loan-lifecycle"))
+                .authorities(new SimpleGrantedAuthority("ROLE_SERVICE")));
+    }
+
+    /** A client-credentials client that holds SERVICE but is not on SERVICE_CALLERS. */
+    private static MockHttpServletRequestBuilder asUnlistedService(MockHttpServletRequestBuilder request) {
+        return request.header("x-fapi-interaction-id", "it-interaction-4")
+            .with(jwt().jwt(j -> j.subject("service-account-risk").claim("azp", "svc-rsk-decisioning"))
+                .authorities(new SimpleGrantedAuthority("ROLE_SERVICE")));
+    }
+}

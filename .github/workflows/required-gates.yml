@@ -3,6 +3,8 @@ name: Required Gates
 on:
   pull_request:
     branches: [main, dev, staging]
+    # labeled/unlabeled: adding or removing no-behaviour-change re-runs the TDD guard.
+    types: [opened, synchronize, reopened, labeled, unlabeled]
   push:
     branches: [main, dev, staging]
 
@@ -32,7 +34,9 @@ jobs:
         shell: bash
         run: |
           if [ -f build.gradle ] || [ -f settings.gradle ] || [ -f gradlew ]; then
-            if ! gradle --no-daemon clean assemble -x test; then
+            GRADLE=gradle
+            if [ -x ./gradlew ]; then GRADLE=./gradlew; fi
+            if ! $GRADLE --no-daemon clean assemble -x test; then
               if [ -f .ci/allow-gradle-fail ]; then
                 echo "Gradle build failed but .ci/allow-gradle-fail is present; continuing."
               else
@@ -52,11 +56,55 @@ jobs:
   test:
     name: ci/test
     runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_DB: db_cus_profile_kyc_test
+          POSTGRES_USER: customer_test
+          POSTGRES_PASSWORD: customer_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U customer_test -d db_cus_profile_kyc_test"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    env:
+      # Integration tests in customer-bootstrap migrate the schema as the owner in their test context (as the
+      # chart's migration Job does) and run the full service against this database as the runtime role.
+      TEST_DB_URL: jdbc:postgresql://localhost:5432/db_cus_profile_kyc_test
+      TEST_DB_USERNAME: customer_test
+      TEST_DB_PASSWORD: customer_test
+      # Fail, never skip, the PostgreSQL tests if the database is missing.
+      REQUIRE_TEST_DB: 'true'
     steps:
       - name: Checkout
         uses: actions/checkout@v4
         with:
           fetch-depth: 0
+
+      - name: TDD guard - production changes come with test changes (ADR-029)
+        if: github.event_name == 'pull_request'
+        env:
+          BASE_REF: ${{ github.base_ref }}
+          NO_BEHAVIOUR_CHANGE: ${{ contains(github.event.pull_request.labels.*.name, 'no-behaviour-change') }}
+        shell: bash
+        run: |
+          if [ "$NO_BEHAVIOUR_CHANGE" = "true" ]; then
+            echo "Label no-behaviour-change is set; TDD guard skipped."
+            exit 0
+          fi
+          changed="$(git diff --name-only "origin/${BASE_REF}...HEAD")"
+          main_changes="$(grep -E '(^|/)src/main/' <<<"$changed" || true)"
+          test_changes="$(grep -E '(^|/)src/test/' <<<"$changed" || true)"
+          if [ -n "$main_changes" ] && [ -z "$test_changes" ]; then
+            echo "This PR changes production code but no test (ADR-029: tests come with or before the code):"
+            echo "$main_changes"
+            echo "Add or change a test under src/test/, or label the PR no-behaviour-change if it really changes no behaviour."
+            exit 1
+          fi
+          echo "TDD guard passed."
 
       - name: Set up Java 23
         uses: actions/setup-java@v4
@@ -73,7 +121,10 @@ jobs:
         shell: bash
         run: |
           if [ -f build.gradle ] || [ -f settings.gradle ] || [ -f gradlew ]; then
-            if ! gradle --no-daemon test; then
+            GRADLE=gradle
+            if [ -x ./gradlew ]; then GRADLE=./gradlew; fi
+            # check = tests plus the per-module JaCoCo coverage gates.
+            if ! $GRADLE --no-daemon check; then
               if [ -f .ci/allow-gradle-fail ]; then
                 echo "Gradle test failed but .ci/allow-gradle-fail is present; continuing."
               else
@@ -122,17 +173,48 @@ jobs:
         if: ${{ hashFiles('openapi/*.yaml') != '' || hashFiles('api/openapi/*.yaml') != '' || hashFiles('src/main/resources/openapi/*.yaml') != '' }}
         run: ./scripts/ci/fapi-dpop-guard.sh
 
+      - name: AsyncAPI contract lint
+        if: ${{ hashFiles('api/asyncapi/*.yaml') != '' }}
+        env:
+          NPM_CONFIG_CACHE: /tmp/.npm
+        shell: bash
+        run: |
+          # api/asyncapi/common holds shared schemas resolved through $ref, not standalone documents.
+          for spec in api/asyncapi/*.yaml; do
+            npx -y @asyncapi/cli@2.13.0 validate "$spec"
+          done
+
+      - name: AsyncAPI breaking-change gate (ADR-019 section 5)
+        if: ${{ hashFiles('api/asyncapi/*.yaml') != '' }}
+        env:
+          NPM_CONFIG_CACHE: /tmp/.npm
+          BASE_REF: origin/main
+        shell: bash
+        run: |
+          # asyncapi-breaking.mjs and lib/asyncapi-model.mjs are copied unchanged from the asyncapi catalog at 44837cc
+          # (one topic per aggregate, TOPIC_RE evt.<ctx>.<aggregate>(.dlq)?.v<N>; ASYNCAPI_DIR since b0e31ee lets
+          # providers run the script as is); invoked the way the catalog's wrapper
+          # (scripts/ci/asyncapi-breaking.sh at 44837cc) does: from the repository root, BASE_REF exported.
+          # A spec not yet on main is reported "new file (not at base)" and skipped.
+          (cd scripts/ci/asyncapi && npm ci --no-audit --no-fund)
+          cd "$(git rev-parse --show-toplevel)"
+          export ASYNCAPI_DIR=api/asyncapi
+          node scripts/ci/asyncapi/asyncapi-breaking.mjs
+
       - name: Guardrail - disallow generic map request payloads
         shell: bash
         run: |
-          if [ -d src/main/java ]; then
-            if grep -R -nE "Map<\s*String\s*,\s*Object\s*>" src/main/java --include="*Controller.java"; then
-              echo "Generic Map<String,Object> payloads are disallowed in controllers."
-              exit 1
-            fi
-          else
-            echo "No Java controller sources in this repository; guardrail check skipped."
+          # Every module's main sources (customer-*/src/main/java, shared/kernel), not only a root src/main/java.
+          mapfile -t roots < <(find . -path '*/src/main/java' -type d -not -path './legacy/*' -not -path '*/build/*')
+          if [ "${#roots[@]}" -eq 0 ]; then
+            echo "No Java sources in this repository; guardrail check skipped."
+            exit 0
           fi
+          if grep -R -nE "Map<\s*String\s*,\s*Object\s*>" "${roots[@]}" --include="*Controller.java"; then
+            echo "Generic Map<String,Object> payloads are disallowed in controllers."
+            exit 1
+          fi
+          echo "Checked controllers under: ${roots[*]}"
 
   security:
     name: ci/security

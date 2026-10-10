@@ -43,6 +43,52 @@ Bu repository, FinTechBankX DDD/EDA dönüşümünde **svc-cus-profile-kyc** ser
 - Feature branch kuralı: `codex/<kisa-aciklama>`.
 - Release yaklaşımı: PR + required status checks + tag tabanlı sürümleme.
 
+## Run, test and deploy
+
+| What | Command / path |
+|---|---|
+| Unit and integration tests | `./gradlew test` (integration tests need `TEST_DB_URL` or Docker) |
+| Run locally | Migrate first, then start: `SPRING_DATASOURCE_PASSWORD=... ./gradlew :customer-bootstrap:bootRun --args=migrate` once per new migration (or `java -jar customer-bootstrap/build/libs/customer-profile-kyc-service.jar migrate`), then the same command without `--args`. The service only validates the schema and refuses to start on an empty or unmigrated database ([decision 0001](docs/architecture/decisions/0001-flyway-runs-in-a-migration-job.md)); the relay is off unless `OUTBOX_RELAY_ENABLED=true` (leave it unset to run without Kafka) |
+| Database migrations | `customer-infrastructure/src/main/resources/db/migration` (schema `sc_cus_profile_kyc`), applied by the chart's pre-install/pre-upgrade Job as the schema owner, never by the service pods; the pods connect as the runtime role V13 grants |
+| Decision records | `docs/architecture/decisions` |
+| Container image | `docker build -t customer-profile-kyc-service .` |
+| Kubernetes | `deploy/helm/customer-profile-kyc-service` |
+| AWS infrastructure | `deploy/terraform` |
+| Data split from the monolith | [RUNBOOK-EXTRACT-cus-profile-kyc](docs/migration/RUNBOOK-EXTRACT-cus-profile-kyc.md) |
+| Deployment and Well-Architected mapping | [DEPLOYMENT_AND_WELL_ARCHITECTED](docs/architecture/DEPLOYMENT_AND_WELL_ARCHITECTED.md) |
+
+AsyncAPI breaking-change gate (ADR-019 section 5): `scripts/ci/asyncapi/asyncapi-breaking.mjs` and `lib/asyncapi-model.mjs` are copied unchanged from the asyncapi catalog (44837cc, one topic per aggregate) until platform adds the gate to the shared CI template. ci/test runs the script from the repository root with `ASYNCAPI_DIR=api/asyncapi` and `BASE_REF=origin/main`, as the catalog's `scripts/ci/asyncapi-breaking.sh` does (locally: `(cd scripts/ci/asyncapi && npm ci) && ASYNCAPI_DIR=api/asyncapi BASE_REF=origin/main node scripts/ci/asyncapi/asyncapi-breaking.mjs`).
+
+Published events (contract: [`api/asyncapi/svc-cus-profile-kyc.yaml`](api/asyncapi/svc-cus-profile-kyc.yaml), written through the transactional outbox):
+
+All customer events go to one topic per aggregate (ADR-019), `evt.cus.customer.v1`, keyed by customer id, so each customer's events stay in order in one partition. Each record carries the UTF-8 headers `eventType` (same as the envelope `eventType`), `eventId` and `correlationId`, plus `traceparent` when the request carried one. Consumers read the `eventType` header and skip event types they do not handle: they commit the offset, never fail and never dead-letter them, so a new event type is additive. A breaking change to one event is a new eventType `...v2` on the same topic, published alongside the old one until consumers move; the topic major changes only for a key, partition-count or cleanup-policy change. Pending outbox rows from before this change are moved to the aggregate topic by Flyway V11.
+
+| Event type (header `eventType`) on `evt.cus.customer.v1` | When |
+|---|---|
+| `Customer.Customer.Created.v1` | A customer is registered |
+| `Customer.Customer.ContactUpdated.v1` | Contact details change |
+| `Customer.Customer.CreditLimitUpdated.v1` | The credit limit changes |
+| `Customer.Customer.CreditReserved.v1` | Credit is reserved (for example for a loan); optional `reference` = the loan id when the reserve named one |
+| `Customer.Customer.CreditReleased.v1` | Reserved credit is released; optional `reference` = the loan id when the release named a reservation (absent for untracked credit, for example a migrated balance) |
+| `Customer.Customer.CreditScoreUpdated.v1` | The credit score changes (customer id and time only; the score is read through `GET .../credit`) |
+| `Customer.Customer.KycStatusChanged.v1` | Staff verify or reject the KYC status |
+
+Credit release by reference (Flyway V10, table `credit_reservation`): a reserve with a `reference` (the loan id) is tracked per customer and reference. A release naming that reference releases at most what the reservation still holds (partial releases are fine), otherwise 422 `RELEASE_EXCEEDS_RESERVATION`. A release that carries a `reference` matching no reservation, or naming a reservation that holds nothing any more (fully released), is always 422 `RESERVATION_NOT_FOUND`, whatever the amount, so an unknown loan id (for example in a loan auto-release) never touches migrated credit and loan's sweep can tell "nothing left" from "released too much". Only a release with no reference releases untracked used credit, at most used credit minus all open reservations (for example a balance migrated from the monolith), otherwise 422 `RESERVATION_NOT_FOUND`. At cut-over the squad backfills reservations for the monolith's open loans (reference = loan id, runbook step 3a). Nothing is floored at zero. A replayed `x-idempotency-key` (same movement) answers with the position the original movement left behind, which `credit_movement` keeps since Flyway V12 (rows from before V12 answer with the current position). See the runbook, section 1.
+
+Identity link: staff link a customer to an existing Keycloak user (`PUT /api/v1/customers/{id}/identity-link`); the service never creates Keycloak users. Its client holds the scoped Keycloak FGAP v2 permission (users in group `/customers` only, identity repo 8f9024b), not realm-management `manage-users`; a user outside `/customers` is answered 422 `IDENTITY_USER_NOT_FOUND`. The admin token is requested with `client_secret_basic` (credential in the `Authorization` header, form body `grant_type=client_credentials` only), and no profile or chart value turns on DEBUG/TRACE logging (`NoWireLoggingConfigurationTest`), so the secret never appears in a logged request body.
+
+Relay failures follow ADR-021 decision 4: payload errors (`RecordTooLargeException`, `SerializationException`, `InvalidTopicException`) park the row and the relay continues; every other failure, including authorization, SASL/IAM and unclassified errors, stops the batch without marking the row, retries with backoff and alerts, and never parks or skips the row. See the runbook section "Parked outbox events". Outbox alerts are shipped in fintechbankx-platform-observability-sre-operations PR #11 (not merged, commit `eca7aa0`), keyed by the `service_id` pod label (`svc-cus-profile-kyc`) and routed by squad (customer): OutboxRelayStalled, `max(outbox_oldest_pending_age_seconds) > 900` for 5m, critical; OutboxSendFailures, any increase in `outbox_send_failures_total` over 10m, warning; OutboxEventsParked, any increase in `outbox_parked_events_total` over 15m, warning, no `for` clause (operator parks also fire it). This service ships no alert rule. The same PR widens the AMP keep regex to the `outbox_` series.
+
+KYC status contract (`GET /api/v1/customers/{id}/kyc-status`, `KycStatusResponse` with `kycStatus` PENDING, VERIFIED or REJECTED and `kycVerified`; event `Customer.Customer.KycStatusChanged.v1`): compliance (`svc-cmp-evidence`) and payments (`svc-pay-initiation-settlement`, on `SERVICE_CALLERS_KYC`) depend on it. Payments reads the status before screening a payment and refuses the payment, before any screening runs, when the status is unknown (the customer cannot be read, the call fails, or the value is outside the contract); compliance records the status in its evidence. The status values, `kycVerified` and the response shape are therefore a breaking-change boundary for both (`ci/test` oasdiff gate).
+
+## Accepted risks
+
+| Risk | Record |
+|---|---|
+| The customer service's Keycloak account (`manage-members` on `/customers`) can change any customer login, and an e-mail change does not alert; a stolen credential could redirect a customer's e-mail and take the account over through forgot-password. Accepted for now (2026-10-10, Platform thread), with the pinned six-key PUT, Keycloak admin events and platform's runbook as safeguards, until an identity-owned link service takes the grant away | [0002](docs/architecture/decisions/0002-customer-service-keycloak-profile-write-risk-accepted.md) |
+
+Module layout: `customer-domain` (aggregate, events, ports) ← `customer-application` (use cases) ← `customer-infrastructure` (JPA, outbox, web, security) ← `customer-bootstrap` (Spring Boot app).
+
 ## Dokümantasyon ve Referanslar
 - [Enterprise Architecture Hub](https://github.com/COPUR/fintechbankx-governance-architecture-enablement-enterprise-architecture)
 - [Secure Microservices Architecture](https://github.com/COPUR/fintechbankx-governance-architecture-enablement-enterprise-architecture/blob/main/docs/architecture/overview/SECURE_MICROSERVICES_ARCHITECTURE.md)

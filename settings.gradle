@@ -1,0 +1,15 @@
+pluginManagement {
+    repositories {
+        gradlePluginPortal()
+        // The Spring Boot plugin's own dependencies are only on Maven Central.
+        mavenCentral()
+    }
+}
+
+rootProject.name = 'fintechbankx-customer-profile-kyc-service'
+
+include 'shared:kernel'
+include 'customer-domain'
+include 'customer-application'
+include 'customer-infrastructure'
+include 'customer-bootstrap'

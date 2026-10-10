@@ -107,7 +107,7 @@ class CustomerTest {
         Customer customer = createCustomer();
         customer.reserveCredit(Money.aed(new BigDecimal("5000.00")));
 
-        customer.releaseCredit(Money.aed(new BigDecimal("2000.00")));
+        customer.releaseUntrackedCredit(Money.aed(new BigDecimal("2000.00")), Money.aed(BigDecimal.ZERO));
 
         assertThat(customer.getCreditProfile().getUsedCredit()).isEqualTo(Money.aed(new BigDecimal("3000.00")));
         assertThat(lastEvent(customer)).isInstanceOf(CustomerCreditReleasedEvent.class);
@@ -121,6 +121,36 @@ class CustomerTest {
 
         assertThat(customer.getCreditProfile().getCreditLimit()).isEqualTo(Money.aed(new BigDecimal("15000.00")));
         assertThat(lastEvent(customer)).isInstanceOf(CustomerCreditLimitUpdatedEvent.class);
+    }
+
+    @Test
+    void aCreditMoveInAnotherCurrencyIsACurrencyMismatchAndNothingChanges() {
+        Customer customer = createCustomer();
+        customer.clearDomainEvents();
+
+        assertThatThrownBy(() -> customer.reserveCredit(Money.usd(new BigDecimal("100.00"))))
+            .isInstanceOf(CreditCurrencyMismatchException.class)
+            .hasMessage("Credit is held in AED, the request is in USD");
+        assertThatThrownBy(() -> customer.releaseUntrackedCredit(Money.usd(new BigDecimal("100.00")), Money.aed(BigDecimal.ZERO)))
+            .isInstanceOf(CreditCurrencyMismatchException.class);
+
+        assertThat(customer.getCreditProfile().getUsedCredit()).isEqualTo(Money.aed(new BigDecimal("0.00")));
+        assertThat(customer.getDomainEvents()).isEmpty();
+    }
+
+    @Test
+    void aLimitBelowTheUsedCreditIsRefusedAndNothingChanges() {
+        Customer customer = createCustomer();
+        customer.reserveCredit(Money.aed(new BigDecimal("6000.00")));
+        customer.clearDomainEvents();
+
+        assertThatThrownBy(() -> customer.updateCreditLimit(Money.aed(new BigDecimal("5999.99"))))
+            .isInstanceOf(CreditLimitBelowUsedCreditException.class);
+
+        assertThat(customer.getCreditProfile().getUsedCredit()).isEqualTo(Money.aed(new BigDecimal("6000.00")));
+        assertThat(customer.getDomainEvents()).isEmpty();
+        customer.updateCreditLimit(Money.aed(new BigDecimal("6000.00")));
+        assertThat(customer.getCreditProfile().getAvailableCredit()).isEqualTo(Money.aed(new BigDecimal("0.00")));
     }
 
     @Test
@@ -169,6 +199,25 @@ class CustomerTest {
 
         assertThat(eligible.isEligibleForLoan(Money.aed(new BigDecimal("5000.00")))).isTrue();
         assertThat(eligible.isEligibleForLoan(Money.aed(new BigDecimal("12000.00")))).isFalse();
+    }
+
+    @Test
+    void creditMovementsRejectZeroAndNegativeAmountsAndLeaveTheProfileUnchanged() {
+        Customer customer = createCustomer();
+        customer.reserveCredit(Money.aed(new BigDecimal("2500.00")));
+        customer.clearDomainEvents();
+
+        for (String amount : List.of("0.00", "-100.00")) {
+            Money money = Money.aed(new BigDecimal(amount));
+            assertThatThrownBy(() -> customer.reserveCredit(money))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessage("Credit amount must be positive");
+            assertThatThrownBy(() -> customer.releaseUntrackedCredit(money, Money.aed(BigDecimal.ZERO)))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessage("Credit amount must be positive");
+        }
+        assertThat(customer.getCreditProfile().getUsedCredit()).isEqualTo(Money.aed(new BigDecimal("2500.00")));
+        assertThat(customer.getDomainEvents()).isEmpty();
     }
 
     private static Customer createCustomer() {

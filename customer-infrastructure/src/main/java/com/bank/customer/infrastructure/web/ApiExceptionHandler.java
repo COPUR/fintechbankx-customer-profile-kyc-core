@@ -1,0 +1,160 @@
+package com.bank.customer.infrastructure.web;
+
+import com.bank.customer.domain.CreditCurrencyMismatchException;
+import com.bank.customer.domain.CreditLimitBelowUsedCreditException;
+import com.bank.customer.domain.CustomerNotFoundException;
+import com.bank.customer.domain.IdempotencyKeyConflictException;
+import com.bank.customer.domain.CustomerAlreadyExistsException;
+import com.bank.customer.domain.IdentityDirectoryUnavailableException;
+import com.bank.customer.domain.IdentityLinkConflictException;
+import com.bank.customer.domain.IdentityUserNotFoundException;
+import com.bank.customer.domain.InsufficientCreditException;
+import com.bank.customer.domain.ReleaseExceedsReservationException;
+import com.bank.customer.domain.ReservationNotFoundException;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+import org.slf4j.MDC;
+import org.springframework.dao.DataIntegrityViolationException;
+import org.springframework.dao.OptimisticLockingFailureException;
+import org.springframework.http.HttpStatus;
+import org.springframework.http.ResponseEntity;
+import org.springframework.http.converter.HttpMessageNotReadableException;
+import org.springframework.web.bind.MethodArgumentNotValidException;
+import org.springframework.web.bind.MissingRequestHeaderException;
+import org.springframework.web.bind.annotation.ExceptionHandler;
+import org.springframework.web.bind.annotation.RestControllerAdvice;
+
+import java.time.Instant;
+
+/**
+ * Maps application and domain exceptions to the ErrorResponse shape of
+ * customer-context.yaml. Credit figures stay in the logs; the client gets a
+ * stable code and a generic message. Callers such as the loan service treat
+ * 422 as "credit refused" and 5xx as "customer service unavailable".
+ */
+@RestControllerAdvice
+public class ApiExceptionHandler {
+
+    private static final Logger log = LoggerFactory.getLogger(ApiExceptionHandler.class);
+
+    @ExceptionHandler(CustomerNotFoundException.class)
+    ResponseEntity<ErrorResponse> notFound(CustomerNotFoundException ex) {
+        return error(HttpStatus.NOT_FOUND, "CUSTOMER_NOT_FOUND", "Customer not found");
+    }
+
+    @ExceptionHandler(InsufficientCreditException.class)
+    ResponseEntity<ErrorResponse> insufficientCredit(InsufficientCreditException ex) {
+        log.info("Credit reservation refused: {}", ex.getMessage());
+        return error(HttpStatus.UNPROCESSABLE_ENTITY, "INSUFFICIENT_CREDIT",
+            "The customer does not have enough available credit");
+    }
+
+    /** A valid ISO 4217 code that is not the customer's credit currency; a malformed one stays 400. */
+    @ExceptionHandler(CreditCurrencyMismatchException.class)
+    ResponseEntity<ErrorResponse> currencyMismatch(CreditCurrencyMismatchException ex) {
+        return error(HttpStatus.UNPROCESSABLE_ENTITY, "CURRENCY_MISMATCH",
+            "The amount is not in the currency the customer's credit is held in");
+    }
+
+    /** A release named a reservation and asked for more than it still holds; nothing was released. */
+    @ExceptionHandler(ReleaseExceedsReservationException.class)
+    ResponseEntity<ErrorResponse> releaseExceedsReservation(ReleaseExceedsReservationException ex) {
+        log.info("Credit release refused: {}", ex.getMessage());
+        return error(HttpStatus.UNPROCESSABLE_ENTITY, "RELEASE_EXCEEDS_RESERVATION",
+            "The release is larger than what is still reserved under this reference");
+    }
+
+    /** A release named no known reservation and asked for more than the untracked used credit. */
+    @ExceptionHandler(ReservationNotFoundException.class)
+    ResponseEntity<ErrorResponse> reservationNotFound(ReservationNotFoundException ex) {
+        log.info("Credit release refused: {}", ex.getMessage());
+        return error(HttpStatus.UNPROCESSABLE_ENTITY, "RESERVATION_NOT_FOUND",
+            "No reservation matches this reference, and the release is larger than the used credit no reservation holds");
+    }
+
+    @ExceptionHandler(CreditLimitBelowUsedCreditException.class)
+    ResponseEntity<ErrorResponse> limitBelowUsedCredit(CreditLimitBelowUsedCreditException ex) {
+        log.info("Credit limit change refused: {}", ex.getMessage());
+        return error(HttpStatus.UNPROCESSABLE_ENTITY, "CREDIT_LIMIT_BELOW_USED_CREDIT",
+            "The new credit limit is below the credit the customer already uses");
+    }
+
+    @ExceptionHandler(IdempotencyKeyConflictException.class)
+    ResponseEntity<ErrorResponse> idempotencyConflict(IdempotencyKeyConflictException ex) {
+        return error(HttpStatus.CONFLICT, "IDEMPOTENCY_KEY_REUSED", ex.getMessage());
+    }
+
+    @ExceptionHandler(OptimisticLockingFailureException.class)
+    ResponseEntity<ErrorResponse> concurrentUpdate(OptimisticLockingFailureException ex) {
+        return error(HttpStatus.CONFLICT, "CONCURRENT_UPDATE", "The customer was changed by another request; retry");
+    }
+
+    @ExceptionHandler(IdentityLinkConflictException.class)
+    ResponseEntity<ErrorResponse> identityLinkConflict(IdentityLinkConflictException ex) {
+        return error(HttpStatus.CONFLICT, "IDENTITY_LINK_CONFLICT", ex.getMessage());
+    }
+
+    @ExceptionHandler(IdentityUserNotFoundException.class)
+    ResponseEntity<ErrorResponse> identityUserNotFound(IdentityUserNotFoundException ex) {
+        return error(HttpStatus.UNPROCESSABLE_ENTITY, "IDENTITY_USER_NOT_FOUND", ex.getMessage());
+    }
+
+    /** Fail closed: the link was not recorded. The cause stays in the log. */
+    @ExceptionHandler(IdentityDirectoryUnavailableException.class)
+    ResponseEntity<ErrorResponse> identityDirectoryUnavailable(IdentityDirectoryUnavailableException ex) {
+        log.warn("Identity link refused: {}", ex.getMessage());
+        return error(HttpStatus.SERVICE_UNAVAILABLE, "IDENTITY_DIRECTORY_UNAVAILABLE",
+            "The identity directory could not be updated; the link was not recorded");
+    }
+
+    /** Same code whether the check or the unique index caught it; never echoes the e-mail. */
+    @ExceptionHandler(CustomerAlreadyExistsException.class)
+    ResponseEntity<ErrorResponse> customerAlreadyExists(CustomerAlreadyExistsException ex) {
+        return error(HttpStatus.CONFLICT, "CUSTOMER_ALREADY_EXISTS", ex.getMessage());
+    }
+
+    /** V1__create_customer_tables.sql: used_credit <= credit_limit, the database's own guard. */
+    static final String CREDIT_CHECK_CONSTRAINT = "ck_customer_credit";
+
+    /**
+     * Two concurrent first calls with one idempotency key, or another unique key: the database lets one through.
+     * The credit check constraint means a write raced past the aggregate's rule; the row was not changed.
+     */
+    @ExceptionHandler(DataIntegrityViolationException.class)
+    ResponseEntity<ErrorResponse> duplicate(DataIntegrityViolationException ex) {
+        if (mentions(ex, CREDIT_CHECK_CONSTRAINT)) {
+            log.warn("Credit check constraint refused a write: {}", ex.getMostSpecificCause().getMessage());
+            return concurrentUpdate(new OptimisticLockingFailureException(CREDIT_CHECK_CONSTRAINT, ex));
+        }
+        return error(HttpStatus.CONFLICT, "DUPLICATE_REQUEST", "A conflicting request was already processed; retry");
+    }
+
+    private static boolean mentions(Throwable e, String constraint) {
+        for (Throwable t = e; t != null; t = t.getCause()) {
+            if (t.getMessage() != null && t.getMessage().contains(constraint)) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    @ExceptionHandler({IllegalArgumentException.class, MethodArgumentNotValidException.class,
+            MissingRequestHeaderException.class, HttpMessageNotReadableException.class})
+    ResponseEntity<ErrorResponse> badRequest(Exception ex) {
+        String message = switch (ex) {
+            case MethodArgumentNotValidException invalid -> invalid.getBindingResult().getAllErrors().stream()
+                .map(e -> e.getDefaultMessage()).findFirst().orElse("Invalid request");
+            case MissingRequestHeaderException missing -> missing.getHeaderName() + " header is required";
+            case HttpMessageNotReadableException unreadable -> "Malformed request body";
+            default -> ex.getMessage();
+        };
+        return error(HttpStatus.BAD_REQUEST, "INVALID_REQUEST", message);
+    }
+
+    private static ResponseEntity<ErrorResponse> error(HttpStatus status, String code, String message) {
+        return ResponseEntity.status(status).body(new ErrorResponse(code, message, MDC.get(CorrelationIdFilter.MDC_KEY), Instant.now()));
+    }
+
+    public record ErrorResponse(String code, String message, String interactionId, Instant timestamp) {
+    }
+}

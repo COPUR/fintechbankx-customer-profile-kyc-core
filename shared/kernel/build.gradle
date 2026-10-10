@@ -1,0 +1,47 @@
+// =================================================================
+// SHARED KERNEL (vendored)
+// =================================================================
+// The part of the monolith shared-kernel this context uses (Money,
+// CustomerId, AggregateRoot, Entity, ValueObject, DomainEvent), copied from
+// enterprise-loan-management-system/shared-kernel. Other contexts' events and
+// the web helpers were left out on purpose.
+// =================================================================
+
+description = 'Shared Kernel - vendored subset used by the customer context'
+
+dependencies {
+    // Plain Java: Money, CustomerId and the DDD building blocks. Nothing here
+    // may depend on Spring or the servlet API.
+}
+
+apply plugin: 'jacoco'
+
+jacoco {
+    toolVersion = "0.8.14"
+}
+
+jacocoTestReport {
+    dependsOn test
+    reports {
+        xml.required = true
+        html.required = true
+        csv.required = false
+    }
+}
+
+// Same 0.85 line gate as the context modules: Money and CustomerId carry
+// every credit figure, so the kernel is never exempt.
+jacocoTestCoverageVerification {
+    dependsOn jacocoTestReport
+    violationRules {
+        rule {
+            limit {
+                counter = 'LINE'
+                value = 'COVEREDRATIO'
+                minimum = 0.85
+            }
+        }
+    }
+}
+
+check.dependsOn jacocoTestCoverageVerification

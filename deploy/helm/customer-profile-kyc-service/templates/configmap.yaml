@@ -1,0 +1,18 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "customer.name" . }}
+  labels:
+    {{- include "customer.labels" . | nindent 4 }}
+# Keys and values are quoted, so a newline cannot open another key; fbx.guard
+# (deployment.yaml and migration-job.yaml) checks every key and value first.
+data:
+  # Common metric tags (management.metrics.tags): app is the service account, squad the owning squad.
+  METRICS_APP: {{ .Values.serviceAccount.name | quote }}
+  METRICS_SQUAD: {{ required "squad is required" .Values.squad | quote }}
+  {{- range $key, $value := .Values.config }}
+  {{- if and (has $key $.Values.requiredConfig) (empty $value) }}
+  {{- fail (printf "config.%s is required" $key) }}
+  {{- end }}
+  {{ $key | quote }}: {{ $value | quote }}
+  {{- end }}

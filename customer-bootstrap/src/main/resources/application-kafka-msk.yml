@@ -1,0 +1,11 @@
+# Amazon MSK with IAM client auth (platform contract): SASL_SSL + AWS_MSK_IAM.
+# Credentials come from the default AWS chain, i.e. the pod's IRSA role
+# (deploy/terraform workload role, msk_cluster_arn); nothing secret is here.
+spring:
+  kafka:
+    security:
+      protocol: SASL_SSL
+    properties:
+      sasl.mechanism: AWS_MSK_IAM
+      sasl.jaas.config: software.amazon.msk.auth.iam.IAMLoginModule required;
+      sasl.client.callback.handler.class: software.amazon.msk.auth.iam.IAMClientCallbackHandler

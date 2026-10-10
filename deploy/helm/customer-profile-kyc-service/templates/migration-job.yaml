@@ -1,0 +1,88 @@
+{{- include "customer.guard" . -}}
+{{- include "customer.requireMigrationSecret" . -}}
+# Flyway runs here, never in the service pods (decision 0001). Helm runs this
+# Job before it creates or updates any regular resource of the release, on
+# install and on upgrade; a failed Job fails the install or upgrade, so the
+# Deployment is not rolled out on an unmigrated schema. The service pods hold
+# only the runtime role and refuse to start while a migration is pending.
+#
+# Its own ServiceAccount: on a first install the release's ServiceAccount does
+# not exist yet, and the Job needs neither an IAM role (Aurora takes the
+# password from the db-migration secret) nor a Kubernetes API token.
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: {{ include "customer.migrationName" . | quote }}
+  labels:
+    {{- include "customer.migrationLabels" . | nindent 4 }}
+  annotations:
+    {{- include "customer.migrationPrerequisiteHook" . | nindent 4 }}
+automountServiceAccountToken: false
+---
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: {{ include "customer.migrationName" . | quote }}
+  labels:
+    {{- include "customer.migrationLabels" . | nindent 4 }}
+  annotations:
+    helm.sh/hook: pre-install,pre-upgrade
+    helm.sh/hook-weight: "0"
+    # Kept after it finishes (logs, kubectl describe) until ttlSecondsAfterFinished
+    # or the next install or upgrade, which replaces it.
+    helm.sh/hook-delete-policy: before-hook-creation
+spec:
+  backoffLimit: {{ .Values.migrationJob.backoffLimit | int }}
+  activeDeadlineSeconds: {{ .Values.migrationJob.activeDeadlineSeconds | int }}
+  ttlSecondsAfterFinished: {{ .Values.migrationJob.ttlSecondsAfterFinished | int }}
+  template:
+    metadata:
+      labels:
+        {{- include "customer.migrationSelectorLabels" . | nindent 8 }}
+        {{- toYaml (omit .Values.podLabels "sidecar.istio.io/inject") | nindent 8 }}
+        # Written after podLabels, so it overrides their sidecar.istio.io/inject.
+        # No Istio sidecar: Aurora egress is a Kubernetes NetworkPolicy on the
+        # app.kubernetes.io/name label, so the Job needs no proxy, and without
+        # native sidecars an injected proxy would keep the Job from completing.
+        sidecar.istio.io/inject: "false"
+    spec:
+      serviceAccountName: {{ include "customer.migrationName" . | quote }}
+      restartPolicy: Never
+      securityContext:
+        {{- include "customer.podSecurityContext" . | nindent 8 }}
+      containers:
+        - name: db-migration
+          # The service image in migrate-only mode (DatabaseMigration): Flyway
+          # migrates as the schema owner, then the process exits.
+          image: {{ include "customer.image" . | quote }}
+          imagePullPolicy: {{ .Values.image.pullPolicy | quote }}
+          args: ["migrate"]
+          envFrom:
+            # DB_MIGRATION_USERNAME / DB_MIGRATION_PASSWORD (schema owner).
+            - secretRef:
+                name: {{ include "customer.migrationSecretName" . }}
+          env:
+            # The DB_URL of the app's ConfigMap, checked by the guard call at the top
+            # of this file, set here because the ConfigMap does not exist yet on a
+            # first install. No env value may hold '$(' (customer.envValue): it would
+            # expand from the db-migration secret's keys.
+            - name: DB_URL
+              value: {{ include "customer.envValue" (dict "where" "config.DB_URL" "value" .Values.config.DB_URL) }}
+            # The runtime role V13 grants (Flyway placeholder runtime_role).
+            - name: DB_USERNAME
+              value: {{ include "customer.envValue" (dict "where" "config.DB_USERNAME" "value" .Values.config.DB_USERNAME) }}
+            # Aurora CA bundle; also turns on DatabaseTlsGuard.
+            - name: DB_SSL_ROOT_CERT
+              value: {{ include "customer.envValue" (dict "where" "databaseCa.mountPath/key" "value" (include "customer.databaseCaFile" .)) }}
+          resources:
+            {{- toYaml .Values.migrationJob.resources | nindent 12 }}
+          securityContext:
+            {{- include "customer.containerSecurityContext" . | nindent 12 }}
+          volumeMounts:
+            - name: tmp
+              mountPath: /tmp
+            {{- include "customer.databaseCaMount" . | nindent 12 }}
+      volumes:
+        - name: tmp
+          emptyDir: {}
+        {{- include "customer.databaseCaVolume" . | nindent 8 }}

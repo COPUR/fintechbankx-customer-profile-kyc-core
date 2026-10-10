@@ -1,0 +1,9 @@
+apiVersion: v2
+name: customer-profile-kyc-service
+description: "svc-cus-profile-kyc, the Customer bounded context: customer profiles and their credit position."
+type: application
+version: 0.1.0
+appVersion: "1.0.0"
+annotations:
+  fintechbankx.io/service-id: svc-cus-profile-kyc
+  fintechbankx.io/owning-squad: Customer Profile Squad
