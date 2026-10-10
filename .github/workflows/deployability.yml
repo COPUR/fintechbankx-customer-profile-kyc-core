@@ -120,14 +120,73 @@ jobs:
               exit 1
             fi
           done
-          # No config key may replace the datasource or Flyway URL or inject properties around DB_URL.
-          for key in SPRING_DATASOURCE_URL SPRING_DATASOURCE_HIKARI_JDBC_URL SPRING_DATASOURCE_HIKARI_DATA_SOURCE_PROPERTIES_SSLFACTORY \
-                     SPRING_FLYWAY_URL SPRING_APPLICATION_JSON SPRING_CONFIG_IMPORT JAVA_TOOL_OPTIONS JDK_JAVA_OPTIONS; do
-            if helm template ci "$chart" $args --set-string "config.$key=$db?sslmode=disable" > /dev/null 2>&1; then
-              echo "chart rendered config.$key, which bypasses the DB_URL check" >&2
-              exit 1
+          # No config key may replace the datasource or Flyway URL or inject properties around DB_URL. Each
+          # refusal names the key and the reason; keys are matched after normalisation (upper case, every
+          # non-alphanumeric character dropped), so a dash inside an element, a dot or an index spelling, all of
+          # which Spring's relaxed binding reads the same way, cannot slip past the check.
+          reject_render() {
+            local want="$1"; shift
+            local out
+            if out="$(helm template ci "$chart" $args "$@" 2>&1)"; then
+              echo "chart rendered with $*" >&2; exit 1
             fi
+            if ! grep -qF -- "$want" <<<"$out"; then
+              echo "render with $* failed without \"$want\": $out" >&2; exit 1
+            fi
+          }
+          for key in SPRING_DATASOURCE_URL SPRING_DATASOURCE_HIKARI_JDBC_URL SPRING_DATASOURCE_HIKARI_DATA_SOURCE_PROPERTIES_SSLFACTORY \
+                     SPRING_FLYWAY_URL SPRING_APPLICATION_JSON SPRING-DATASOURCE-URL spring_datasource_url; do
+            reject_render "config.$key must not be set: config.DB_URL is the only database URL" --set-string "config.$key=$db?sslmode=disable"
           done
+          reject_render "config.spring.datasource.hikari.jdbc-url must not be set: config.DB_URL is the only database URL" \
+            --set-string "config.spring\.datasource\.hikari\.jdbc-url=$db?sslmode=disable"
+          # Spring config locations and imports load property sources (a file, a configtree) that can set
+          # spring.datasource.url; the chart renders none, so no values key may add one, in any spelling.
+          for key in SPRING_CONFIG_IMPORT SPRING_CONFIG_IMPORT_0 SPRING_CONFIG_ADDITIONAL_LOCATION SPRING_CONFIG_ADDITIONALLOCATION \
+                     SPRING_CONFIG_LOCATION SPRING_CONFIG-IMPORT 'spring\.config\.import' 'spring\.config\.additional-location' \
+                     'spring\.config\.import\[0\]'; do
+            reject_render "config.${key//\\/} must not be set: it loads configuration that can override config.DB_URL" \
+              --set-string "config.$key=optional:configtree:/tmp/override/"
+          done
+          # JVM option variables set system properties (spring.datasource.url included) or load an agent before
+          # application.yml is read; the image fixes them.
+          for key in JAVA_TOOL_OPTIONS JDK_JAVA_OPTIONS _JAVA_OPTIONS JAVA_OPTS java-tool-options jdk.java.options; do
+            reject_render "config.$key must not be set: JVM options are fixed by the image" \
+              --set-string "config.$key=-Dspring.datasource.url=$db?sslmode=disable"
+          done
+          # Log levels are not install-time values: LOGGING_LEVEL_ORG_POSTGRESQL=TRACE would write the wire
+          # protocol, with row data, to the pod log.
+          reject_render "config.LOGGING_LEVEL_ORG_POSTGRESQL must not be set: log levels are not install-time values" \
+            --set-string config.LOGGING_LEVEL_ORG_POSTGRESQL=TRACE
+          reject_render "config.logging.level.root must not be set: log levels are not install-time values" \
+            --set-string 'config.logging\.level\.root=DEBUG'
+          # The TLS startup assertion (DatabaseTlsGuard, KafkaTlsGuard) runs whenever DB_SSL_ROOT_CERT is set,
+          # which the chart always does from the mounted bundle; no values key may offer the variable, in any
+          # spelling, as a switch (an empty value included).
+          for key in DB_SSL_ROOT_CERT 'db\.ssl\.root\.cert' db-ssl-root-cert; do
+            reject_render "config.${key//\\/} must not be set: the TLS startup assertion has no off switch" \
+              --set-string "config.$key="
+          done
+          # The local profile is for a developer machine (plain-text local services); it must not be activated
+          # or included through any spelling of spring.profiles.active or spring.profiles.include.
+          reject_render "config.SPRING_PROFILES_ACTIVE must not activate the local profile" \
+            --set-string 'config.SPRING_PROFILES_ACTIVE=kafka-msk\,local'
+          reject_render "config.SPRING_PROFILES_ACTIVE must not activate the local profile" \
+            --set-string 'config.SPRING_PROFILES_ACTIVE=Local'
+          reject_render "config.spring.profiles.active must not activate the local profile" \
+            --set-string 'config.spring\.profiles\.active=local'
+          reject_render "config.SPRING_PROFILES_INCLUDE must not activate the local profile" \
+            --set-string 'config.SPRING_PROFILES_INCLUDE=local'
+          reject_render "config.spring.profiles.include[0] must not activate the local profile" \
+            --set-string 'config.spring\.profiles\.include\[0\]= local '
+          # The chart has no extraEnv or env list, so the ConfigMap is the only route for a config key; make sure
+          # nobody adds one without routing it through the same check.
+          helm show values "$chart" | python3 -c '
+          import sys, yaml
+          values = yaml.safe_load(sys.stdin)
+          if any(k in values for k in ("extraEnv", "env", "extraEnvFrom")):
+              sys.exit("values.yaml offers an env list that bypasses the config-key check")
+          '
           # The check itself must catch a render without the mount.
           if sed '/rds-ca-bundle/d' <<<"$rendered" | python3 scripts/ci/database-ca.py 2>/dev/null; then
             echo "database-ca accepted a render without the rds-ca-bundle volume" >&2
