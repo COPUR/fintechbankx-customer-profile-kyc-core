@@ -204,6 +204,11 @@ components:
           allOf:
           - $ref: '#/components/schemas/MonetaryAmount'
           description: Reserved amount.
+        reference:
+          type: string
+          description: The reservation this movement belongs to (the loan id the caller sent); absent for an untracked movement such as a balance migrated from the monolith. Additive (optional), added before the contract's first release.
+          minLength: 1
+          maxLength: 128
       required:
       - customerId
       - reservedAmount
@@ -219,6 +224,11 @@ components:
           allOf:
           - $ref: '#/components/schemas/MonetaryAmount'
           description: Released amount.
+        reference:
+          type: string
+          description: The reservation this movement belongs to (the loan id the caller sent); absent for an untracked movement such as a balance migrated from the monolith. Additive (optional), added before the contract's first release.
+          minLength: 1
+          maxLength: 128
       required:
       - customerId
       - releasedAmount

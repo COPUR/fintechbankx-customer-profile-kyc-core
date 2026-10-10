@@ -67,8 +67,8 @@ All customer events go to one topic per aggregate (ADR-019), `evt.cus.customer.v
 | `Customer.Customer.Created.v1` | A customer is registered |
 | `Customer.Customer.ContactUpdated.v1` | Contact details change |
 | `Customer.Customer.CreditLimitUpdated.v1` | The credit limit changes |
-| `Customer.Customer.CreditReserved.v1` | Credit is reserved (for example for a loan) |
-| `Customer.Customer.CreditReleased.v1` | Reserved credit is released |
+| `Customer.Customer.CreditReserved.v1` | Credit is reserved (for example for a loan); optional `reference` = the loan id when the reserve named one |
+| `Customer.Customer.CreditReleased.v1` | Reserved credit is released; optional `reference` = the loan id when the release named a reservation (absent for untracked credit, for example a migrated balance) |
 | `Customer.Customer.CreditScoreUpdated.v1` | The credit score changes (customer id and time only; the score is read through `GET .../credit`) |
 | `Customer.Customer.KycStatusChanged.v1` | Staff verify or reject the KYC status |
 

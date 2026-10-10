@@ -305,17 +305,9 @@ public class Customer extends AggregateRoot<CustomerId> {
         return creditProfile.canBorrow(amount);
     }
     
+    /** Reserves credit no reservation accounts for (untracked); the event carries no reference. */
     public void reserveCredit(Money amount) {
-        requirePositive(amount);
-        if (!canBorrowAmount(amount)) {
-            throw new InsufficientCreditException(
-                String.format("Customer %s has insufficient credit. Requested: %s, Available: %s",
-                    customerId, amount, creditProfile.getAvailableCredit()));
-        }
-        this.creditProfile = this.creditProfile.reserveCredit(amount);
-        this.updatedAt = LocalDateTime.now();
-        
-        addDomainEvent(new CustomerCreditReservedEvent(customerId, amount));
+        applyReserve(amount, null);
     }
     
     /**
@@ -327,7 +319,7 @@ public class Customer extends AggregateRoot<CustomerId> {
         requireOwn(reservation);
         requirePositive(amount);
         CreditReservation updated = reservation.reserve(amount);
-        reserveCredit(amount);
+        applyReserve(amount, reservation.reference());
         return updated;
     }
 
@@ -344,7 +336,7 @@ public class Customer extends AggregateRoot<CustomerId> {
         requireOwn(reservation);
         requirePositive(amount);
         CreditReservation updated = reservation.release(amount);
-        applyRelease(amount);
+        applyRelease(amount, reservation.reference());
         return updated;
     }
 
@@ -366,14 +358,28 @@ public class Customer extends AggregateRoot<CustomerId> {
         if (amount.compareTo(untracked) > 0) {
             throw new ReservationNotFoundException(amount, untracked);
         }
-        applyRelease(amount);
+        applyRelease(amount, null);
     }
 
-    private void applyRelease(Money amount) {
+    private void applyReserve(Money amount, String reference) {
+        requirePositive(amount);
+        if (!canBorrowAmount(amount)) {
+            throw new InsufficientCreditException(
+                String.format("Customer %s has insufficient credit. Requested: %s, Available: %s",
+                    customerId, amount, creditProfile.getAvailableCredit()));
+        }
+        this.creditProfile = this.creditProfile.reserveCredit(amount);
+        this.updatedAt = LocalDateTime.now();
+
+        addDomainEvent(new CustomerCreditReservedEvent(customerId, amount, reference));
+    }
+
+    /** @param reference the reservation released from; null for untracked credit */
+    private void applyRelease(Money amount, String reference) {
         this.creditProfile = this.creditProfile.releaseCredit(amount);
         this.updatedAt = LocalDateTime.now();
 
-        addDomainEvent(new CustomerCreditReleasedEvent(customerId, amount));
+        addDomainEvent(new CustomerCreditReleasedEvent(customerId, amount, reference));
     }
 
     private void requireOwn(CreditReservation reservation) {

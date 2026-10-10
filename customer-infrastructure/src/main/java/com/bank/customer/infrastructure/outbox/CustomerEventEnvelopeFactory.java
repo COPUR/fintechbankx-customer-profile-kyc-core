@@ -70,12 +70,13 @@ public class CustomerEventEnvelopeFactory {
                 "customerId", e.getCustomerId().getValue(),
                 "oldCreditLimit", money(e.getOldCreditLimit()),
                 "newCreditLimit", money(e.getNewCreditLimit())));
-            case CustomerCreditReservedEvent e -> new PublicEvent("CreditReserved", data(
+            // reference (the loan id) only when the movement belongs to a reservation: never a null on the wire.
+            case CustomerCreditReservedEvent e -> new PublicEvent("CreditReserved", withReference(data(
                 "customerId", e.getCustomerId().getValue(),
-                "reservedAmount", money(e.getReservedAmount())));
-            case CustomerCreditReleasedEvent e -> new PublicEvent("CreditReleased", data(
+                "reservedAmount", money(e.getReservedAmount())), e.getReference()));
+            case CustomerCreditReleasedEvent e -> new PublicEvent("CreditReleased", withReference(data(
                 "customerId", e.getCustomerId().getValue(),
-                "releasedAmount", money(e.getReleasedAmount())));
+                "releasedAmount", money(e.getReleasedAmount())), e.getReference()));
             // Never the score value (restricted data): consumers read it through GET /credit under the azp allow-list.
             case CustomerCreditScoreUpdatedEvent e -> new PublicEvent("CreditScoreUpdated", data(
                 "customerId", e.getCustomerId().getValue(),
@@ -94,6 +95,11 @@ public class CustomerEventEnvelopeFactory {
 
     private static Map<String, Object> money(Money money) {
         return data("amount", money.getAmount().toPlainString(), "currency", money.getCurrency().getCurrencyCode());
+    }
+
+    private static Map<String, Object> withReference(Map<String, Object> data, java.util.Optional<String> reference) {
+        reference.ifPresent(value -> data.put("reference", value));
+        return data;
     }
 
     private static Map<String, Object> data(Object... keyValues) {
