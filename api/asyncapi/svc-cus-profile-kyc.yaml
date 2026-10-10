@@ -16,7 +16,7 @@ info:
 
     Implementation status: events are raised on the Customer aggregate and written by CustomerManagementService through the CustomerEventPublisher port (OutboxCustomerEventPublisher) to the transactional outbox sc_cus_profile_kyc.outbox_event, in the same transaction as the customer. OutboxRelay sends them to Kafka in insertion order, keyed by customer id (one relay at a time, PostgreSQL advisory lock); failures follow ADR-021 decision 4: a payload error (RecordTooLarge, Serialization, InvalidTopic) parks the row, which is replayed by hand (runbook "Parked outbox events"), and the relay continues; every other failure, including authorization, SASL/IAM and unclassified errors, stops the batch without marking the row, is retried with backoff and alerts, and never parks or skips the row, so each customer's events arrive complete and in order. Delivery is at least once: consumers de-duplicate on eventId. The topic is created by the platform catalog, never by the service.
 
-    Every message uses the standard envelope (common/event-envelope.yaml). All events go to one topic per aggregate, `evt.cus.customer.v1`, with the record key = aggregateId and the eventType, eventId and correlationId record headers (ADR-019), plus traceparent when the request carried one. Consumers route on the eventType header and skip event types they do not handle (commit the offset, never fail or dead-letter them). The topic uses cleanup.policy=delete. Adding an optional field or a new event type is a minor change; a removal, rename or type change in one event is a new event major (eventType ...v2) published on the same topic alongside the old one until consumers move. The topic major changes only for a key, partition-count or cleanup-policy change.
+    Every message uses the standard envelope (common/event-envelope.yaml). All events go to one topic per aggregate, `evt.cus.customer.v1`, with the record key = aggregateId and the eventType, eventId and correlationId record headers (ADR-019), plus traceparent when the request carried one. Consumers route on the eventType header and skip event types they do not handle (commit the offset, never fail or dead-letter them). This service consumes nothing, so it owns no dead-letter topic and this contract describes none (ADR-019 s1); a consumer's DLQ lives in that consumer's own namespace and contract. The topic uses cleanup.policy=delete. Adding an optional field or a new event type is a minor change; a removal, rename or type change in one event is a new event major (eventType ...v2) published on the same topic alongside the old one until consumers move. The topic major changes only for a key, partition-count or cleanup-policy change.
   tags:
   - name: customer
   - name: evt.cus.customer
@@ -144,8 +144,6 @@ components:
       $ref: ./common/event-envelope.yaml#/EventEnvelope
     EventHeaders:
       $ref: ./common/event-envelope.yaml#/EventHeaders
-    DeadLetterHeaders:
-      $ref: ./common/event-envelope.yaml#/DeadLetterHeaders
     MonetaryAmount:
       $ref: ./common/event-envelope.yaml#/MonetaryAmount
     DecimalAmount:
@@ -492,23 +490,6 @@ components:
             description: aggregateId (customerId).
           bindingVersion: 0.5.0
       x-source-class: com.bank.customer.domain.CustomerKycStatusChangedEvent
-    DeadLetter:
-      name: DeadLetter
-      title: Dead letter for evt.cus.customer
-      summary: 'A customer event that a consumer could not process after bounded retries, as the consumer writes it to
-        the dead-letter topic in its own namespace (consumer-owned DLQ, ADR-019). Not bound to a channel here: this
-        service publishes no dead-letter topic.'
-      contentType: application/json
-      headers:
-        $ref: '#/components/schemas/DeadLetterHeaders'
-      payload:
-        $ref: '#/components/schemas/EventEnvelope'
-      bindings:
-        kafka:
-          key:
-            type: string
-            description: Original record key (aggregateId).
-          bindingVersion: 0.5.0
   securitySchemes:
     mskIam:
       type: userPassword
