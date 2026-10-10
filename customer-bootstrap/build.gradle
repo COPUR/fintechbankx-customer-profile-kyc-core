@@ -25,9 +25,12 @@ dependencies {
     // MSK IAM client auth for the kafka-msk profile (platform Kafka client guide).
     runtimeOnly 'software.amazon.msk:aws-msk-iam-auth:2.2.0'
     runtimeOnly 'org.postgresql:postgresql'
+    // FlywayStartupConfiguration chooses validate or migrate; DatabaseMigration is the Job's entry point.
+    implementation 'org.flywaydb:flyway-core'
     runtimeOnly 'org.flywaydb:flyway-database-postgresql'
 
     testImplementation 'org.springframework.boot:spring-boot-starter-test'
+    testImplementation 'org.flywaydb:flyway-core'
     testImplementation 'org.springframework.security:spring-security-test'
     testImplementation 'org.testcontainers:junit-jupiter'
     testImplementation 'org.testcontainers:postgresql'

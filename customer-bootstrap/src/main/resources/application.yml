@@ -33,9 +33,11 @@ spring:
         order_inserts: true
         order_updates: true
   flyway:
-    # Flyway connects as the schema owner (DB_MIGRATION_USERNAME / _PASSWORD,
-    # the db-migration secret) through the same verified DB_URL: it has no URL
-    # of its own. The runtime role (DB_USERNAME) is the Flyway placeholder
+    # The service pods never migrate (customer.database.flyway below): the
+    # chart's pre-install/pre-upgrade Job runs this image with the argument
+    # "migrate" (DatabaseMigration, profile db-migrate). Flyway connects as the
+    # schema owner (DB_MIGRATION_USERNAME / _PASSWORD, the db-migration secret)
+    # through the same verified DB_URL: it has no URL of its own. The runtime role (DB_USERNAME) is the Flyway placeholder
     # runtime_role, which V13 grants least privilege. Without DB_MIGRATION_*
     # (local single-user runs) Flyway uses the app credentials and V13 changes
     # nothing. The history table keeps Flyway's default name
@@ -163,7 +165,26 @@ customer:
       # After a stopped batch the relay waits: the interval above, doubling per
       # stopped batch up to this cap; reset after a completed batch (ADR-021).
       backoff-max: ${OUTBOX_RELAY_BACKOFF_MAX:PT5M}
+  database:
+    # validate: at startup Flyway checks the schema history as the runtime role
+    # and the service refuses to start while a migration is pending or an
+    # applied one differs (the Deployment rollout then stalls, old pods keep
+    # serving). migrate: only the migration Job (profile db-migrate) and tests.
+    # Flyway never migrates in the service pods (decision 0001).
+    flyway: validate
 
 logging:
   pattern:
     level: "%5p [${spring.application.name},%X{traceId:-},%X{spanId:-},%X{correlationId:-}]"
+
+---
+# Migration Job (chart templates/migration-job.yaml, image args "migrate"):
+# DatabaseMigration starts only the datasource and Flyway with this profile,
+# migrates as the schema owner and exits.
+spring:
+  config:
+    activate:
+      on-profile: db-migrate
+customer:
+  database:
+    flyway: migrate
