@@ -1,5 +1,8 @@
 -- Fixture with the column layout of the monolith's V1__Create_customers_table.sql
--- (trigger left out).
+-- (trigger left out). used_credit_limit holds non-zero seed values on purpose:
+-- the backfill must never copy them (the live monolith moves credit in memory
+-- and never writes that column), so every migrated customer starts at
+-- used_credit = 0 and runbook step 3a sets it from credit_reservation rows.
 CREATE TABLE customers (
     id BIGSERIAL PRIMARY KEY,
     name VARCHAR(100) NOT NULL,
@@ -14,5 +17,5 @@ CREATE TABLE customers (
 
 INSERT INTO customers (id, name, surname, credit_limit, used_credit_limit, created_at, updated_at, version) VALUES
   (1, 'Amina', 'Haddad', 50000.00, 20000.00, '2024-01-10 09:00', '2024-06-01 12:00', 3),
-  (2, 'Omar',  'Saeed',  10000.00,     0.00, '2024-02-11 10:00', '2024-02-11 10:00', 0),
-  (3, 'Layla', 'Nasser', 1000000.00, 1000000.00, '2024-03-12 11:00', '2025-01-05 08:30', 7);
+  (2, 'Omar',  'Saeed',  10000.00,   500.00, '2024-02-11 10:00', '2024-02-11 10:00', 0),
+  (3, 'Layla', 'Nasser', 1000000.00, 975000.00, '2024-03-12 11:00', '2025-01-05 08:30', 7);
