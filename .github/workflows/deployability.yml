@@ -104,7 +104,10 @@ jobs:
           python3 scripts/ci/database-ca.py <<<"$rendered"
           helm template ci "$chart" -f "$chart/values-dev.yaml" $args | python3 scripts/ci/database-ca.py
           # Review 5478458791: the query is parsed, not substring-matched. Exactly one sslmode=verify-full and one
-          # sslrootcert=<mounted bundle>; no sslfactory, sslhostnameverifier or sslpasswordcallback.
+          # sslrootcert=<mounted bundle>, both spelled exactly in lower case (PgJDBC ignores an upper-case key, so
+          # SSLMODE=verify-full verifies nothing); no sslfactory, sslfactoryarg, sslhostnameverifier,
+          # sslpasswordcallback or service (a pg_service.conf entry can replace the host and the ssl settings),
+          # in any case.
           ca=/etc/fintechbankx/rds-ca/global-bundle.pem
           db=jdbc:postgresql://ci-db:5432/db_cus_profile_kyc_ci
           ok="$db?sslmode=verify-full&sslrootcert=$ca"
@@ -113,8 +116,11 @@ jobs:
           for weak in "$db?sslmode=require" "$db" "$db?sslmode=verify-full" \
                       "$ok&sslmode=disable" \
                       "$db?sslmode=verify-full&sslrootcert=/tmp/decoy.pem" "$ok&sslrootcert=/tmp/decoy.pem" \
-                      "$ok&sslfactory=org.postgresql.ssl.NonValidatingFactory" \
+                      "$ok&sslfactory=org.postgresql.ssl.NonValidatingFactory" "$ok&sslfactoryarg=x" \
                       "$ok&sslhostnameverifier=ci.AllowAll" "$ok&sslpasswordcallback=ci.Callback" \
+                      "$ok&service=pgsvc" "$ok&SERVICE=pgsvc" \
+                      "$db?SSLMODE=verify-full&sslrootcert=$ca" "$db?sslmode=verify-full&SSLROOTCERT=$ca" \
+                      "$ok&SslMode=disable" \
                       "$db?sslmode=require&applicationName=sslmode=verify-full" \
                       "$db?sslmode=require&applicationName=sslmode=verify-full&sslrootcert=$ca" \
                       "jdbc:mysql://ci-db/db?sslmode=verify-full&sslrootcert=$ca"; do
@@ -138,16 +144,17 @@ jobs:
             fi
           }
           for key in SPRING_DATASOURCE_URL SPRING_DATASOURCE_HIKARI_JDBC_URL SPRING_DATASOURCE_HIKARI_DATA_SOURCE_PROPERTIES_SSLFACTORY \
-                     SPRING_FLYWAY_URL SPRING_APPLICATION_JSON SPRING-DATASOURCE-URL spring_datasource_url; do
+                     SPRING_FLYWAY_URL SPRING_LIQUIBASE_URL SPRING_R2DBC_URL SPRING_APPLICATION_JSON \
+                     SPRING-DATASOURCE-URL spring_datasource_url; do
             reject_render "config.$key must not be set: config.DB_URL is the only database URL" --set-string "config.$key=$db?sslmode=disable"
           done
           reject_render "config.spring.datasource.hikari.jdbc-url must not be set: config.DB_URL is the only database URL" \
             --set-string "config.spring\.datasource\.hikari\.jdbc-url=$db?sslmode=disable"
-          # Spring config locations and imports load property sources (a file, a configtree) that can set
+          # Spring config locations, imports and names load property sources (a file, a configtree) that can set
           # spring.datasource.url; the chart renders none, so no values key may add one, in any spelling.
           for key in SPRING_CONFIG_IMPORT SPRING_CONFIG_IMPORT_0 SPRING_CONFIG_ADDITIONAL_LOCATION SPRING_CONFIG_ADDITIONALLOCATION \
-                     SPRING_CONFIG_LOCATION SPRING_CONFIG-IMPORT 'spring\.config\.import' 'spring\.config\.additional-location' \
-                     'spring\.config\.import\[0\]'; do
+                     SPRING_CONFIG_LOCATION SPRING_CONFIG_NAME SPRING_CONFIG-IMPORT 'spring\.config\.import' \
+                     'spring\.config\.additional-location' 'spring\.config\.import\[0\]'; do
             reject_render "config.${key//\\/} must not be set: it loads configuration that can override config.DB_URL" \
               --set-string "config.$key=optional:configtree:/tmp/override/"
           done
@@ -171,7 +178,9 @@ jobs:
               --set-string "config.$key="
           done
           # The local profile is for a developer machine (plain-text local services); it must not be activated
-          # or included through any spelling of spring.profiles.active or spring.profiles.include.
+          # or included through any spelling of spring.profiles.active, spring.profiles.include,
+          # spring.profiles.default or a spring.profiles.group.<name> list (a group that names local activates it
+          # with the group's profile, kafka-msk for instance).
           reject_render "config.SPRING_PROFILES_ACTIVE must not activate the local profile" \
             --set-string 'config.SPRING_PROFILES_ACTIVE=kafka-msk\,local'
           reject_render "config.SPRING_PROFILES_ACTIVE must not activate the local profile" \
@@ -182,6 +191,14 @@ jobs:
             --set-string 'config.SPRING_PROFILES_INCLUDE=local'
           reject_render "config.spring.profiles.include[0] must not activate the local profile" \
             --set-string 'config.spring\.profiles\.include\[0\]= local '
+          reject_render "config.SPRING_PROFILES_DEFAULT must not activate the local profile" \
+            --set-string 'config.SPRING_PROFILES_DEFAULT=local'
+          reject_render "config.SPRING_PROFILES_DEFAULT_0 must not activate the local profile" \
+            --set-string 'config.SPRING_PROFILES_DEFAULT_0=local'
+          reject_render "config.SPRING_PROFILES_GROUP_KAFKA-MSK must not activate the local profile" \
+            --set-string 'config.SPRING_PROFILES_GROUP_KAFKA-MSK=local'
+          reject_render "config.spring.profiles.group.kafka-msk[0] must not activate the local profile" \
+            --set-string 'config.spring\.profiles\.group\.kafka-msk\[0\]=local'
           # The chart has no extraEnv or env list, so the ConfigMap is the only route for a config key; make sure
           # nobody adds one without routing it through the same check.
           helm show values "$chart" | python3 -c '
