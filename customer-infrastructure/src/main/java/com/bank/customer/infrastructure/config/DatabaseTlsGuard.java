@@ -22,8 +22,12 @@ import java.util.Properties;
  * be verify-full, sslrootcert must equal DB_SSL_ROOT_CERT (the CA bundle the
  * chart mounts), and sslfactory, sslhostnameverifier and sslpasswordcallback
  * must be absent. Checked: spring.datasource.url (required), and
- * spring.datasource.hikari.jdbc-url and spring.flyway.url when set; Hikari
- * data-source-properties may not carry ssl* driver properties.
+ * spring.datasource.hikari.jdbc-url (it wins over spring.datasource.url in the
+ * pool) and spring.flyway.url when set, each of which must also equal
+ * spring.datasource.url, so a second URL that verifies but names another
+ * server or database cannot move the pool or the schema check off the URL the
+ * chart validated; Hikari data-source-properties may not carry ssl* driver
+ * properties.
  *
  * Skipped when DB_SSL_ROOT_CERT is unset (local runs and tests). The Helm chart
  * always sets it, so the check is mandatory in every deployed environment.
@@ -61,6 +65,9 @@ public class DatabaseTlsGuard implements BeanFactoryPostProcessor, EnvironmentAw
             String url = environment.getProperty(optional);
             if (url != null && !url.isBlank()) {
                 verify(optional, url, rootCert);
+                if (!url.equals(datasourceUrl)) {
+                    throw refused(optional, "differs from spring.datasource.url", rootCert);
+                }
             }
         }
         if (environment instanceof ConfigurableEnvironment configurable) {
