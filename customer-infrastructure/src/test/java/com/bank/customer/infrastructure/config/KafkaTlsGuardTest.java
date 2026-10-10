@@ -20,8 +20,13 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
  * PLAINTEXT) means a values override or a wrong profile, and the service
  * refuses to start rather than publish customer events in clear.
  *
- * <p>The guard is off when the relay is off (nothing publishes) and off
- * without DB_SSL_ROOT_CERT (local runs and tests).
+ * <p>The guard is armed by DB_SSL_ROOT_CERT alone, exactly like
+ * {@link DatabaseTlsGuard}: with the relay off nothing publishes yet, but the
+ * producer configuration is what runbook step 6 will switch on with a plain
+ * {@code --reuse-values --set config.OUTBOX_RELAY_ENABLED=true}, so a cluster
+ * pod refuses a plain-text producer from its first deploy. The relay flag
+ * gates publishing only. Without DB_SSL_ROOT_CERT (local runs and tests) the
+ * guard is off.
  */
 class KafkaTlsGuardTest {
 
@@ -109,15 +114,27 @@ class KafkaTlsGuardTest {
             .run(context -> assertThat(context).hasNotFailed().hasSingleBean(KafkaTlsGuard.class));
     }
 
+    /** The bundle alone arms the guard: the relay flag (unset or false) gates publishing, not the check. */
     @Test
-    void staysInactiveWhileTheRelayIsOffBecauseNothingPublishes() {
+    void theContextRefusesToStartWithAPlaintextProducerWhenTheRelayIsOffAndTheBundleIsMounted() {
         contextRunner
             .withPropertyValues("DB_SSL_ROOT_CERT=" + BUNDLE, "spring.kafka.security.protocol=PLAINTEXT")
-            .run(context -> assertThat(context).hasNotFailed().doesNotHaveBean(KafkaTlsGuard.class));
+            .run(context -> assertThat(context).hasFailed().getFailure().hasMessageContaining(REFUSED)
+                .hasMessageContaining("DB_SSL_ROOT_CERT"));
         contextRunner
             .withPropertyValues("DB_SSL_ROOT_CERT=" + BUNDLE, "customer.outbox.relay.enabled=false",
                 "spring.kafka.security.protocol=PLAINTEXT")
-            .run(context -> assertThat(context).hasNotFailed().doesNotHaveBean(KafkaTlsGuard.class));
+            .run(context -> assertThat(context).hasFailed().getFailure().hasMessageContaining(REFUSED));
+    }
+
+    /** The chart's default (relay off, kafka-msk or kafka-strimzi profile) keeps starting. */
+    @ParameterizedTest
+    @ValueSource(strings = {"SASL_SSL", "SSL"})
+    void theContextStartsWithATlsProducerWhenTheRelayIsOffAndTheBundleIsMounted(String protocol) {
+        contextRunner
+            .withPropertyValues("DB_SSL_ROOT_CERT=" + BUNDLE, "customer.outbox.relay.enabled=false",
+                "spring.kafka.security.protocol=" + protocol)
+            .run(context -> assertThat(context).hasNotFailed().hasSingleBean(KafkaTlsGuard.class));
     }
 
     /** Local runs and tests have no RDS bundle (and application.yml defaults to PLAINTEXT) and keep working. */
