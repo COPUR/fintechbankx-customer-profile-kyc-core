@@ -114,8 +114,13 @@ variable "observability_endpoint" {
 
 variable "tags" {
   type        = map(string)
-  description = "Additional tags (cost centre, data classification)."
+  description = "Additional tags (cost centre, data classification). Merged into every resource, so never fintechbankx.io/secrets (ADR-023)."
   default     = {}
+
+  validation {
+    condition     = !contains([for k in keys(var.tags) : lower(k)], "fintechbankx.io/secrets")
+    error_message = "var.tags must not carry fintechbankx.io/secrets: it would reach aws_kms_key.database, which External Secrets must never decrypt (ADR-023). Only aws_kms_key.secrets is tagged, in main.tf."
+  }
 }
 
 variable "hpa_max_replicas" {
