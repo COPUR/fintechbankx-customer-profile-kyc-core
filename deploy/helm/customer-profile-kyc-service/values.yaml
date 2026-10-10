@@ -50,9 +50,10 @@ config:
   # jdbc:postgresql://<aurora-writer-endpoint>:5432/db_cus_profile_kyc_<env>?sslmode=verify-full&sslrootcert=/etc/fintechbankx/rds-ca/global-bundle.pem
   # (Terraform output jdbc_url). Rendering fails for a jdbc:postgresql URL without sslmode=verify-full.
   # No other config key may carry a database URL or driver property (SPRING_DATASOURCE_*, SPRING_FLYWAY_*,
-  # SPRING_APPLICATION_JSON), none may set a Spring config location or import (SPRING_CONFIG_*), JVM options
-  # (JAVA_TOOL_OPTIONS, JDK_JAVA_OPTIONS, _JAVA_OPTIONS, JAVA_OPTS), a LOGGING_LEVEL_*, DB_SSL_ROOT_CERT (the
-  # TLS startup assertion has no off switch) or the local profile in SPRING_PROFILES_ACTIVE / _INCLUDE. Keys
+  # SPRING_LIQUIBASE_*, SPRING_R2DBC_*, SPRING_APPLICATION_JSON), none may set a Spring config location, import
+  # or name (SPRING_CONFIG_*), JVM options (JAVA_TOOL_OPTIONS, JDK_JAVA_OPTIONS, _JAVA_OPTIONS, JAVA_OPTS), a
+  # LOGGING_LEVEL_*, DB_SSL_ROOT_CERT (the TLS startup assertion has no off switch) or the local profile in
+  # SPRING_PROFILES_ACTIVE / _INCLUDE / _DEFAULT or a SPRING_PROFILES_GROUP_* list. Keys
   # are matched in every spelling (case, dash, dot, underscore, index) Spring's relaxed binding accepts
   # (templates/_helpers.tpl, customer.validateConfigKeys).
   DB_URL: ""
