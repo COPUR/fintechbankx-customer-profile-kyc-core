@@ -113,6 +113,71 @@ class KeycloakIdentityDirectoryAdapterTest {
         keycloak.verify();
     }
 
+    /**
+     * Platform ruling on linkCustomer (option a), key set from observability #11
+     * e06915f: the PUT body is exactly username, email, firstName, lastName,
+     * emailVerified and attributes, each the stored value from the GET, with
+     * only customer_id added to the attributes. Never enabled, credentials,
+     * requiredActions, federatedIdentities, realmRoles, clientRoles, groups,
+     * access or anything else the GET returned: Keycloak leaves absent
+     * top-level fields untouched, and the out-of-scope alert fires on them.
+     */
+    @Test
+    void thePutBodyIsExactlyTheAllowedFieldsFromTheGetWithCustomerIdAddedToTheAttributes() throws Exception {
+        String stored = "{\"id\":\"" + USER + "\",\"createdTimestamp\":1759900000000,\"username\":\"noor\","
+            + "\"enabled\":false,\"totp\":false,\"emailVerified\":true,\"firstName\":\"Noor\",\"lastName\":\"Haddad\","
+            + "\"email\":\"noor@example.com\",\"attributes\":{\"locale\":[\"ar\"],\"branch\":[\"DXB-1\"]},"
+            + "\"disableableCredentialTypes\":[],\"requiredActions\":[\"UPDATE_PASSWORD\"],"
+            + "\"credentials\":[{\"type\":\"password\"}],\"federatedIdentities\":[{\"identityProvider\":\"uaepass\"}],"
+            + "\"realmRoles\":[\"CUSTOMER\"],\"clientRoles\":{\"app\":[\"x\"]},\"groups\":[\"/customers\"],"
+            + "\"notBefore\":0,\"access\":{\"manage\":true}}";
+        String expected = "{\"username\":\"noor\",\"email\":\"noor@example.com\",\"firstName\":\"Noor\","
+            + "\"lastName\":\"Haddad\",\"emailVerified\":true,"
+            + "\"attributes\":{\"locale\":[\"ar\"],\"branch\":[\"DXB-1\"],\"customer_id\":[\"CUST-1A2B3C4D\"]}}";
+        java.util.concurrent.atomic.AtomicReference<String> sent = new java.util.concurrent.atomic.AtomicReference<>();
+        expectToken();
+        keycloak.expect(once(), requestTo(USER_URL)).andExpect(method(HttpMethod.GET))
+            .andRespond(withSuccess(stored, MediaType.APPLICATION_JSON));
+        keycloak.expect(once(), requestTo(USER_URL)).andExpect(method(HttpMethod.PUT))
+            .andExpect(request -> sent.set(((org.springframework.mock.http.client.MockClientHttpRequest) request).getBodyAsString()))
+            .andRespond(withStatus(HttpStatus.NO_CONTENT));
+
+        adapter.linkCustomer(USER_ID, CUSTOMER);
+
+        keycloak.verify();
+        com.fasterxml.jackson.databind.ObjectMapper json = new com.fasterxml.jackson.databind.ObjectMapper();
+        com.fasterxml.jackson.databind.JsonNode body = json.readTree(sent.get());
+        com.fasterxml.jackson.databind.JsonNode get = json.readTree(stored);
+        assertThat(body.fieldNames()).toIterable().as("exact key set (observability #11 e06915f)")
+            .containsExactlyInAnyOrder("username", "email", "firstName", "lastName", "emailVerified", "attributes");
+        for (String root : java.util.List.of("username", "email", "firstName", "lastName", "emailVerified")) {
+            assertThat(body.get(root)).as("%s unchanged from the GET", root).isEqualTo(get.get(root));
+        }
+        assertThat(body.has("enabled")).as("enabled is never sent").isFalse();
+        assertThat(body.has("requiredActions")).isFalse();
+        assertThat(body.has("credentials")).isFalse();
+        assertThat(body).isEqualTo(json.readTree(expected));
+    }
+
+    /** A root field the GET did not return is left out (never sent as null), so Keycloak keeps it unchanged. */
+    @Test
+    void aRootFieldTheGetDidNotReturnIsNotSent() throws Exception {
+        java.util.concurrent.atomic.AtomicReference<String> sent = new java.util.concurrent.atomic.AtomicReference<>();
+        expectToken();
+        keycloak.expect(once(), requestTo(USER_URL)).andExpect(method(HttpMethod.GET))
+            .andRespond(withSuccess("{\"id\":\"" + USER + "\",\"username\":\"sara\",\"emailVerified\":false,"
+                + "\"enabled\":true,\"requiredActions\":[]}", MediaType.APPLICATION_JSON));
+        keycloak.expect(once(), requestTo(USER_URL)).andExpect(method(HttpMethod.PUT))
+            .andExpect(request -> sent.set(((org.springframework.mock.http.client.MockClientHttpRequest) request).getBodyAsString()))
+            .andRespond(withStatus(HttpStatus.NO_CONTENT));
+
+        adapter.linkCustomer(USER_ID, CUSTOMER);
+
+        assertThat(new com.fasterxml.jackson.databind.ObjectMapper().readTree(sent.get())).isEqualTo(
+            new com.fasterxml.jackson.databind.ObjectMapper().readTree(
+                "{\"username\":\"sara\",\"emailVerified\":false,\"attributes\":{\"customer_id\":[\"CUST-1A2B3C4D\"]}}"));
+    }
+
     @Test
     void aUserThatAlreadyCarriesThisCustomerIdIsLeftAloneAndTheTokenIsReused() {
         expectToken();
