@@ -1,5 +1,5 @@
 # Platform ruling ADR-023: one KMS key for the Secrets Manager secrets External
-# Secrets syncs (db-app), tagged fintechbankx.io/secrets=true (External Secrets
+# Secrets syncs (db-app, db-migration), tagged fintechbankx.io/secrets=true (External Secrets
 # decrypts only tagged keys, terraform-modules external-secrets-irsa), and a
 # separate untagged key for Aurora storage, snapshots, Performance Insights and
 # the RDS-managed master secret (as compliance 7d76e85 and risk 7776da9), which

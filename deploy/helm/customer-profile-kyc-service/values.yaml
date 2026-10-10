@@ -56,6 +56,8 @@ config:
   # are matched in every spelling (case, dash, dot, underscore, index) Spring's relaxed binding accepts
   # (templates/_helpers.tpl, customer.validateConfigKeys).
   DB_URL: ""
+  # Runtime role (least privilege, granted by V13); Flyway runs as the schema
+  # owner from the db-migration secret in the migration Job (decision 0001).
   DB_USERNAME: customer_profile_app
   DB_POOL_MAX: "10"
   KAFKA_BOOTSTRAP_SERVERS: ""
@@ -92,10 +94,39 @@ externalSecret:
   # Secrets Manager secret <env>/customer-profile-kyc-service/oidc-client (platform
   # contract); its client_secret becomes IDENTITY_ADMIN_CLIENT_SECRET. Empty: not synced.
   oidcClientSecretName: ""
+  # Secrets Manager secret <env>/customer-profile-kyc-service/db-migration
+  # (Terraform output migration_db_secret_name): the schema owner's
+  # {"username","password"}, read only by the migration Job below. The service
+  # pods never mount it; the chart refuses to render without it.
+  migrationSecretName: ""
   refreshInterval: 1h
 
 topologySpread:
   maxSkew: 1
+
+# Flyway migration Job (templates/migration-job.yaml, decision 0001): Helm
+# pre-install and pre-upgrade hook running this image with the argument
+# "migrate" as the schema owner, before any pod of the release starts or is
+# replaced. A failed Job fails the install or upgrade; give helm --timeout more
+# than activeDeadlineSeconds (runbook, "Database migrations (Flyway Job)"). Its
+# pods carry app.kubernetes.io/name=<serviceAccount.name>,
+# app.kubernetes.io/component=db-migration and sidecar.istio.io/inject "false"
+# (no proxy: Aurora egress is a NetworkPolicy on the name label, and an injected
+# proxy would keep the Job from completing).
+migrationJob:
+  # One retry: each migration is transactional in PostgreSQL, so a retry after a
+  # dropped connection starts from the last applied version.
+  backoffLimit: 1
+  activeDeadlineSeconds: 600
+  # Finished Jobs (and their logs) are removed after a day, or replaced by the
+  # next install or upgrade.
+  ttlSecondsAfterFinished: 86400
+  resources:
+    requests:
+      cpu: 250m
+      memory: 512Mi
+    limits:
+      memory: 768Mi
 
 # Settings the pod cannot start without; rendering fails while any is empty.
 requiredConfig: [DB_URL, OIDC_ISSUER_URI, OIDC_JWK_SET_URI, OIDC_AUDIENCE, KAFKA_BOOTSTRAP_SERVERS]

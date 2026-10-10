@@ -86,10 +86,10 @@ resource "aws_kms_alias" "database" {
   target_key_id = aws_kms_key.database.key_id
 }
 
-# Secrets Manager secrets External Secrets syncs into the namespace (db-app).
+# Secrets Manager secrets External Secrets syncs into the namespace (db-app, db-migration).
 # The tag is what lets the platform External Secrets role decrypt them.
 resource "aws_kms_key" "secrets" {
-  description             = "Encrypts the Secrets Manager secrets of ${local.service_id} that External Secrets syncs (db-app)"
+  description             = "Encrypts the Secrets Manager secrets of ${local.service_id} that External Secrets syncs (db-app, db-migration)"
   enable_key_rotation     = true
   deletion_window_in_days = 30
 
@@ -195,14 +195,26 @@ resource "aws_rds_cluster_instance" "database" {
   promotion_tier                        = count.index
 }
 
-# Application credential (role customer_profile_app, owner of schema
-# sc_cus_profile_kyc). The DBA bootstrap in docs/migration creates the role
-# and writes {"username", "password"} here; Terraform never sees the value.
-# Named under <env>/ so the platform ClusterSecretStore aws-secrets-manager can
-# read it; pods get it only through the ExternalSecret, never from AWS directly.
+# Application credential (role customer_profile_app, the runtime role V13
+# grants least privilege in schema sc_cus_profile_kyc). The DBA bootstrap in
+# docs/migration creates the role and writes {"username", "password"} here;
+# Terraform never sees the value. Named under <env>/ so the platform
+# ClusterSecretStore aws-secrets-manager can read it; pods get it only through
+# the ExternalSecret, never from AWS directly.
 resource "aws_secretsmanager_secret" "app_database" {
   name                    = "${var.environment}/${local.service_slug}/db-app"
   description             = "Application database credential for ${local.service_id}"
+  kms_key_id              = aws_kms_key.secrets.arn
+  recovery_window_in_days = 7
+}
+
+# Migration owner credential (role customer_profile_owner, owner of schema
+# sc_cus_profile_kyc; Flyway only, in the chart's migration Job, decision
+# 0001). Created and filled by the DBA bootstrap like the app credential; Helm
+# value externalSecret.migrationSecretName.
+resource "aws_secretsmanager_secret" "migration_database" {
+  name                    = "${var.environment}/${local.service_slug}/db-migration"
+  description             = "Schema owner credential for ${local.service_id} migrations"
   kms_key_id              = aws_kms_key.secrets.arn
   recovery_window_in_days = 7
 }

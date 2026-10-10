@@ -24,6 +24,97 @@ helm.sh/chart: {{ .Chart.Name }}-{{ .Chart.Version }}
 {{ include "customer.name" . }}-db
 {{- end -}}
 
+{{- define "customer.migrationSecretName" -}}
+{{ include "customer.name" . }}-db-migration
+{{- end -}}
+
+{{/*
+Flyway migration Job (templates/migration-job.yaml, decision 0001). Its pods
+carry app.kubernetes.io/name=<service account>, on which the mesh grants Aurora
+egress, and app.kubernetes.io/component=db-migration (cicd-templates 335a345);
+every selector of the app pods includes component=service, so none selects
+them. The Job's ServiceAccount, Job and the db-migration ExternalSecret share
+the name <service account>-db-migration.
+*/}}
+{{- define "customer.migrationName" -}}
+{{ .Values.serviceAccount.name }}-db-migration
+{{- end -}}
+
+{{- define "customer.migrationSelectorLabels" -}}
+app.kubernetes.io/name: {{ .Values.serviceAccount.name }}
+app.kubernetes.io/instance: {{ .Release.Name }}
+app.kubernetes.io/component: db-migration
+{{- end -}}
+
+{{- define "customer.migrationLabels" -}}
+{{ include "customer.migrationSelectorLabels" . }}
+app.kubernetes.io/version: {{ .Values.image.tag | default .Chart.AppVersion | quote }}
+app.kubernetes.io/managed-by: {{ .Release.Service }}
+helm.sh/chart: {{ .Chart.Name }}-{{ .Chart.Version }}
+{{- end -}}
+
+{{/*
+Hook resources the Job needs on a first install, when no regular resource of
+the release exists yet: created before the Job (lower weight) and deleted once
+every hook has succeeded, so the schema owner's credential exists in the
+namespace only while a migration runs. A failed run leaves them for
+inspection; the next install or upgrade replaces them.
+*/}}
+{{- define "customer.migrationPrerequisiteHook" -}}
+helm.sh/hook: pre-install,pre-upgrade
+helm.sh/hook-weight: "-10"
+helm.sh/hook-delete-policy: before-hook-creation,hook-succeeded
+{{- end -}}
+
+{{/* The migration Job reads the schema owner's credential; refuse a render without it, or outside <env>/<service account>/. */}}
+{{- define "customer.requireMigrationSecret" -}}
+{{- if not .Values.externalSecret.enabled -}}
+{{- fail "externalSecret.enabled must be true: the migration Job reads the schema owner's credential (externalSecret.migrationSecretName)" -}}
+{{- end -}}
+{{- $key := required "externalSecret.migrationSecretName is required: the migration Job runs Flyway as the schema owner (Secrets Manager <env>/<service account>/db-migration)" .Values.externalSecret.migrationSecretName -}}
+{{- if not (regexMatch (printf "^[a-z0-9-]+/%s/" .Values.serviceAccount.name) $key) -}}
+{{- fail (printf "externalSecret.migrationSecretName must be <env>/%s/..., got %s" .Values.serviceAccount.name $key) -}}
+{{- end -}}
+{{- end -}}
+
+{{/* Shared by the app pods and the migration Job pods. */}}
+{{- define "customer.podSecurityContext" -}}
+runAsNonRoot: true
+runAsUser: 10001
+runAsGroup: 10001
+fsGroup: 10001
+seccompProfile:
+  type: RuntimeDefault
+{{- end -}}
+
+{{- define "customer.containerSecurityContext" -}}
+allowPrivilegeEscalation: false
+readOnlyRootFilesystem: true
+capabilities:
+  drop: ["ALL"]
+{{- end -}}
+
+{{- define "customer.image" -}}
+{{ required "image.repository is required" .Values.image.repository }}:{{ required "image.tag is required" .Values.image.tag }}
+{{- end -}}
+
+{{/* RDS CA bundle volume. Not optional: without the platform's bundle the pod does not start, rather than connect unverified. */}}
+{{- define "customer.databaseCaVolume" -}}
+- name: database-ca
+  configMap:
+    name: {{ required "databaseCa.configMapName is required" .Values.databaseCa.configMapName }}
+    optional: false
+    items:
+      - key: {{ .Values.databaseCa.key }}
+        path: {{ .Values.databaseCa.key }}
+{{- end -}}
+
+{{- define "customer.databaseCaMount" -}}
+- name: database-ca
+  mountPath: {{ .Values.databaseCa.mountPath }}
+  readOnly: true
+{{- end -}}
+
 {{/*
 Path of the RDS CA bundle file inside the pod (cicd-templates 4f0f266).
 */}}

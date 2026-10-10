@@ -32,12 +32,7 @@ spec:
       serviceAccountName: {{ .Values.serviceAccount.name }}
       terminationGracePeriodSeconds: 45
       securityContext:
-        runAsNonRoot: true
-        runAsUser: 10001
-        runAsGroup: 10001
-        fsGroup: 10001
-        seccompProfile:
-          type: RuntimeDefault
+        {{- include "customer.podSecurityContext" . | nindent 8 }}
       topologySpreadConstraints:
         - maxSkew: {{ .Values.topologySpread.maxSkew }}
           topologyKey: topology.kubernetes.io/zone
@@ -53,7 +48,7 @@ spec:
               {{- include "customer.podSelectorLabels" . | nindent 14 }}
       containers:
         - name: customer-profile-kyc-service
-          image: "{{ required "image.repository is required" .Values.image.repository }}:{{ required "image.tag is required" .Values.image.tag }}"
+          image: {{ include "customer.image" . | quote }}
           imagePullPolicy: {{ .Values.image.pullPolicy }}
           ports:
             - name: http
@@ -113,24 +108,12 @@ spec:
           resources:
             {{- toYaml .Values.resources | nindent 12 }}
           securityContext:
-            allowPrivilegeEscalation: false
-            readOnlyRootFilesystem: true
-            capabilities:
-              drop: ["ALL"]
+            {{- include "customer.containerSecurityContext" . | nindent 12 }}
           volumeMounts:
             - name: tmp
               mountPath: /tmp
-            - name: database-ca
-              mountPath: {{ .Values.databaseCa.mountPath }}
-              readOnly: true
+            {{- include "customer.databaseCaMount" . | nindent 12 }}
       volumes:
         - name: tmp
           emptyDir: {}
-        # Not optional: without the platform's bundle the pod does not start, rather than connect unverified.
-        - name: database-ca
-          configMap:
-            name: {{ required "databaseCa.configMapName is required" .Values.databaseCa.configMapName }}
-            optional: false
-            items:
-              - key: {{ .Values.databaseCa.key }}
-                path: {{ .Values.databaseCa.key }}
+        {{- include "customer.databaseCaVolume" . | nindent 8 }}
