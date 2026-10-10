@@ -4,7 +4,10 @@
 Reads `helm template` output on stdin.
   --expect-secret NAME: KAFKA_TLS_CERT, KAFKA_TLS_KEY and KAFKA_TLS_CA must each come from
                         secretKeyRef NAME (the kafka-strimzi profile);
-  --expect-none:        no KAFKA_TLS_* variable may be rendered (any other profile).
+  --expect-none:        no KAFKA_TLS_* variable may be rendered (any other profile);
+  --expect-profile P:   the Deployment's env sets SPRING_PROFILES_ACTIVE=P (the chart renders it from
+                        kafka.runtime: msk -> kafka-msk, strimzi -> kafka-strimzi) and no ConfigMap
+                        carries SPRING_PROFILES_ACTIVE.
 Exit 0 when the render matches, 1 otherwise.
 """
 import argparse
@@ -20,6 +23,7 @@ def main():
     group = parser.add_mutually_exclusive_group(required=True)
     group.add_argument("--expect-secret")
     group.add_argument("--expect-none", action="store_true")
+    parser.add_argument("--expect-profile")
     args = parser.parse_args()
 
     docs = [d for d in yaml.safe_load_all(sys.stdin) if isinstance(d, dict)]
@@ -40,6 +44,13 @@ def main():
             ref = ((tls.get(name) or {}).get("valueFrom") or {}).get("secretKeyRef") or {}
             if ref.get("name") != args.expect_secret or not ref.get("key"):
                 errors.append(f"{name} must come from secretKeyRef {args.expect_secret!r}, rendered {tls.get(name)!r}")
+    if args.expect_profile is not None:
+        profile = env.get("SPRING_PROFILES_ACTIVE") or {}
+        if profile.get("value") != args.expect_profile or "valueFrom" in profile:
+            errors.append(f"SPRING_PROFILES_ACTIVE must be the literal {args.expect_profile!r}, rendered {profile or None!r}")
+        for doc in docs:
+            if doc.get("kind") == "ConfigMap" and "SPRING_PROFILES_ACTIVE" in (doc.get("data") or {}):
+                errors.append(f"ConfigMap {doc['metadata']['name']} carries SPRING_PROFILES_ACTIVE; kafka.runtime renders the profile")
     for error in errors:
         print(f"strimzi-tls-env: {error}", file=sys.stderr)
     if errors:

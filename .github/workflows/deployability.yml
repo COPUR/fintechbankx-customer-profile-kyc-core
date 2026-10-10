@@ -44,6 +44,26 @@ jobs:
           tar -xz -C "$tmpdir" -f "$tmpdir/kubeconform.tar.gz"
           sudo install "$tmpdir/kubeconform" /usr/local/bin/kubeconform
           rm -rf "$tmpdir"
+      - name: Vendored guard is unchanged
+        run: |
+          # templates/_fbx_helpers.tpl is fintechbankx-platform-delivery-iac-cicd-templates a4f0072
+          # charts/fintechbankx-service/templates/_helpers.tpl, copied unchanged under a header (its README,
+          # "Vendoring the guard"). The digest covers everything below the header; a missing header marker
+          # leaves nothing to hash and fails too.
+          templates=deploy/helm/customer-profile-kyc-service/templates
+          want=1fd684735383301baf3052c5d8978dd86edee1ac1c66ebfb944a8a6a166f4c92
+          grep -qF "sha256 $want" "$templates/_fbx_helpers.tpl"
+          got="$(sed '1,/end of vendoring header \*\/ -}}$/d' "$templates/_fbx_helpers.tpl" | sha256sum | cut -d' ' -f1)"
+          if [ "$got" != "$want" ]; then
+            echo "_fbx_helpers.tpl differs from cicd-templates a4f0072 (sha256 $got, want $want)" >&2
+            exit 1
+          fi
+          # The guard runs at the top of both workload templates (adapter customer.guard in _helpers.tpl), so
+          # the migration Job cannot be fed a route the Deployment refuses.
+          for t in deployment.yaml migration-job.yaml; do
+            head -1 "$templates/$t" | grep -qxF '{{- include "customer.guard" . -}}' \
+              || { echo "$t must start with the guard call" >&2; exit 1; }
+          done
       - name: Lint and render chart
         run: |
           chart=deploy/helm/customer-profile-kyc-service
@@ -65,7 +85,7 @@ jobs:
           kubeconform_args=(-strict -summary -kubernetes-version 1.30.0 -schema-location "$k8s" -schema-location "$crds")
           kubeconform "${kubeconform_args[@]}" - <<<"$rendered"
           helm template ci "$chart" -f "$chart/values-dev.yaml" $args | kubeconform "${kubeconform_args[@]}" -
-          helm template ci "$chart" $args --set config.SPRING_PROFILES_ACTIVE=kafka-strimzi --set kafkaTls.secretName=kafka-client-tls \
+          helm template ci "$chart" $args --set kafka.runtime=strimzi --set kafkaTls.secretName=kafka-client-tls \
             | kubeconform "${kubeconform_args[@]}" -
           # Platform contract: mesh policy and the ingress NetworkPolicy (mesh #11) belong to the service-mesh repo,
           # secrets to the one ClusterSecretStore.
@@ -75,9 +95,12 @@ jobs:
           fi
           # The outbox relay stays off in the chart until mesh #11's MSK egress is applied (runbook step 6).
           grep -qE '^  OUTBOX_RELAY_ENABLED: "false"$' <<<"$rendered"
-          # Kafka TLS env only for the kafka-strimzi profile, from the Secret named by kafkaTls.secretName.
+          # Kafka TLS env only for the kafka-strimzi profile, from the Secret named by kafkaTls.secretName. The
+          # chart renders the only Spring profile, SPRING_PROFILES_ACTIVE on the Deployment, from kafka.runtime
+          # (default msk -> kafka-msk); the ConfigMap carries none.
           python3 -c "import yaml" 2>/dev/null || python3 -m pip install --user pyyaml==6.0.2
-          python3 scripts/ci/strimzi-tls-env.py --expect-none <<<"$rendered"
+          python3 scripts/ci/strimzi-tls-env.py --expect-none --expect-profile kafka-msk <<<"$rendered"
+          helm template ci "$chart" -f "$chart/values-dev.yaml" $args | python3 scripts/ci/strimzi-tls-env.py --expect-none --expect-profile kafka-msk
           # The platform PodMonitor scrapes through these pod annotations.
           for annotation in 'prometheus.io/scrape: "true"' 'prometheus.io/port: "8081"' 'prometheus.io/path: /actuator/prometheus'; do
             grep -qF "$annotation" <<<"$rendered" || { echo "missing pod annotation $annotation" >&2; exit 1; }
@@ -91,11 +114,16 @@ jobs:
             echo "pod-service-id accepted a wrong service id" >&2
             exit 1
           fi
-          strimzi="--set config.SPRING_PROFILES_ACTIVE=kafka-strimzi"
+          strimzi="--set kafka.runtime=strimzi"
           helm template ci "$chart" $args $strimzi --set kafkaTls.secretName=kafka-client-tls \
-            | python3 scripts/ci/strimzi-tls-env.py --expect-secret kafka-client-tls
+            | python3 scripts/ci/strimzi-tls-env.py --expect-secret kafka-client-tls --expect-profile kafka-strimzi
           if helm template ci "$chart" $args $strimzi > /dev/null 2>&1; then
             echo "chart rendered the kafka-strimzi profile without kafkaTls.secretName" >&2
+            exit 1
+          fi
+          # The profile check itself must catch a wrong render.
+          if helm template ci "$chart" $args | python3 scripts/ci/strimzi-tls-env.py --expect-none --expect-profile kafka-strimzi 2>/dev/null; then
+            echo "strimzi-tls-env accepted the kafka-msk render as kafka-strimzi" >&2
             exit 1
           fi
           # RDS CA bundle (cicd-templates 4f0f266): ConfigMap rds-ca-bundle mounted read-only, not optional,
@@ -129,10 +157,12 @@ jobs:
               exit 1
             fi
           done
-          # No config key may replace the datasource or Flyway URL or inject properties around DB_URL. Each
-          # refusal names the key and the reason; keys are matched after normalisation (upper case, every
-          # non-alphanumeric character dropped), so a dash inside an element, a dot or an index spelling, all of
-          # which Spring's relaxed binding reads the same way, cannot slip past the check.
+          # No values route may replace the datasource or Flyway URL, load other configuration, switch the TLS
+          # assertion off or weaken Kafka TLS. The checks are the platform guard (fbx.guard, vendored unchanged
+          # as templates/_fbx_helpers.tpl, cicd-templates a4f0072) called through the adapter customer.guard,
+          # then this chart's stricter rules (customer.validate). Each refusal names the key and the reason; the
+          # guard matches every name as given and in its Spring relaxed-binding form, so dash, dot, underscore
+          # and index spellings cannot slip past it.
           reject_render() {
             local want="$1"; shift
             local out
@@ -145,22 +175,36 @@ jobs:
           }
           for key in SPRING_DATASOURCE_URL SPRING_DATASOURCE_HIKARI_JDBC_URL SPRING_DATASOURCE_HIKARI_DATA_SOURCE_PROPERTIES_SSLFACTORY \
                      SPRING_FLYWAY_URL SPRING_LIQUIBASE_URL SPRING_R2DBC_URL SPRING_APPLICATION_JSON \
-                     SPRING-DATASOURCE-URL spring_datasource_url; do
-            reject_render "config.$key must not be set: config.DB_URL is the only database URL" --set-string "config.$key=$db?sslmode=disable"
+                     SPRING-DATASOURCE-URL spring_datasource_url 'spring\.datasource\.username'; do
+            reject_render "config.${key//\\/} is not allowed: it can redirect or override the datasource" \
+              --set-string "config.$key=$db?sslmode=disable"
           done
-          reject_render "config.spring.datasource.hikari.jdbc-url must not be set: config.DB_URL is the only database URL" \
+          reject_render "config.spring.datasource.hikari.jdbc-url is not allowed: it can redirect or override the datasource" \
             --set-string "config.spring\.datasource\.hikari\.jdbc-url=$db?sslmode=disable"
+          # The guard lets SPRING_DATASOURCE_USERNAME / _PASSWORD through; this chart does not: the runtime role is
+          # DB_USERNAME and the password comes from the ExternalSecret, so no config key can switch the pods to
+          # another role (the schema owner, for instance).
+          for key in SPRING_DATASOURCE_USERNAME SPRING_DATASOURCE_PASSWORD spring_datasource_username; do
+            reject_render "config.$key must not be set: the datasource credentials are DB_USERNAME and the ExternalSecret" \
+              --set-string "config.$key=customer_profile_owner"
+          done
           # Spring config locations, imports and names load property sources (a file, a configtree) that can set
           # spring.datasource.url; the chart renders none, so no values key may add one, in any spelling.
-          for key in SPRING_CONFIG_IMPORT SPRING_CONFIG_IMPORT_0 SPRING_CONFIG_ADDITIONAL_LOCATION SPRING_CONFIG_ADDITIONALLOCATION \
-                     SPRING_CONFIG_LOCATION SPRING_CONFIG_NAME SPRING_CONFIG-IMPORT 'spring\.config\.import' \
-                     'spring\.config\.additional-location' 'spring\.config\.import\[0\]'; do
-            reject_render "config.${key//\\/} must not be set: it loads configuration that can override config.DB_URL" \
+          for key in SPRING_CONFIG_IMPORT SPRING_CONFIG_IMPORT_0 SPRING_CONFIG_IMPORT_0_ SPRING_CONFIG_ADDITIONAL_LOCATION \
+                     SPRING_CONFIG_ADDITIONALLOCATION SPRING_CONFIG_LOCATION SPRING_CONFIG_NAME SPRING_CONFIG-IMPORT \
+                     'spring\.config\.import' 'spring\.config\.additional-location' 'spring\.config\.import\[0\]' \
+                     'spring\.config\.activate\.on-profile'; do
+            reject_render "config.${key//\\/} is not allowed: a spring.config.* property" \
               --set-string "config.$key=optional:configtree:/tmp/override/"
           done
           # JVM option variables set system properties (spring.datasource.url included) or load an agent before
-          # application.yml is read; the image fixes them.
-          for key in JAVA_TOOL_OPTIONS JDK_JAVA_OPTIONS _JAVA_OPTIONS JAVA_OPTS java-tool-options 'jdk\.java\.options'; do
+          # application.yml is read. The guard checks the value of JAVA_TOOL_OPTIONS, JDK_JAVA_OPTIONS and
+          # _JAVA_OPTIONS; this chart refuses every JVM options key, whatever it holds (the image fixes them).
+          for key in JAVA_TOOL_OPTIONS JDK_JAVA_OPTIONS _JAVA_OPTIONS; do
+            reject_render "config.$key must not mention datasource" --set-string "config.$key=-Dspring.datasource.url=$db?sslmode=disable"
+            reject_render "config.$key must not be set: JVM options are fixed by the image" --set-string "config.$key=-javaagent:/tmp/agent.jar"
+          done
+          for key in JAVA_OPTS java-tool-options 'jdk\.java\.options'; do
             reject_render "config.${key//\\/} must not be set: JVM options are fixed by the image" \
               --set-string "config.$key=-Dspring.datasource.url=$db?sslmode=disable"
           done
@@ -172,39 +216,102 @@ jobs:
             --set-string 'config.logging\.level\.root=DEBUG'
           # The TLS startup assertion (DatabaseTlsGuard, KafkaTlsGuard) runs whenever DB_SSL_ROOT_CERT is set,
           # which the chart always does from the mounted bundle; no values key may offer the variable, in any
-          # spelling, as a switch (an empty value included).
-          for key in DB_SSL_ROOT_CERT 'db\.ssl\.root\.cert' db-ssl-root-cert; do
-            reject_render "config.${key//\\/} must not be set: the TLS startup assertion has no off switch" \
+          # spelling, as a switch (an empty value included), nor the services' TLS off switch.
+          for key in DB_SSL_ROOT_CERT 'db\.ssl\.root\.cert' db-ssl-root-cert PGSSLROOTCERT; do
+            reject_render "config.${key//\\/} is not allowed: a TLS parameter name can replace the mounted CA" \
               --set-string "config.$key="
           done
-          # The local profile is for a developer machine (plain-text local services); it must not be activated
-          # or included through any spelling of spring.profiles.active, spring.profiles.include,
-          # spring.profiles.default or a spring.profiles.group.<name> list (a group that names local activates it
-          # with the group's profile, kafka-msk for instance).
-          reject_render "config.SPRING_PROFILES_ACTIVE must not activate the local profile" \
-            --set-string 'config.SPRING_PROFILES_ACTIVE=kafka-msk\,local'
-          reject_render "config.SPRING_PROFILES_ACTIVE must not activate the local profile" \
-            --set-string 'config.SPRING_PROFILES_ACTIVE=Local'
-          reject_render "config.spring.profiles.active must not activate the local profile" \
-            --set-string 'config.spring\.profiles\.active=local'
-          reject_render "config.SPRING_PROFILES_INCLUDE must not activate the local profile" \
-            --set-string 'config.SPRING_PROFILES_INCLUDE=local'
-          reject_render "config.spring.profiles.include[0] must not activate the local profile" \
+          reject_render "config.FINTECHBANKX_TLS_ENFORCE is not allowed: it can switch off" --set-string config.FINTECHBANKX_TLS_ENFORCE=false
+          reject_render "config.PGJDBC_SSL_FACTORY is not allowed" --set-string config.PGJDBC_SSL_FACTORY=org.postgresql.ssl.NonValidatingFactory
+          reject_render "config.SPRING_SSL_BUNDLE_PEM_DB_TRUSTSTORE_CERTIFICATE is not allowed: an SSL bundle property" \
+            --set-string config.SPRING_SSL_BUNDLE_PEM_DB_TRUSTSTORE_CERTIFICATE=/tmp/decoy.pem
+          # DB_URL: the guard parses every jdbc:postgresql value; this chart also wants plain jdbc:postgresql: (the
+          # service has PgJDBC only, which DatabaseTlsGuard parses with).
+          reject_render "config.db.url is DB_URL in another spelling" --set-string "config.db\.url=$ok"
+          reject_render "config.DB_URL must set sslmode exactly once" --set-string "config.DB_URL=$ok&sslmode=verify-full"
+          reject_render "config.DB_URL must not contain '\${' or '\$('" --set-string "config.DB_URL=$ok&applicationName=\${APP}"
+          reject_render "config.DB_URL must not contain '\${' or '\$('" --set-string "config.DB_URL=$ok&applicationName=\$(APP)"
+          reject_render "config.DB_URL must be a jdbc:" --set-string "config.DB_URL=jdbc:mysql://ci-db/db?sslmode=verify-full&sslrootcert=$ca"
+          reject_render "config.DB_URL must be a jdbc:postgresql: URL" \
+            --set-string "config.DB_URL=jdbc:aws-wrapper:postgresql://ci-db:5432/db_cus_profile_kyc_ci?sslmode=verify-full&sslrootcert=$ca"
+          # Profiles: kafka.runtime renders the only one (SPRING_PROFILES_ACTIVE, msk -> kafka-msk, strimzi ->
+          # kafka-strimzi); every spring.profiles.* key is refused, whatever it names (the local profile is a
+          # developer machine with plain-text local services; a group can expand kafka-msk into it).
+          reject_render "config.SPRING_PROFILES_ACTIVE is not allowed: a profile can activate" --set-string config.SPRING_PROFILES_ACTIVE=kafka-msk
+          reject_render "config.SPRING_PROFILES_ACTIVE is not allowed: a profile can activate" --set-string 'config.SPRING_PROFILES_ACTIVE=kafka-msk\,local'
+          reject_render "config.SPRING_PROFILES_ACTIVE is not allowed: a profile can activate" --set-string 'config.SPRING_PROFILES_ACTIVE=Local'
+          reject_render "config.spring.profiles.active is not allowed: a profile can activate" --set-string 'config.spring\.profiles\.active=local'
+          reject_render "config.SPRING_PROFILES_INCLUDE is not allowed: a profile can activate" --set-string 'config.SPRING_PROFILES_INCLUDE=local'
+          reject_render "config.spring.profiles.include[0] is not allowed: a profile can activate" \
             --set-string 'config.spring\.profiles\.include\[0\]= local '
-          reject_render "config.SPRING_PROFILES_DEFAULT must not activate the local profile" \
-            --set-string 'config.SPRING_PROFILES_DEFAULT=local'
-          reject_render "config.SPRING_PROFILES_DEFAULT_0 must not activate the local profile" \
-            --set-string 'config.SPRING_PROFILES_DEFAULT_0=local'
-          reject_render "config.SPRING_PROFILES_GROUP_KAFKA-MSK must not activate the local profile" \
+          reject_render "config.SPRING_PROFILES_DEFAULT is not allowed: a profile can activate" --set-string 'config.SPRING_PROFILES_DEFAULT=local'
+          reject_render "config.SPRING_PROFILES_DEFAULT_0 is not allowed: a profile can activate" --set-string 'config.SPRING_PROFILES_DEFAULT_0=local'
+          reject_render "config.SPRING_PROFILES_GROUP_KAFKA-MSK is not allowed: a profile can activate" \
             --set-string 'config.SPRING_PROFILES_GROUP_KAFKA-MSK=local'
-          reject_render "config.spring.profiles.group.kafka-msk[0] must not activate the local profile" \
+          reject_render "config.spring.profiles.group.kafka-msk[0] is not allowed: a profile can activate" \
             --set-string 'config.spring\.profiles\.group\.kafka-msk\[0\]=local'
+          reject_render 'kafka.runtime must be "", msk or strimzi (got "local")' --set-string kafka.runtime=local
+          reject_render 'kafka.runtime must be "", msk or strimzi (got "kafka-msk")' --set-string kafka.runtime=kafka-msk
+          reject_render "kafka.runtime must be msk or strimzi: the service publishes" --set-string kafka.runtime=
+          reject_render "kafkaTls.secretName is required for the kafka-strimzi profile" --set kafka.runtime=strimzi
+          # Kafka TLS on the config route (the guard): SASL_SSL with msk, SSL with strimzi, never PLAINTEXT.
+          reject_render "config.KAFKA_SECURITY_PROTOCOL must be SASL_SSL or SSL" --set-string config.KAFKA_SECURITY_PROTOCOL=PLAINTEXT
+          reject_render "must be SASL_SSL with kafka.runtime msk" --set-string 'config.spring\.kafka\.producer\.security\.protocol=SSL'
+          reject_render "must be SSL with kafka.runtime strimzi" $strimzi --set kafkaTls.secretName=kafka-client-tls \
+            --set-string config.SPRING_KAFKA_SECURITY_PROTOCOL=SASL_SSL
+          reject_render "config.SPRING_KAFKA_SSL_ENDPOINT_IDENTIFICATION_ALGORITHM must be https" \
+            --set-string config.SPRING_KAFKA_SSL_ENDPOINT_IDENTIFICATION_ALGORITHM=
+          # Environment sources the guard never sees are refused (guard), and so are value lists this chart does
+          # not render (customer.validate): a value that is silently ignored is a value someone thinks is applied.
+          reject_render "envFrom is not supported" --set 'envFrom[0].configMapRef.name=override'
+          reject_render "extraEnvFrom is not supported" --set 'extraEnvFrom[0].secretRef.name=override'
+          reject_render "externalSecret.dataFrom is not supported" --set 'externalSecret.dataFrom[0].extract.key=ci/customer-profile-kyc-service/db-app'
+          reject_render "extraEnv must not set SPRING_CONFIG_IMPORT" --set 'extraEnv[0].name=SPRING_CONFIG_IMPORT' --set 'extraEnv[0].value=optional:file:/tmp/x.yml'
+          reject_render "extraEnv is not supported by this chart" --set 'extraEnv[0].name=FEATURE_X' --set 'extraEnv[0].value=on'
+          reject_render "env is not supported by this chart" --set 'env[0].name=FEATURE_X' --set 'env[0].value=on'
+          reject_render "javaToolOptions is not supported by this chart" --set-string javaToolOptions=-Xmx512m
+          # Template interpolation: every key and value the templates write is quoted (or an int), and keys,
+          # names and remote secret names are refused when they could open further keys (newline, quote).
+          inject="$(mktemp -d)"
+          printf 'config:\n  "LOG: \\"x\\"\\n  SPRING_CONFIG_IMPORT": "optional:file:/tmp/x.yml"\n' > "$inject/config-key.yaml"
+          reject_render "is not a ConfigMap key" -f "$inject/config-key.yaml"
+          printf 'externalSecret:\n  remoteSecretName: "ci/customer-profile-kyc-service/db-app\\n        property: url\\n    - secretKey: SPRING_DATASOURCE_URL\\n      remoteRef:\\n        key: ci/customer-profile-kyc-service/db-app"\n' > "$inject/remote.yaml"
+          reject_render "externalSecret.data remoteSecretName" -f "$inject/remote.yaml"
+          printf 'externalSecret:\n  oidcClientSecretName: "ci/customer-profile-kyc-service/oidc-client\\n        property: x"\n' > "$inject/oidc.yaml"
+          reject_render "externalSecret.data remoteSecretName" -f "$inject/oidc.yaml"
+          printf 'externalSecret:\n  migrationSecretName: "ci/customer-profile-kyc-service/db-migration\\n        property: x"\n' > "$inject/migration.yaml"
+          reject_render "externalSecret.extraData remoteSecretName" -f "$inject/migration.yaml"
+          printf 'serviceAccount:\n  name: "customer-profile-kyc-service\\n      hostNetwork: true"\n' > "$inject/sa.yaml"
+          reject_render "serviceAccount.name must be a DNS-1123 label" -f "$inject/sa.yaml"
+          # An env value the templates render is expanded by Kubernetes ($(VAR) from earlier entries and envFrom
+          # keys, the db-migration secret's included); the migration Job's DB_USERNAME must not carry one.
+          reject_render "config.DB_USERNAME must not contain '\$('" --set-string 'config.DB_USERNAME=$(DB_MIGRATION_USERNAME)'
+          # A value with a newline stays one quoted value; a dotted, dashed key renders as given.
+          printf 'config:\n  CUSTOMER_NOTE: "x\\n  SPRING_CONFIG_IMPORT: optional:file:/tmp/x.yml"\n  app.feature-flags.new-ui: "true"\n' > "$inject/value.yaml"
+          helm template ci "$chart" $args -f "$inject/value.yaml" | python3 -c '
+          import sys, yaml
+          cm = [d for d in yaml.safe_load_all(sys.stdin) if d and d["kind"] == "ConfigMap"][0]["data"]
+          assert cm["CUSTOMER_NOTE"] == "x\n  SPRING_CONFIG_IMPORT: optional:file:/tmp/x.yml", cm.get("CUSTOMER_NOTE")
+          assert "SPRING_CONFIG_IMPORT" not in cm, "a config value opened a key"
+          assert cm["app.feature-flags.new-ui"] == "true", cm
+          assert "SPRING_PROFILES_ACTIVE" not in cm, "the ConfigMap must carry no profile"
+          '
+          rm -rf "$inject"
+          # The migration Job calls the guard itself: with the Deployment's call removed, a refused route still
+          # stops the render.
+          copy="$(mktemp -d)"
+          cp -R "$chart" "$copy/"
+          sed -i '1{/customer.guard/d}' "$copy/customer-profile-kyc-service/templates/deployment.yaml"
+          if helm template ci "$copy/customer-profile-kyc-service" $args --set-string config.SPRING_CONFIG_IMPORT=optional:file:/tmp/x.yml > /dev/null 2>&1; then
+            echo "the migration Job renders a route the Deployment refuses" >&2; exit 1
+          fi
+          rm -rf "$copy"
           # The chart has no extraEnv or env list, so the ConfigMap is the only route for a config key; make sure
-          # nobody adds one without routing it through the same check.
+          # nobody adds one to values.yaml without rendering it through the same check.
           helm show values "$chart" | python3 -c '
           import sys, yaml
           values = yaml.safe_load(sys.stdin)
-          if any(k in values for k in ("extraEnv", "env", "extraEnvFrom")):
+          if any(k in values for k in ("extraEnv", "env", "envFrom", "extraEnvFrom", "javaToolOptions")):
               sys.exit("values.yaml offers an env list that bypasses the config-key check")
           '
           # The check itself must catch a render without the mount.
@@ -244,7 +351,7 @@ jobs:
             --set externalSecret.migrationSecretName=ci/other-service/db-migration
           python3 scripts/ci/check-migration-job.py "$sa" <<<"$rendered"
           helm template ci "$chart" -f "$chart/values-dev.yaml" $args | python3 scripts/ci/check-migration-job.py "$sa"
-          helm template ci "$chart" $args --set config.SPRING_PROFILES_ACTIVE=kafka-strimzi --set kafkaTls.secretName=kafka-client-tls \
+          helm template ci "$chart" $args --set kafka.runtime=strimzi --set kafkaTls.secretName=kafka-client-tls \
             | python3 scripts/ci/check-migration-job.py "$sa"
           grep -q "secretKey: DB_MIGRATION_USERNAME" <<<"$rendered"
           grep -q "name: customer-profile-kyc-service-db-migration" <<<"$rendered"
@@ -274,6 +381,11 @@ jobs:
             'job["spec"]["template"]["metadata"]["labels"]["app.kubernetes.io/component"] = "service"'
           reject_mutation "Job pods without the service account name label" \
             'job["spec"]["template"]["metadata"]["labels"]["app.kubernetes.io/name"] = "flyway"'
+          # The mesh selects Aurora egress on both app.kubernetes.io/name and app.kubernetes.io/component=db-migration.
+          reject_mutation "Job pods without the name label" \
+            'del job["spec"]["template"]["metadata"]["labels"]["app.kubernetes.io/name"]'
+          reject_mutation "Job pods without the component label" \
+            'del job["spec"]["template"]["metadata"]["labels"]["app.kubernetes.io/component"]'
           # The Job's pods run without the Istio sidecar: Aurora egress is a NetworkPolicy on the name label, and
           # without native sidecars an injected proxy keeps the Job from completing.
           reject_mutation "Job pods with the sidecar injected (podLabels value)" \
