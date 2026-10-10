@@ -130,7 +130,7 @@ class LoanClientContractIT {
 
         assertError(move("release", customerId, "LOAN-81:reserve:compensation", "2500.01", "AED", "LOAN-81"),
             422, "RELEASE_EXCEEDS_RESERVATION");
-        // A loan this service never reserved for: only untracked credit could be released, and there is none.
+        // A loan this service never reserved for: always refused, whatever untracked credit exists.
         assertError(move("release", customerId, "LOAN-83:release", "100.00", "AED", "LOAN-83"),
             422, "RESERVATION_NOT_FOUND");
         assertCreditPosition(ok(move("release", customerId, "LOAN-81:reserve:compensation", "2500.00", "AED", "LOAN-81")),

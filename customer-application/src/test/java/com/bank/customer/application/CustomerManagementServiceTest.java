@@ -149,7 +149,7 @@ class CustomerManagementServiceTest {
         when(creditReservations.openAmount(CustomerId.of("CUST-IDEM"), AED)).thenReturn(aed("0.00"));
         when(customerRepository.save(any(Customer.class))).thenAnswer(invocation -> invocation.getArgument(0));
 
-        CreditPosition response = service.releaseCredit(move("CUST-IDEM", "500.00", "key-2", "LOAN-7"));
+        CreditPosition response = service.releaseCredit(move("CUST-IDEM", "500.00", "key-2", null));
 
         assertThat(response.usedCredit()).isEqualTo(aed("1500.00"));
         ArgumentCaptor<CreditMovement> movement = ArgumentCaptor.forClass(CreditMovement.class);
@@ -227,23 +227,48 @@ class CustomerManagementServiceTest {
         verifyNoInteractions(eventPublisher);
     }
 
+    /**
+     * Loan auto-release: a release that carries a reference matching no
+     * reservation is always RESERVATION_NOT_FOUND, even when untracked credit
+     * (for example a migrated balance) would cover it, so an unknown loan id
+     * can never touch migrated credit. Nothing is saved, recorded or published.
+     */
     @Test
-    void aReleaseNamingNoReservationTakesOnlyUntrackedCredit() {
+    void aReleaseCarryingAnUnknownReferenceIsAlwaysRefused() {
         Customer customer = existingCustomer();
         customer.reserveCredit(aed("5000.00"));
         customer.clearDomainEvents();
         when(customerRepository.findById(CustomerId.of("CUST-IDEM"))).thenReturn(Optional.of(customer));
         when(creditReservations.find(CustomerId.of("CUST-IDEM"), "LOAN-UNKNOWN")).thenReturn(Optional.empty());
+        when(creditReservations.openAmount(CustomerId.of("CUST-IDEM"), AED)).thenReturn(aed("0.00"));
+
+        assertThatThrownBy(() -> service.releaseCredit(move("CUST-IDEM", "0.01", "key-x", "LOAN-UNKNOWN")))
+            .isInstanceOf(ReservationNotFoundException.class);
+        assertThatThrownBy(() -> service.releaseCredit(move("CUST-IDEM", "5000.00", "key-y", "LOAN-UNKNOWN")))
+            .isInstanceOf(ReservationNotFoundException.class);
+
+        assertThat(customer.getCreditProfile().getUsedCredit()).isEqualTo(aed("5000.00"));
+        verify(customerRepository, never()).save(any(Customer.class));
+        verify(creditReservations, never()).save(any());
+        verify(creditMovements, never()).record(any());
+        verifyNoInteractions(eventPublisher);
+    }
+
+    /** Only a release with no reference takes untracked credit: used credit minus every open reservation. */
+    @Test
+    void aReleaseWithoutAReferenceTakesOnlyUntrackedCredit() {
+        Customer customer = existingCustomer();
+        customer.reserveCredit(aed("5000.00"));
+        customer.clearDomainEvents();
+        when(customerRepository.findById(CustomerId.of("CUST-IDEM"))).thenReturn(Optional.of(customer));
         when(creditReservations.openAmount(CustomerId.of("CUST-IDEM"), AED)).thenReturn(aed("3000.00"));
 
-        assertThatThrownBy(() -> service.releaseCredit(move("CUST-IDEM", "2000.01", "key-x", "LOAN-UNKNOWN")))
-            .isInstanceOf(ReservationNotFoundException.class);
         assertThatThrownBy(() -> service.releaseCredit(move("CUST-IDEM", "2000.01", "key-y", null)))
             .isInstanceOf(ReservationNotFoundException.class);
         verify(customerRepository, never()).save(any(Customer.class));
 
         when(customerRepository.save(any(Customer.class))).thenAnswer(invocation -> invocation.getArgument(0));
-        CreditPosition response = service.releaseCredit(move("CUST-IDEM", "2000.00", "key-z", "LOAN-UNKNOWN"));
+        CreditPosition response = service.releaseCredit(move("CUST-IDEM", "2000.00", "key-z", null));
 
         assertThat(response.usedCredit()).isEqualTo(aed("3000.00"));
         verify(creditReservations, never()).save(any());

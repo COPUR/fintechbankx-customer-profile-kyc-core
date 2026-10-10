@@ -98,7 +98,12 @@ class CustomerContextOpenApiContractTest {
         assertThat((String) unprocessable.get("description"))
             .contains("CURRENCY_MISMATCH", "RELEASE_EXCEEDS_RESERVATION", "RESERVATION_NOT_FOUND");
         assertThat(((String) release.get("description")).replaceAll("\\s+", " "))
-            .contains("untracked used credit");
+            .contains("untracked used credit")
+            .contains("A release that carries a reference matching no reservation is always 422 RESERVATION_NOT_FOUND")
+            .contains("Only a release without a reference releases untracked used credit")
+            .doesNotContain("or whose reference matches no reservation");
+        assertThat(((String) unprocessable.get("description")).replaceAll("\\s+", " "))
+            .contains("RESERVATION_NOT_FOUND, the reference matches no reservation, or a release without a reference is larger than the untracked used credit");
     }
 
     /** The loan service is the consumer; its keys must be deterministic so a retry resends the same key. */

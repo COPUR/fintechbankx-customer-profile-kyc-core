@@ -80,19 +80,28 @@ class CreditReservationIT {
             + "and event_type = 'Customer.Customer.CreditReleased.v1'", Integer.class, customerId)).isEqualTo(2);
     }
 
+    /**
+     * Loan auto-release: a release that carries a reference matching no
+     * reservation is always 422 RESERVATION_NOT_FOUND, even when untracked
+     * credit would cover it. Only a release with no reference takes untracked
+     * credit, and never what another reservation holds.
+     */
     @Test
-    void aReleaseNamingNoReservationNeverEatsIntoAnotherReservation() throws Exception {
+    void aReleaseCarryingAnUnknownReferenceIsAlwaysRefusedAndOnlyAnUnreferencedOneTakesUntrackedCredit() throws Exception {
         String customerId = create("res-untracked@example.com");
         assertPosition(move("reserve", customerId, "UNTRACKED:reserve", "2000.00", null), "2000.00");
         assertPosition(move("reserve", customerId, "LOAN-A:reserve", "3000.00", "LOAN-A"), "5000.00");
 
-        assertRefused(move("release", customerId, "LOAN-X:release", "2000.01", "LOAN-X"), "RESERVATION_NOT_FOUND");
+        assertRefused(move("release", customerId, "LOAN-X:release-cent", "0.01", "LOAN-X"), "RESERVATION_NOT_FOUND");
+        assertRefused(move("release", customerId, "LOAN-X:release", "2000.00", "LOAN-X"), "RESERVATION_NOT_FOUND");
         assertRefused(move("release", customerId, "NOREF:release-1", "2000.01", null), "RESERVATION_NOT_FOUND");
         assertUsed(customerId, "5000.00");
 
-        assertPosition(move("release", customerId, "LOAN-X:release", "2000.00", "LOAN-X"), "3000.00");
+        assertPosition(move("release", customerId, "NOREF:release-ok", "2000.00", null), "3000.00");
         assertRefused(move("release", customerId, "NOREF:release-2", "0.01", null), "RESERVATION_NOT_FOUND");
         assertPosition(move("release", customerId, "LOAN-A:release", "3000.00", "LOAN-A"), "0.00");
+        assertThat(jdbc.queryForObject("select count(*) from sc_cus_profile_kyc.credit_reservation "
+            + "where customer_id = ? and reference = 'LOAN-X'", Integer.class, customerId)).isZero();
     }
 
     /** Parity CU-09 changes on purpose: releasing more than is used is refused, not floored at zero. */
@@ -106,14 +115,19 @@ class CreditReservationIT {
         assertUsed(customerId, "500.00");
     }
 
-    /** A balance migrated from the monolith has no reservation; it is released as untracked credit. */
+    /**
+     * A balance migrated from the monolith has no reservation: an unknown
+     * loan id cannot release it, a release with no reference can.
+     */
     @Test
-    void aMigratedBalanceIsReleasedAsUntrackedCredit() throws Exception {
+    void aMigratedBalanceIsReleasedOnlyByAReleaseWithoutAReference() throws Exception {
         String customerId = create("res-migrated@example.com");
         jdbc.update("update sc_cus_profile_kyc.customer set used_credit = 4000.00, version = version + 1 where customer_id = ?",
             customerId);
 
-        assertPosition(move("release", customerId, "LEGACY-1:release", "4000.00", "LEGACY-1"), "0.00");
+        assertRefused(move("release", customerId, "LEGACY-1:release", "4000.00", "LEGACY-1"), "RESERVATION_NOT_FOUND");
+        assertUsed(customerId, "4000.00");
+        assertPosition(move("release", customerId, "LEGACY:release", "4000.00", null), "0.00");
         assertThat(jdbc.queryForObject("select count(*) from sc_cus_profile_kyc.credit_reservation where customer_id = ?",
             Integer.class, customerId)).isZero();
     }
