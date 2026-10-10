@@ -117,6 +117,21 @@ run Flyway as a Job: its pods carry `app.kubernetes.io/name=<service account>`
   ExternalSecret before the Job's pod gives up, and the timings. The chart is
   checked only by rendering, kubeconform and the mutation checks.
 
+## Mesh contract for the migration Job (pending)
+
+The db-migration Job is not yet in the mesh contract (service-mesh
+repository). Today it relies on the name-keyed Aurora NetworkPolicy
+(`allow-egress-aurora` selects `app.kubernetes.io/name=customer-profile-kyc-service`,
+which the Job's pods carry) and on the namespace DNS policy; it has no
+sidecar and no entry of its own. The CRC thread asked the mesh squad, through
+the project coordinator on 2026-10-10, to add the workload to the contract:
+ServiceAccount `customer-profile-kyc-service-db-migration`, selector
+`app.kubernetes.io/component=db-migration`, no sidecar, egress to Aurora and
+DNS only; and to confirm that an un-injected pod in an `istio-injection`
+namespace is acceptable under the mesh's STRICT policies. Status: pending the
+mesh squad's answer. Until it comes, the Job's network access is an inference
+from the policies above, not a contract the mesh repo verifies.
+
 ## Reversibility
 
 Reversible. Moving Flyway back into the pods means setting
