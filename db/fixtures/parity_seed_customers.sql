@@ -13,7 +13,8 @@
 -- (so an aggregate loaded before the reset cannot overwrite it) and deletes
 -- their credit_movement and credit_reservation rows, so a parity run can reuse
 -- its idempotency keys and references. Their seeded used credit has no
--- reservation: a release naming no reservation may free it (untracked credit).
+-- reservation: only a release without a reference may free it (untracked credit);
+-- a release whose reference matches no reservation is refused.
 -- Run after Flyway has created sc_cus_profile_kyc (the service has started once):
 --   psql "<customer service conninfo>" -X -1 -v ON_ERROR_STOP=1 -f db/fixtures/parity_seed_customers.sql
 
