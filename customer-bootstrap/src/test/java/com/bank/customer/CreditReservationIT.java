@@ -70,7 +70,8 @@ class CreditReservationIT {
         assertRefused(move("release", customerId, "LOAN-1:part-2", "2000.01", "LOAN-1"), "RELEASE_EXCEEDS_RESERVATION");
         assertUsed(customerId, "2000.00");
         assertPosition(move("release", customerId, "LOAN-1:part-3", "2000.00", "LOAN-1"), "0.00");
-        assertRefused(move("release", customerId, "LOAN-1:part-4", "0.01", "LOAN-1"), "RELEASE_EXCEEDS_RESERVATION");
+        // Nothing held any more: the same answer as an unknown reference (loan's sweep relies on it).
+        assertRefused(move("release", customerId, "LOAN-1:part-4", "0.01", "LOAN-1"), "RESERVATION_NOT_FOUND");
 
         // A replay of an applied release still answers 200 with the current position and moves nothing.
         assertPosition(move("release", customerId, "LOAN-1:part-1", "1000.00", "LOAN-1"), "0.00");
@@ -102,6 +103,30 @@ class CreditReservationIT {
         assertPosition(move("release", customerId, "LOAN-A:release", "3000.00", "LOAN-A"), "0.00");
         assertThat(jdbc.queryForObject("select count(*) from sc_cus_profile_kyc.credit_reservation "
             + "where customer_id = ? and reference = 'LOAN-X'", Integer.class, customerId)).isZero();
+    }
+
+    /**
+     * Lending ask (round 5): reserve, release fully, release again under a new
+     * idempotency key. The reservation exists but holds 0, so the answer is
+     * 422 RESERVATION_NOT_FOUND, as for an unknown reference, and the position
+     * is unchanged. While the reservation still holds part of the amount the
+     * answer stays RELEASE_EXCEEDS_RESERVATION.
+     */
+    @Test
+    void aReleaseAgainstAFullyReleasedReservationIsNotFoundAndLeavesThePositionAlone() throws Exception {
+        String customerId = create("res-settled@example.com");
+        assertPosition(move("reserve", customerId, "LOAN-S:reserve", "2500.00", "LOAN-S"), "2500.00");
+        assertRefused(move("release", customerId, "LOAN-S:too-much", "2500.01", "LOAN-S"), "RELEASE_EXCEEDS_RESERVATION");
+        assertPosition(move("release", customerId, "LOAN-S:release", "2500.00", "LOAN-S"), "0.00");
+
+        assertRefused(move("release", customerId, "LOAN-S:release-again", "2500.00", "LOAN-S"), "RESERVATION_NOT_FOUND");
+        assertRefused(move("release", customerId, "LOAN-S:sweep", "0.01", "LOAN-S"), "RESERVATION_NOT_FOUND");
+
+        assertUsed(customerId, "0.00");
+        assertThat(jdbc.queryForObject("select released_amount from sc_cus_profile_kyc.credit_reservation "
+            + "where customer_id = ? and reference = 'LOAN-S'", BigDecimal.class, customerId)).isEqualByComparingTo("2500.00");
+        assertThat(jdbc.queryForObject("select count(*) from sc_cus_profile_kyc.credit_movement where customer_id = ?",
+            Integer.class, customerId)).isEqualTo(2);
     }
 
     /** Parity CU-09 changes on purpose: releasing more than is used is refused, not floored at zero. */

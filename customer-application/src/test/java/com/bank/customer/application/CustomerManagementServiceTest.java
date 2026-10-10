@@ -228,6 +228,39 @@ class CustomerManagementServiceTest {
     }
 
     /**
+     * Loan's sweep (lending ask, round 5): a release naming a reservation that
+     * holds nothing any more is RESERVATION_NOT_FOUND, the same answer as an
+     * unknown reference, so the sweep can tell "nothing left to release" from
+     * "released too much". While 0 &lt; held &lt; amount it stays
+     * RELEASE_EXCEEDS_RESERVATION. Nothing is saved, recorded or published.
+     */
+    @Test
+    void aReleaseAgainstAReservationThatHoldsNothingIsNotFoundWhileAPartlyHeldOneIsExceeded() {
+        Customer customer = existingCustomer();
+        customer.reserveCredit(aed("2000.00"));
+        customer.clearDomainEvents();
+        CreditReservation settled = new CreditReservation(CustomerId.of("CUST-IDEM"), "LOAN-7", aed("2000.00"), aed("2000.00"));
+        CreditReservation partly = new CreditReservation(CustomerId.of("CUST-IDEM"), "LOAN-8", aed("2000.00"), aed("1500.00"));
+        when(customerRepository.findById(CustomerId.of("CUST-IDEM"))).thenReturn(Optional.of(customer));
+        when(creditReservations.find(CustomerId.of("CUST-IDEM"), "LOAN-7")).thenReturn(Optional.of(settled));
+        when(creditReservations.find(CustomerId.of("CUST-IDEM"), "LOAN-8")).thenReturn(Optional.of(partly));
+
+        assertThatThrownBy(() -> service.releaseCredit(move("CUST-IDEM", "0.01", "LOAN-7:sweep", "LOAN-7")))
+            .isInstanceOf(ReservationNotFoundException.class);
+        assertThatThrownBy(() -> service.releaseCredit(move("CUST-IDEM", "2000.00", "LOAN-7:release", "LOAN-7")))
+            .isInstanceOf(ReservationNotFoundException.class);
+        assertThatThrownBy(() -> service.releaseCredit(move("CUST-IDEM", "500.01", "LOAN-8:release", "LOAN-8")))
+            .isInstanceOf(ReleaseExceedsReservationException.class);
+
+        assertThat(customer.getCreditProfile().getUsedCredit()).isEqualTo(aed("2000.00"));
+        verify(customerRepository, never()).save(any(Customer.class));
+        verify(creditReservations, never()).save(any());
+        verify(creditMovements, never()).record(any());
+        verify(creditReservations, never()).openAmount(any(), any());
+        verifyNoInteractions(eventPublisher);
+    }
+
+    /**
      * Loan auto-release: a release that carries a reference matching no
      * reservation is always RESERVATION_NOT_FOUND, even when untracked credit
      * (for example a migrated balance) would cover it, so an unknown loan id
