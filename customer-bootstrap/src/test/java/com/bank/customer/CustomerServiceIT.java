@@ -449,9 +449,11 @@ class CustomerServiceIT {
                 "../db/fixtures/parity_seed_customers.sql")
             .map(java.nio.file.Path::of).filter(java.nio.file.Files::exists).findFirst()
             .orElseThrow(() -> new IllegalStateException("db/fixtures/parity_seed_customers.sql not found"));
+        // As the schema owner, the way an operator runs it with psql: the seed deletes movements and
+        // reservations and rewrites the three credit positions, which the runtime role may not do.
         new org.springframework.jdbc.datasource.init.ResourceDatabasePopulator(
                 new org.springframework.core.io.FileSystemResource(seed))
-            .execute(jdbc.getDataSource());
+            .execute(PostgresTestDatabase.ownerDataSource());
     }
 
     @Test

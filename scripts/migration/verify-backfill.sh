@@ -23,17 +23,24 @@ psql_q -d "$src_db" -f "$root/db/backfill/test/monolith_fixture.sql"
 
 psql_q -d "$dst_db" -c "CREATE SCHEMA $schema"
 migrations="$root/customer-infrastructure/src/main/resources/db/migration"
+# Flyway placeholders, filled the way Flyway fills them in the migration Job: the
+# runtime role is the connecting user here (a single-user run, so V13 grants nothing).
+runtime_role="${PGUSER:-$(id -un)}"
+apply_migration() {
+  sed "s/\${runtime_role}/$runtime_role/g" "$1" | PGOPTIONS="-c search_path=$schema" psql_q -d "$dst_db" -f -
+}
 for migration in "$migrations"/V[1-6]__*.sql; do
-  PGOPTIONS="-c search_path=$schema" psql_q -d "$dst_db" -f "$migration"
+  apply_migration "$migration"
 done
 
 # V7 adds the KYC status. Rows that exist when it runs: a migrated monolith
 # customer becomes VERIFIED/MIGRATED as of the migration; a customer created in
 # this service was never checked and stays PENDING/STAFF.
 psql_q -d "$dst_db" -c "INSERT INTO $schema.customer (customer_id, first_name, last_name, currency, credit_limit, used_credit, legacy_customer_id, legacy_synced_version, created_at, updated_at, version) VALUES ('900', 'Pre', 'Migrated', 'USD', 1000, 0, 900, 0, now(), now(), 0), ('CUST-PRE00001', 'Pre', 'Service', 'USD', 1000, 0, NULL, NULL, now(), now(), 0)"
-for migration in "$migrations"/V*.sql; do
+# Version order, as Flyway applies them: a shell glob puts V10 before V7.
+find "$migrations" -name 'V*.sql' | sort -V | while read -r migration; do
   case "$(basename "$migration")" in V[1-6]__*) continue ;; esac
-  PGOPTIONS="-c search_path=$schema" psql_q -d "$dst_db" -f "$migration"
+  apply_migration "$migration"
 done
 
 report="$(mktemp)"

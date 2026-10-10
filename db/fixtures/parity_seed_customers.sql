@@ -15,8 +15,10 @@
 -- its idempotency keys and references. Their seeded used credit has no
 -- reservation: only a release without a reference may free it (untracked credit);
 -- a release whose reference matches no reservation is refused.
--- Run after Flyway has created sc_cus_profile_kyc (the service has started once):
---   psql "<customer service conninfo>" -X -1 -v ON_ERROR_STOP=1 -f db/fixtures/parity_seed_customers.sql
+-- Run after the migration Job has created sc_cus_profile_kyc, as the schema
+-- owner (the db-migration credential) or the DBA: it deletes movements and
+-- reservations, which the service's runtime role is not granted (V13).
+--   psql "<customer service conninfo, owner credential>" -X -1 -v ON_ERROR_STOP=1 -f db/fixtures/parity_seed_customers.sql
 
 DELETE FROM sc_cus_profile_kyc.credit_movement
  WHERE customer_id IN ('CUST-12345678', 'CUST-87654321', 'CUST-11111111');

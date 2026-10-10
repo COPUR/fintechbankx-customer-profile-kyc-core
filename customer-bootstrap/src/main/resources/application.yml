@@ -33,6 +33,17 @@ spring:
         order_inserts: true
         order_updates: true
   flyway:
+    # Flyway connects as the schema owner (DB_MIGRATION_USERNAME / _PASSWORD,
+    # the db-migration secret) through the same verified DB_URL: it has no URL
+    # of its own. The runtime role (DB_USERNAME) is the Flyway placeholder
+    # runtime_role, which V13 grants least privilege. Without DB_MIGRATION_*
+    # (local single-user runs) Flyway uses the app credentials and V13 changes
+    # nothing. The history table keeps Flyway's default name
+    # (flyway_schema_history), which V13 grants the runtime role to read.
+    user: ${DB_MIGRATION_USERNAME:${spring.datasource.username}}
+    password: ${DB_MIGRATION_PASSWORD:${spring.datasource.password:}}
+    placeholders:
+      runtime_role: ${spring.datasource.username}
     schemas: sc_cus_profile_kyc
     default-schema: sc_cus_profile_kyc
     create-schemas: true
