@@ -200,7 +200,13 @@ about this chart's own values):
     whatever they hold (-javaagent, heap flags): the image fixes them;
   - LOGGINGLEVEL*: a log level is not an install-time value; a verbose
     PostgreSQL driver level would write the wire protocol, with row data, to
-    the pod log.
+    the pod log;
+  - FINTECHBANKXTLS*: fintechbankx.tls.enforce=false is the test switch of
+    the services' TLS startup assertions (on by default; only the local
+    profile and tests turn them off). The guard refuses every spelling its
+    canonical form reaches (FINTECHBANKX_TLS_ENFORCE, fintechbankx.tls.enforce,
+    dashes, indexes); this rule covers the separator-free one it keeps apart
+    (FINTECHBANKXTLSENFORCE), which Spring's relaxed binding reads the same.
 */}}
 {{- define "customer.validate" -}}
 {{- if not (regexMatch "^[a-z0-9]([-a-z0-9]{0,61}[a-z0-9])?$" (toString .Values.serviceAccount.name)) -}}
@@ -227,6 +233,9 @@ about this chart's own values):
 {{- end -}}
 {{- if hasPrefix "LOGGINGLEVEL" $name -}}
 {{- fail (printf "config.%s must not be set: log levels are not install-time values" $key) -}}
+{{- end -}}
+{{- if hasPrefix "FINTECHBANKXTLS" $name -}}
+{{- fail (printf "config.%s must not be set: fintechbankx.tls.enforce is the test switch of the TLS startup assertions (on by default; only the local profile and tests turn them off)" $key) -}}
 {{- end -}}
 {{- end -}}
 {{- end -}}

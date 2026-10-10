@@ -1,5 +1,7 @@
 package com.bank.customer.config;
 
+import com.bank.customer.infrastructure.config.DatabaseTlsGuard;
+import com.bank.customer.infrastructure.config.DatabaseTlsGuardConfiguration;
 import com.bank.customer.infrastructure.config.KafkaTlsGuard;
 import com.bank.customer.infrastructure.config.KafkaTlsGuardConfiguration;
 import org.junit.jupiter.api.Test;
@@ -72,11 +74,13 @@ class ClusterKafkaTlsStartupTest {
         assertThat(output.getOut()).doesNotContain(OFF);
     }
 
-    /** The local profile is the developer's switch: the guard is not registered and the log says so. */
+    /** The local profile is the developer's switch: neither guard is registered (the service loads both configurations) and the log says so. */
     @Test
     void aRunOutsideTheChartWithTheLocalProfileStartsAndLogsThatTheAssertionsAreOff(CapturedOutput output) {
-        outsideTheChart.withPropertyValues("spring.profiles.active=local")
-            .run(context -> assertThat(context).hasNotFailed().doesNotHaveBean(KafkaTlsGuard.class));
+        outsideTheChart.withUserConfiguration(DatabaseTlsGuardConfiguration.class)
+            .withPropertyValues("spring.profiles.active=local")
+            .run(context -> assertThat(context).hasNotFailed()
+                .doesNotHaveBean(KafkaTlsGuard.class).doesNotHaveBean(DatabaseTlsGuard.class));
         assertThat(output.getOut()).contains("WARN").contains(OFF);
     }
 }

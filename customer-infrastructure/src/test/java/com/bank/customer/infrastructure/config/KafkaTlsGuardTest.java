@@ -157,16 +157,20 @@ class KafkaTlsGuardTest {
             .run(context -> assertThat(context).hasFailed().getFailure().hasMessageContaining(REFUSED));
     }
 
-    /** The local profile and the test switch are the only ways off; the guard is then not registered and the log says so. */
+    /**
+     * The local profile and the test switch are the only ways off; the guard is then not registered and the log
+     * says so (the warning is logged by DatabaseTlsGuardConfiguration, which the service loads with this one).
+     */
     @ParameterizedTest
     @ValueSource(strings = {"spring.profiles.active=local", "fintechbankx.tls.enforce=false"})
     void staysOffOnlyWithTheLocalProfileOrTheTestSwitch(String property, CapturedOutput output) {
         contextRunner
             .withPropertyValues(property, "customer.outbox.relay.enabled=true", "spring.kafka.security.protocol=PLAINTEXT")
             .run(context -> assertThat(context).hasNotFailed().doesNotHaveBean(KafkaTlsGuard.class));
-        contextRunner
+        contextRunner.withUserConfiguration(DatabaseTlsGuardConfiguration.class)
             .withPropertyValues(property)
-            .run(context -> assertThat(context).hasNotFailed().doesNotHaveBean(KafkaTlsGuard.class));
+            .run(context -> assertThat(context).hasNotFailed()
+                .doesNotHaveBean(KafkaTlsGuard.class).doesNotHaveBean(DatabaseTlsGuard.class));
         assertThat(output.getOut()).contains("WARN").contains("TLS startup assertions are off");
     }
 

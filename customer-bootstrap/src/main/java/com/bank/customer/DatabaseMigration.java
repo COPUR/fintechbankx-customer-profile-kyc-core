@@ -22,9 +22,10 @@ import java.util.Arrays;
  * release starts (decision 0001).
  *
  * <p>The context holds only the datasource, Flyway and the DatabaseTlsGuard
- * ({@link DatabaseTlsGuardConfiguration}; the guard checks whenever
- * DB_SSL_ROOT_CERT is set): no web server, JPA, Kafka, security, identity
- * client or outbox relay. It reads the same application.yml with the
+ * ({@link DatabaseTlsGuardConfiguration}, on by default: the Job sets
+ * DB_SSL_ROOT_CERT in the chart, and only the local profile or the test
+ * switch fintechbankx.tls.enforce=false turn the guard off): no web server,
+ * JPA, Kafka, security, identity client or outbox relay. It reads the same application.yml with the
  * {@value #PROFILE} profile, which sets customer.database.flyway=migrate
  * ({@link FlywayStartupConfiguration}).
  *

@@ -126,7 +126,8 @@ class DatabaseMigrationIT {
     /** The single-user fallback: a db-migration secret holding the runtime role must not migrate (decision 0001). */
     @Test
     void theMigrationJobRefusesToRunAsTheRuntimeRole() {
-        String[] arguments = jobAs(JOB_SCHEMA, PostgresTestDatabase.RUNTIME_ROLE, PostgresTestDatabase.RUNTIME_PASSWORD);
+        String[] arguments = with(jobAs(JOB_SCHEMA, PostgresTestDatabase.RUNTIME_ROLE, PostgresTestDatabase.RUNTIME_PASSWORD),
+            TLS_ASSERTIONS_OFF);
 
         // Thrown by the guard itself (a BeanFactoryPostProcessor), before any connection or Flyway bean.
         assertThatThrownBy(() -> DatabaseMigration.start(arguments))

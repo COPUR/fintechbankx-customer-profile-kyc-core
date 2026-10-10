@@ -6,6 +6,7 @@ import org.springframework.beans.factory.config.ConfigurableListableBeanFactory;
 import org.springframework.boot.context.properties.bind.Bindable;
 import org.springframework.boot.context.properties.bind.Binder;
 import org.springframework.context.EnvironmentAware;
+import org.springframework.core.Ordered;
 import org.springframework.core.env.ConfigurableEnvironment;
 import org.springframework.core.env.Environment;
 import org.springframework.core.env.StandardEnvironment;
@@ -29,12 +30,18 @@ import java.util.Properties;
  * chart validated; Hikari data-source-properties may not carry ssl* driver
  * properties.
  *
- * Skipped when DB_SSL_ROOT_CERT is unset (local runs and tests). The Helm chart
- * always sets it, so the check is mandatory in every deployed environment.
- * Runs as a BeanFactoryPostProcessor, before the DataSource or Flyway exist.
- * Messages name the property, never the URL (it may carry credentials).
+ * <p>Registered by {@link DatabaseTlsGuardConfiguration} by default, wherever
+ * the service or its migrate-only Job runs (guardrail 4a); only the local
+ * profile or the test switch ({@link StartupAssertions}) leave it out. While
+ * it is on, DB_SSL_ROOT_CERT is required: missing or blank fails the startup
+ * with a message naming the variable, so a runtime outside the chart gets the
+ * same refusal as a pod. Runs as a BeanFactoryPostProcessor, before the
+ * DataSource or Flyway exist, and first among the guards
+ * ({@link Ordered#HIGHEST_PRECEDENCE}) so the missing-bundle message is the
+ * one a run outside the chart sees. Messages name the property, never the URL
+ * (it may carry credentials).
  */
-public class DatabaseTlsGuard implements BeanFactoryPostProcessor, EnvironmentAware {
+public class DatabaseTlsGuard implements BeanFactoryPostProcessor, EnvironmentAware, Ordered {
 
     static final String ROOT_CERT_VARIABLE = "DB_SSL_ROOT_CERT";
     private static final String[] FORBIDDEN = {"sslfactory", "sslfactoryarg", "sslhostnameverifier", "sslpasswordcallback"};
@@ -47,6 +54,11 @@ public class DatabaseTlsGuard implements BeanFactoryPostProcessor, EnvironmentAw
     }
 
     @Override
+    public int getOrder() {
+        return HIGHEST_PRECEDENCE;
+    }
+
+    @Override
     public void postProcessBeanFactory(ConfigurableListableBeanFactory beanFactory) {
         check(environment);
     }
@@ -54,7 +66,8 @@ public class DatabaseTlsGuard implements BeanFactoryPostProcessor, EnvironmentAw
     static void check(Environment environment) {
         String rootCert = environment.getProperty(ROOT_CERT_VARIABLE);
         if (rootCert == null || rootCert.isBlank()) {
-            return;
+            throw new IllegalStateException(ROOT_CERT_VARIABLE + " must name the mounted RDS CA bundle (the chart sets it"
+                + " on every container): " + StartupAssertions.SWITCH_CLAUSE);
         }
         String datasourceUrl = environment.getProperty("spring.datasource.url");
         if (datasourceUrl == null || datasourceUrl.isBlank()) {
@@ -105,6 +118,6 @@ public class DatabaseTlsGuard implements BeanFactoryPostProcessor, EnvironmentAw
     private static IllegalStateException refused(String property, String reason, String rootCert) {
         return new IllegalStateException(property + " " + reason + ": the database connection must use sslmode=verify-full"
             + " with sslrootcert=" + rootCert + " (" + ROOT_CERT_VARIABLE + ") and no sslfactory, sslhostnameverifier"
-            + " or sslpasswordcallback");
+            + " or sslpasswordcallback; " + StartupAssertions.SWITCH_CLAUSE);
     }
 }

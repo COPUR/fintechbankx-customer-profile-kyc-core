@@ -225,13 +225,13 @@ jobs:
           # fintechbankx.tls.enforce (FINTECHBANKX_TLS_ENFORCE) is the test switch of the TLS startup assertions (only the
           # local profile and tests turn them off): refused by the guard in every spelling it canonicalises.
           for key in FINTECHBANKX_TLS_ENFORCE 'fintechbankx\.tls\.enforce' FINTECHBANKX-TLS-ENFORCE 'fintechbankx\.tls\.enforce\[0\]' \
-                     fintechbankx_tls_enforce 'Fintechbankx\.Tls\.Enforce'; do
+                     fintechbankx_tls_enforce 'Fintechbankx\.Tls\.Enforce' FINTECHBANKXTLS_ENFORCE; do
             reject_render "config.${key//\\/} is not allowed: it can switch off the service's startup TLS assertion" \
               --set-string "config.$key=false"
           done
           # ...and by the chart's normalised rule in the separator-free spelling the guard's canonical form keeps apart
           # (FINTECHBANKXTLSENFORCE binds to fintechbankx.tls.enforce too).
-          for key in FINTECHBANKXTLSENFORCE fintechbankxtlsenforce FINTECHBANKXTLS_ENFORCE; do
+          for key in FINTECHBANKXTLSENFORCE fintechbankxtlsenforce FintechbankxTlsEnforce; do
             reject_render "config.$key must not be set: fintechbankx.tls.enforce is the test switch of the TLS startup assertions" \
               --set-string "config.$key=false"
           done

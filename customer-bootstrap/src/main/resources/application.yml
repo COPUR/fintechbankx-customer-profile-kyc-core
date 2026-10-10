@@ -10,6 +10,10 @@ spring:
   lifecycle:
     timeout-per-shutdown-phase: 25s
   datasource:
+    # The TLS startup assertions (DatabaseTlsGuard, KafkaTlsGuard) are on by default and
+    # refuse this local default: a run without the chart needs SPRING_PROFILES_ACTIVE=local
+    # (README, "Run locally"). Tests set fintechbankx.tls.enforce=false in test code only;
+    # no shipped application*.yml sets it.
     url: ${DB_URL:jdbc:postgresql://localhost:5432/db_cus_profile_kyc_local}
     username: ${DB_USERNAME:customer_profile_app}
     # The credential is bound from SPRING_DATASOURCE_PASSWORD (Kubernetes Secret
@@ -56,8 +60,8 @@ spring:
     bootstrap-servers: ${KAFKA_BOOTSTRAP_SERVERS:localhost:9092}
     client-id: svc-cus-profile-kyc
     security:
-      # PLAINTEXT only for a developer machine. In a cluster (DB_SSL_ROOT_CERT set),
-      # relay on or off, KafkaTlsGuard refuses to start unless the effective
+      # PLAINTEXT only for a developer machine with the local profile. Everywhere
+      # else, relay on or off, KafkaTlsGuard refuses to start unless the effective
       # producer protocol is SASL_SSL (kafka-msk) or SSL (kafka-strimzi).
       protocol: ${KAFKA_SECURITY_PROTOCOL:PLAINTEXT}
     admin:
