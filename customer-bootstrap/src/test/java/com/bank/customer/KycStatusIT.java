@@ -132,7 +132,7 @@ class KycStatusIT {
         assertThat(row.get("kyc_verified_at")).isNotNull();
         Map<String, Object> event = jdbc.queryForMap("select topic, payload::text as payload from sc_cus_profile_kyc.outbox_event "
             + "where aggregate_id = ? and event_type = 'Customer.Customer.KycStatusChanged.v1'", customerId);
-        assertThat(event).containsEntry("topic", "evt.cus.customer.kyc-status-changed.v1");
+        assertThat(event).containsEntry("topic", "evt.cus.customer.v1");
         assertThat((String) event.get("payload")).contains("\"kycStatus\": \"VERIFIED\"")
             .doesNotContain("banker-sub-7").doesNotContain("kyc-verify@example.com");
 

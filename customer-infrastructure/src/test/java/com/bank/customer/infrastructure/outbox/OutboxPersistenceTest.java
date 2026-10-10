@@ -159,6 +159,6 @@ class OutboxPersistenceTest {
 
     private static OutboxEventJpaEntity row(String aggregateId) {
         return new OutboxEventJpaEntity(UUID.randomUUID(), "Customer", aggregateId, 0L,
-            "Customer.Customer.Created.v1", "evt.cus.customer.created.v1", "{}", "corr-park", NOW);
+            "Customer.Customer.Created.v1", "evt.cus.customer.v1", "{}", "corr-park", NOW);
     }
 }

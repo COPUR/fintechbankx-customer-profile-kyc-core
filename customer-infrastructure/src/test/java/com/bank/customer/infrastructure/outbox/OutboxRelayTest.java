@@ -152,7 +152,7 @@ class OutboxRelayTest {
             new SaslAuthenticationException("SASL authentication failed"),
             new AuthenticationException("authentication failed"),
             new AuthorizationException("not authorized"),
-            new TopicAuthorizationException(Set.of("evt.cus.customer.created.v1")),
+            new TopicAuthorizationException(Set.of("evt.cus.customer.v1")),
             new KafkaException("unclassified producer failure"),
             new IllegalStateException("not a Kafka error"));
     }
@@ -251,7 +251,7 @@ class OutboxRelayTest {
     static Stream<RuntimeException> nonPayloadFailures() {
         return Stream.of(
             new NetworkException("broker down"),
-            new TopicAuthorizationException(Set.of("evt.cus.customer.created.v1")),
+            new TopicAuthorizationException(Set.of("evt.cus.customer.v1")),
             new SaslAuthenticationException("SASL authentication failed"),
             new KafkaException("unclassified producer failure"));
     }
@@ -380,7 +380,7 @@ class OutboxRelayTest {
         when(outbox.tryRelayLock(anyLong())).thenReturn(true);
         when(outbox.findUnpublishedBatch(50)).thenReturn(List.of(row("CUST-1")));
         when(kafka.send(any(ProducerRecord.class))).thenReturn(CompletableFuture.failedFuture(
-            producerFailure(new TopicAuthorizationException(Set.of("evt.cus.customer.created.v1")))));
+            producerFailure(new TopicAuthorizationException(Set.of("evt.cus.customer.v1")))));
 
         relay.relayOnce();
 
@@ -398,7 +398,7 @@ class OutboxRelayTest {
         when(outbox.tryRelayLock(anyLong())).thenReturn(true);
         when(outbox.findUnpublishedBatch(50)).thenReturn(List.of(stuck, next));
         when(kafka.send(any(ProducerRecord.class))).thenAnswer(invocation -> CompletableFuture.failedFuture(
-            producerFailure(new TopicAuthorizationException(Set.of("evt.cus.customer.created.v1")))));
+            producerFailure(new TopicAuthorizationException(Set.of("evt.cus.customer.v1")))));
 
         for (int hour = 0; hour < 24 * 5; hour++) {                   // hourly for five days
             assertThat(relay.relayOnce()).isZero();
@@ -468,7 +468,7 @@ class OutboxRelayTest {
 
     /** What KafkaTemplate completes its future with when the producer reports a failure. */
     private static KafkaProducerException producerFailure(Throwable cause) {
-        return new KafkaProducerException(new ProducerRecord<>("evt.cus.customer.created.v1", "k", "v"),
+        return new KafkaProducerException(new ProducerRecord<>("evt.cus.customer.v1", "k", "v"),
             "Failed to send", cause);
     }
 
@@ -478,13 +478,59 @@ class OutboxRelayTest {
 
         ProducerRecord<String, String> record = OutboxRelay.toRecord(row);
 
-        assertThat(record.topic()).isEqualTo("evt.cus.customer.created.v1");
+        assertThat(record.topic()).isEqualTo("evt.cus.customer.v1");
         assertThat(record.key()).isEqualTo("CUST-9");
         assertThat(record.value()).isEqualTo("{}");
         assertThat(header(record, "eventType")).isEqualTo("Customer.Customer.Created.v1");
         assertThat(header(record, "eventId")).isEqualTo(row.getEventId().toString());
+        assertThat(header(record, "correlationId")).isEqualTo("corr-9");
         assertThat(header(record, "x-fapi-interaction-id")).isEqualTo("corr-9");
         assertThat(record.headers().lastHeader("traceparent")).isNull();
+    }
+
+    /**
+     * ADR-019 s1 and s3: every customer event goes to the one aggregate topic
+     * evt.cus.customer.v1, keyed by customer id, with the UTF-8 headers
+     * eventType, eventId and correlationId equal to the envelope (once each),
+     * plus traceparent when the request carried one. Consumers route on the
+     * eventType header and skip types they do not handle.
+     */
+    @Test
+    void theRelaySendsEveryCustomerEventToTheAggregateTopicWithTheEnvelopeHeaders() throws Exception {
+        com.fasterxml.jackson.databind.ObjectMapper json = new com.fasterxml.jackson.databind.ObjectMapper();
+        CustomerEventEnvelopeFactory factory = new CustomerEventEnvelopeFactory(json);
+        com.bank.customer.domain.Customer customer = com.bank.customer.domain.Customer.createWithCreditScore(
+            com.bank.shared.kernel.domain.CustomerId.of("CUST-HDR-1"), "Noor", "Private", "noor@example.com",
+            "+971500000012", com.bank.shared.kernel.domain.Money.aed(new java.math.BigDecimal("9000.00")), 700);
+        customer.reserveCredit(com.bank.shared.kernel.domain.Money.aed(new java.math.BigDecimal("100.00")));
+        customer.verifyKyc("banker-sub-1", NOW);
+        String traceparent = "00-0af7651916cd43dd8448eb211c80319c-b7ad6b7169203331-01";
+        List<OutboxEventJpaEntity> rows = customer.getDomainEvents().stream()
+            .map(event -> factory.toOutboxRow(customer, event, "corr-hdr").withTraceparent(traceparent))
+            .toList();
+        when(outbox.tryRelayLock(anyLong())).thenReturn(true);
+        when(outbox.findUnpublishedBatch(50)).thenReturn(rows);
+        when(kafka.send(any(ProducerRecord.class)))
+            .thenReturn(CompletableFuture.completedFuture((SendResult<String, String>) null));
+
+        assertThat(relay.relayOnce()).isEqualTo(3);
+
+        ArgumentCaptor<ProducerRecord<String, String>> sent = ArgumentCaptor.forClass(ProducerRecord.class);
+        verify(kafka, times(3)).send(sent.capture());
+        assertThat(sent.getAllValues()).extracting(ProducerRecord::topic).containsOnly("evt.cus.customer.v1");
+        assertThat(sent.getAllValues()).extracting(ProducerRecord::key).containsOnly("CUST-HDR-1");
+        assertThat(sent.getAllValues()).extracting(record -> header(record, "eventType")).containsExactly(
+            "Customer.Customer.Created.v1", "Customer.Customer.CreditReserved.v1", "Customer.Customer.KycStatusChanged.v1");
+        for (ProducerRecord<String, String> record : sent.getAllValues()) {
+            com.fasterxml.jackson.databind.JsonNode envelope = json.readTree(record.value());
+            for (String name : List.of("eventType", "eventId", "correlationId")) {
+                assertThat(record.headers().headers(name)).as("exactly one %s header", name).hasSize(1);
+                assertThat(header(record, name)).as("%s header equals the envelope", name)
+                    .isEqualTo(envelope.get(name).asText());
+            }
+            assertThat(header(record, "traceparent")).isEqualTo(traceparent);
+            assertThat(envelope.get("aggregateId").asText()).isEqualTo(record.key());
+        }
     }
 
     @Test
@@ -509,7 +555,7 @@ class OutboxRelayTest {
 
     private static OutboxEventJpaEntity row(String aggregateId) {
         return new OutboxEventJpaEntity(UUID.randomUUID(), "Customer", aggregateId, 0L,
-            "Customer.Customer.Created.v1", "evt.cus.customer.created.v1", "{}", "corr-9", NOW);
+            "Customer.Customer.Created.v1", "evt.cus.customer.v1", "{}", "corr-9", NOW);
     }
 
     private static TransactionTemplate inlineTransactions() {

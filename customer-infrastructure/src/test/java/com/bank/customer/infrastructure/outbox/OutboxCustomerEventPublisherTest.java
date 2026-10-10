@@ -41,7 +41,9 @@ class OutboxCustomerEventPublisherTest {
         ArgumentCaptor<List<OutboxEventJpaEntity>> rows = ArgumentCaptor.forClass(List.class);
         verify(outbox).saveAll(rows.capture());
         assertThat(rows.getValue()).extracting(OutboxEventJpaEntity::getTopic)
-            .containsExactly("evt.cus.customer.created.v1", "evt.cus.customer.credit-reserved.v1");
+            .containsExactly("evt.cus.customer.v1", "evt.cus.customer.v1");
+        assertThat(rows.getValue()).extracting(OutboxEventJpaEntity::getEventType)
+            .containsExactly("Customer.Customer.Created.v1", "Customer.Customer.CreditReserved.v1");
         assertThat(rows.getValue()).extracting(OutboxEventJpaEntity::getCorrelationId).containsOnly("corr-req");
     }
 

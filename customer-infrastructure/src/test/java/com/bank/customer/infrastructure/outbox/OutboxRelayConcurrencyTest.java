@@ -83,7 +83,7 @@ class OutboxRelayConcurrencyTest {
         List<UUID> ids = new ArrayList<>();
         for (int i = 0; i < ROWS; i++) {
             ids.add(outbox.saveAndFlush(new OutboxEventJpaEntity(UUID.randomUUID(), "Customer", "CUST-RELAY-" + (i % 7), i,
-                "Customer.Customer.Created.v1", "evt.cus.customer.created.v1", "{}", "corr-relay", NOW)).getEventId());
+                "Customer.Customer.Created.v1", "evt.cus.customer.v1", "{}", "corr-relay", NOW)).getEventId());
         }
         Map<String, AtomicInteger> sends = new ConcurrentHashMap<>();
         KafkaTemplate<String, String> kafka = mock(KafkaTemplate.class);

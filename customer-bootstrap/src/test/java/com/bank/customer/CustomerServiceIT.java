@@ -432,7 +432,10 @@ class CustomerServiceIT {
         ArgumentCaptor<ProducerRecord<String, String>> records = ArgumentCaptor.forClass(ProducerRecord.class);
         Mockito.verify(kafka, Mockito.times(2)).send(records.capture());
         assertThat(records.getAllValues()).extracting(ProducerRecord::topic)
-            .containsExactly("evt.cus.customer.created.v1", "evt.cus.customer.credit-reserved.v1");
+            .containsExactly("evt.cus.customer.v1", "evt.cus.customer.v1");
+        assertThat(records.getAllValues()).extracting(r -> new String(r.headers().lastHeader("eventType").value(),
+                java.nio.charset.StandardCharsets.UTF_8))
+            .containsExactly("Customer.Customer.Created.v1", "Customer.Customer.CreditReserved.v1");
         assertThat(records.getAllValues()).extracting(ProducerRecord::key).containsOnly(customerId);
     }
 

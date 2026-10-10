@@ -25,7 +25,7 @@ class CustomerEventEnvelopeFactoryTest {
     }
 
     @Test
-    void everyCustomerEventMapsToItsContractTopicAndType() {
+    void everyCustomerEventGoesToTheOneCustomerAggregateTopicNamedByItsType() {
         Customer customer = customer("CUST-ENV-1");
         customer.updateContactInformation("new@example.com", "+971500000010");
         customer.updateCreditLimit(Money.aed(new BigDecimal("45000.00")));
@@ -34,10 +34,9 @@ class CustomerEventEnvelopeFactoryTest {
         customer.updateCreditScore(760);
         List<DomainEvent> events = customer.getDomainEvents();
 
-        assertThat(events).extracting(e -> CustomerEventEnvelopeFactory.map(e).topic()).containsExactly(
-            "evt.cus.customer.created.v1", "evt.cus.customer.contact-updated.v1",
-            "evt.cus.customer.credit-limit-updated.v1", "evt.cus.customer.credit-reserved.v1",
-            "evt.cus.customer.credit-released.v1", "evt.cus.customer.credit-score-updated.v1");
+        // ADR-019 s1: one topic per aggregate; the eventType (envelope and record header) names the event.
+        assertThat(events).extracting(e -> CustomerEventEnvelopeFactory.map(e).topic())
+            .hasSize(6).containsOnly("evt.cus.customer.v1");
         assertThat(events).extracting(e -> CustomerEventEnvelopeFactory.map(e).eventType()).containsExactly(
             "Customer.Customer.Created.v1", "Customer.Customer.ContactUpdated.v1",
             "Customer.Customer.CreditLimitUpdated.v1", "Customer.Customer.CreditReserved.v1",
@@ -61,7 +60,7 @@ class CustomerEventEnvelopeFactoryTest {
         var mapped = CustomerEventEnvelopeFactory.map(updated);
         String payload = factory.toOutboxRow(customer, updated, "corr-score").getPayload();
 
-        assertThat(mapped.topic()).isEqualTo("evt.cus.customer.credit-score-updated.v1");
+        assertThat(mapped.topic()).isEqualTo("evt.cus.customer.v1");
         assertThat(mapped.data()).containsExactly(
             java.util.Map.entry("customerId", "CUST-ENV-S"),
             java.util.Map.entry("updatedAt", ((com.bank.customer.domain.CustomerCreditScoreUpdatedEvent) updated)
@@ -76,7 +75,7 @@ class CustomerEventEnvelopeFactoryTest {
 
     /** Staff KYC decisions: status, previous status, source and verifiedAt; never who decided or personal data. */
     @Test
-    void aKycStatusChangeMapsToItsContractTopicWithoutTheStaffSubject() {
+    void aKycStatusChangeGoesToTheAggregateTopicWithoutTheStaffSubject() {
         Customer customer = customer("CUST-ENV-K");
         customer.clearDomainEvents();
         java.time.Instant at = java.time.Instant.parse("2026-10-08T10:00:00Z");
@@ -84,7 +83,7 @@ class CustomerEventEnvelopeFactoryTest {
 
         var mapped = CustomerEventEnvelopeFactory.map(customer.getDomainEvents().get(0));
 
-        assertThat(mapped.topic()).isEqualTo("evt.cus.customer.kyc-status-changed.v1");
+        assertThat(mapped.topic()).isEqualTo("evt.cus.customer.v1");
         assertThat(mapped.eventType()).isEqualTo("Customer.Customer.KycStatusChanged.v1");
         assertThat(mapped.data()).containsExactly(
             java.util.Map.entry("customerId", "CUST-ENV-K"),
@@ -144,7 +143,7 @@ class CustomerEventEnvelopeFactoryTest {
         assertThat(row.getAggregateType()).isEqualTo("Customer");
         assertThat(row.getAggregateId()).isEqualTo("CUST-ENV-3");
         assertThat(row.getAggregateVersion()).isEqualTo(4L);
-        assertThat(row.getTopic()).isEqualTo("evt.cus.customer.credit-reserved.v1");
+        assertThat(row.getTopic()).isEqualTo("evt.cus.customer.v1");
         assertThat(row.getCorrelationId()).isEqualTo("corr-3");
         assertThat(envelope.get("producer").asText()).isEqualTo("svc-cus-profile-kyc");
         assertThat(envelope.get("eventType").asText()).isEqualTo("Customer.Customer.CreditReserved.v1");
