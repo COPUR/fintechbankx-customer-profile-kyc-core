@@ -97,15 +97,34 @@ jobs:
             exit 1
           fi
           # RDS CA bundle (cicd-templates 4f0f266): ConfigMap rds-ca-bundle mounted read-only, not optional,
-          # exported as DB_SSL_ROOT_CERT; a PostgreSQL DB_URL without sslmode=verify-full must not render.
+          # exported as DB_SSL_ROOT_CERT; a DB_URL that does not verify the server must not render.
           python3 scripts/ci/database-ca.py <<<"$rendered"
           helm template ci "$chart" -f "$chart/values-dev.yaml" $args | python3 scripts/ci/database-ca.py
-          for weak in 'jdbc:postgresql://ci-db:5432/db_cus_profile_kyc_ci?sslmode=require' \
-                      'jdbc:postgresql://ci-db:5432/db_cus_profile_kyc_ci'; do
-            if helm template ci "$chart" $base --set-string "config.DB_URL=$weak" --set config.OIDC_ISSUER_URI=ci-oidc-issuer-uri \
-                --set config.OIDC_JWK_SET_URI=ci-oidc-jwk-set-uri --set config.OIDC_AUDIENCE=ci-oidc-audience \
-                --set config.KAFKA_BOOTSTRAP_SERVERS=ci-kafka-bootstrap-servers > /dev/null 2>&1; then
-              echo "chart rendered a DB_URL without sslmode=verify-full: $weak" >&2
+          # Review 5478458791: the query is parsed, not substring-matched. Exactly one sslmode=verify-full and one
+          # sslrootcert=<mounted bundle>; no sslfactory, sslhostnameverifier or sslpasswordcallback.
+          ca=/etc/fintechbankx/rds-ca/global-bundle.pem
+          db=jdbc:postgresql://ci-db:5432/db_cus_profile_kyc_ci
+          ok="$db?sslmode=verify-full&sslrootcert=$ca"
+          runtime="--set config.OIDC_ISSUER_URI=ci-oidc-issuer-uri --set config.OIDC_JWK_SET_URI=ci-oidc-jwk-set-uri --set config.OIDC_AUDIENCE=ci-oidc-audience --set config.KAFKA_BOOTSTRAP_SERVERS=ci-kafka-bootstrap-servers"
+          helm template ci "$chart" $base --set-string "config.DB_URL=$db?sslrootcert=$ca&sslmode=verify-full&applicationName=svc" $runtime > /dev/null
+          for weak in "$db?sslmode=require" "$db" "$db?sslmode=verify-full" \
+                      "$ok&sslmode=disable" \
+                      "$db?sslmode=verify-full&sslrootcert=/tmp/decoy.pem" "$ok&sslrootcert=/tmp/decoy.pem" \
+                      "$ok&sslfactory=org.postgresql.ssl.NonValidatingFactory" \
+                      "$ok&sslhostnameverifier=ci.AllowAll" "$ok&sslpasswordcallback=ci.Callback" \
+                      "$db?sslmode=require&applicationName=sslmode=verify-full" \
+                      "$db?sslmode=require&applicationName=sslmode=verify-full&sslrootcert=$ca" \
+                      "jdbc:mysql://ci-db/db?sslmode=verify-full&sslrootcert=$ca"; do
+            if helm template ci "$chart" $base --set-string "config.DB_URL=$weak" $runtime > /dev/null 2>&1; then
+              echo "chart rendered a DB_URL that does not verify the server: $weak" >&2
+              exit 1
+            fi
+          done
+          # No config key may replace the datasource or Flyway URL or inject properties around DB_URL.
+          for key in SPRING_DATASOURCE_URL SPRING_DATASOURCE_HIKARI_JDBC_URL SPRING_DATASOURCE_HIKARI_DATA_SOURCE_PROPERTIES_SSLFACTORY \
+                     SPRING_FLYWAY_URL SPRING_APPLICATION_JSON SPRING_CONFIG_IMPORT JAVA_TOOL_OPTIONS JDK_JAVA_OPTIONS; do
+            if helm template ci "$chart" $args --set-string "config.$key=$db?sslmode=disable" > /dev/null 2>&1; then
+              echo "chart rendered config.$key, which bypasses the DB_URL check" >&2
               exit 1
             fi
           done
