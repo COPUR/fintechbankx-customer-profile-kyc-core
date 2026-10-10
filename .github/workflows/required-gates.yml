@@ -71,7 +71,8 @@ jobs:
           --health-timeout 5s
           --health-retries 10
     env:
-      # Integration tests in customer-bootstrap run Flyway and the full service against this database.
+      # Integration tests in customer-bootstrap migrate the schema as the owner in their test context (as the
+      # chart's migration Job does) and run the full service against this database as the runtime role.
       TEST_DB_URL: jdbc:postgresql://localhost:5432/db_cus_profile_kyc_test
       TEST_DB_USERNAME: customer_test
       TEST_DB_PASSWORD: customer_test

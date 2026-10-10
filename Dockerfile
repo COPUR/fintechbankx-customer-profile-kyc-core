@@ -29,4 +29,6 @@ COPY --from=build /workspace/extracted/application/ ./
 USER 10001:10001
 EXPOSE 8080 8081
 ENV JAVA_TOOL_OPTIONS="-XX:MaxRAMPercentage=75 -XX:+ExitOnOutOfMemoryError -Djava.security.egd=file:/dev/urandom"
+# With the argument "migrate" the same image runs Flyway as the schema owner and
+# exits (the chart's pre-install/pre-upgrade Job, decision 0001); without it, the service.
 ENTRYPOINT ["java", "org.springframework.boot.loader.launch.JarLauncher"]

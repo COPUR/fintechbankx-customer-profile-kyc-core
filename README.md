@@ -48,8 +48,9 @@ Bu repository, FinTechBankX DDD/EDA dönüşümünde **svc-cus-profile-kyc** ser
 | What | Command / path |
 |---|---|
 | Unit and integration tests | `./gradlew test` (integration tests need `TEST_DB_URL` or Docker) |
-| Run locally | `SPRING_DATASOURCE_PASSWORD=... OUTBOX_RELAY_ENABLED=true ./gradlew :customer-bootstrap:bootRun` (the relay is off unless `OUTBOX_RELAY_ENABLED=true`; leave it unset to run without Kafka) |
-| Database migrations | `customer-infrastructure/src/main/resources/db/migration` (schema `sc_cus_profile_kyc`) |
+| Run locally | Migrate first, then start: `SPRING_DATASOURCE_PASSWORD=... ./gradlew :customer-bootstrap:bootRun --args=migrate` once per new migration (or `java -jar customer-bootstrap/build/libs/customer-profile-kyc-service.jar migrate`), then the same command without `--args`. The service only validates the schema and refuses to start on an empty or unmigrated database ([decision 0001](docs/architecture/decisions/0001-flyway-runs-in-a-migration-job.md)); the relay is off unless `OUTBOX_RELAY_ENABLED=true` (leave it unset to run without Kafka) |
+| Database migrations | `customer-infrastructure/src/main/resources/db/migration` (schema `sc_cus_profile_kyc`), applied by the chart's pre-install/pre-upgrade Job as the schema owner, never by the service pods; the pods connect as the runtime role V13 grants |
+| Decision records | `docs/architecture/decisions` |
 | Container image | `docker build -t customer-profile-kyc-service .` |
 | Kubernetes | `deploy/helm/customer-profile-kyc-service` |
 | AWS infrastructure | `deploy/terraform` |
