@@ -150,8 +150,8 @@ jobs:
           done
           # JVM option variables set system properties (spring.datasource.url included) or load an agent before
           # application.yml is read; the image fixes them.
-          for key in JAVA_TOOL_OPTIONS JDK_JAVA_OPTIONS _JAVA_OPTIONS JAVA_OPTS java-tool-options jdk.java.options; do
-            reject_render "config.$key must not be set: JVM options are fixed by the image" \
+          for key in JAVA_TOOL_OPTIONS JDK_JAVA_OPTIONS _JAVA_OPTIONS JAVA_OPTS java-tool-options 'jdk\.java\.options'; do
+            reject_render "config.${key//\\/} must not be set: JVM options are fixed by the image" \
               --set-string "config.$key=-Dspring.datasource.url=$db?sslmode=disable"
           done
           # Log levels are not install-time values: LOGGING_LEVEL_ORG_POSTGRESQL=TRACE would write the wire

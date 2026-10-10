@@ -77,10 +77,64 @@ it. The app checks the same at startup (DatabaseTlsGuard).
 {{- if or (ne (len $rootcert) 1) (ne (first (concat $rootcert (list ""))) $ca) -}}
 {{- fail $want -}}
 {{- end -}}
+{{- include "customer.validateConfigKeys" . -}}
+{{- end -}}
+
+{{/*
+Config keys the ConfigMap must never carry. Each key is normalised before
+matching, the way Spring's relaxed binding reads it from the environment:
+upper case, then every non-alphanumeric character dropped, so dash, dot,
+underscore and index spellings (spring.config.import[0], SPRING_CONFIG_IMPORT_0,
+SPRING-DATASOURCE-URL) all reach the same rule. Refused, each with its own
+message:
+- SPRINGDATASOURCE*, SPRINGFLYWAY*, SPRINGAPPLICATIONJSON: a second database
+  URL or driver property would override DB_URL; the datasource is configured
+  only through DB_URL, DB_USERNAME and DB_POOL_MAX.
+- SPRINGCONFIG* (IMPORT, ADDITIONALLOCATION, LOCATION, also indexed): loads a
+  file or configtree that can set the URL. The chart renders no Spring config
+  import of its own; a configtree would be allowed only as a chart-rendered
+  value on the fixed mount optional:configtree:/etc/fintechbankx/config/,
+  never from a values key.
+- JAVATOOLOPTIONS, JDKJAVAOPTIONS, JAVAOPTIONS (also _JAVA_OPTIONS), JAVAOPTS:
+  set system properties or load an agent before application.yml is read; the
+  image fixes them.
+- LOGGINGLEVEL*: a log level is not an install-time value;
+  LOGGING_LEVEL_ORG_POSTGRESQL=TRACE would write the wire protocol, with row
+  data, to the pod log.
+- DBSSLROOTCERT: the only switch of the TLS startup assertion (DatabaseTlsGuard
+  and KafkaTlsGuard run whenever DB_SSL_ROOT_CERT is set). The chart sets it
+  from the mounted bundle on every container; a values key, empty or not, is
+  an attempt to turn the assertion off and is refused.
+- SPRINGPROFILES(ACTIVE|INCLUDE), also indexed: must not name the local
+  profile (a developer machine with plain-text local services), in any case
+  or position of the list.
+There is no extraEnv or env list, so the ConfigMap is the only route for a
+config key (the deploy/helm job checks values.yaml for one).
+*/}}
+{{- define "customer.validateConfigKeys" -}}
 {{- range $key, $value := .Values.config -}}
-{{- $k := upper $key -}}
-{{- if or (hasPrefix "SPRING_DATASOURCE_" $k) (hasPrefix "SPRING_FLYWAY_" $k) (hasPrefix "SPRING_APPLICATION_JSON" $k) (hasPrefix "SPRING_CONFIG_" $k) (has $k (list "JAVA_TOOL_OPTIONS" "JDK_JAVA_OPTIONS" "_JAVA_OPTIONS" "JAVA_OPTS")) -}}
-{{- fail (printf "config.%s is not allowed: the datasource is configured only through DB_URL, DB_USERNAME and DB_POOL_MAX" $key) -}}
+{{- $name := upper (regexReplaceAll "[^A-Za-z0-9]" (toString $key) "") -}}
+{{- if or (hasPrefix "SPRINGDATASOURCE" $name) (hasPrefix "SPRINGFLYWAY" $name) (hasPrefix "SPRINGAPPLICATIONJSON" $name) -}}
+{{- fail (printf "config.%s must not be set: config.DB_URL is the only database URL (sslmode=verify-full); the datasource is configured only through DB_URL, DB_USERNAME and DB_POOL_MAX" $key) -}}
+{{- end -}}
+{{- if hasPrefix "SPRINGCONFIG" $name -}}
+{{- fail (printf "config.%s must not be set: it loads configuration that can override config.DB_URL" $key) -}}
+{{- end -}}
+{{- if regexMatch "^(JAVATOOLOPTIONS|JDKJAVAOPTIONS|JAVAOPTIONS|JAVAOPTS)$" $name -}}
+{{- fail (printf "config.%s must not be set: JVM options are fixed by the image" $key) -}}
+{{- end -}}
+{{- if hasPrefix "LOGGINGLEVEL" $name -}}
+{{- fail (printf "config.%s must not be set: log levels are not install-time values" $key) -}}
+{{- end -}}
+{{- if eq $name "DBSSLROOTCERT" -}}
+{{- fail (printf "config.%s must not be set: the TLS startup assertion has no off switch (the chart sets DB_SSL_ROOT_CERT from the mounted bundle)" $key) -}}
+{{- end -}}
+{{- if regexMatch "^SPRINGPROFILES(ACTIVE|INCLUDE)[0-9]*$" $name -}}
+{{- range $profile := splitList "," (toString $value) -}}
+{{- if eq (lower (trim $profile)) "local" -}}
+{{- fail (printf "config.%s must not activate the local profile: it is for a developer machine, never for a cluster" $key) -}}
+{{- end -}}
+{{- end -}}
 {{- end -}}
 {{- end -}}
 {{- end -}}
