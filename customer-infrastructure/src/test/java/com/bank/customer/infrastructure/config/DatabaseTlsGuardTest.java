@@ -93,6 +93,40 @@ class DatabaseTlsGuardTest {
         assertThatCode(() -> DatabaseTlsGuard.check(goodFlyway)).doesNotThrowAnyException();
     }
 
+    /**
+     * Hikari's jdbc-url wins over spring.datasource.url and Flyway's url over the
+     * datasource: a second URL that verifies but names another server or database
+     * would move the pool or the schema check off the URL the chart validated.
+     */
+    @Test
+    void aHikariOrFlywayUrlThatVerifiesButDiffersFromTheDatasourceUrlIsRefused() {
+        String elsewhere = "jdbc:postgresql://other.example.internal:5432/db_other?sslmode=verify-full&sslrootcert=" + CA;
+        MockEnvironment hikari = env(GOOD);
+        hikari.setProperty("spring.datasource.hikari.jdbc-url", elsewhere);
+        MockEnvironment flyway = env(GOOD);
+        flyway.setProperty("spring.flyway.url", elsewhere);
+
+        assertThatThrownBy(() -> DatabaseTlsGuard.check(hikari)).isInstanceOf(IllegalStateException.class)
+            .hasMessageContaining("spring.datasource.hikari.jdbc-url differs from spring.datasource.url")
+            .hasMessageNotContaining("other.example.internal");
+        assertThatThrownBy(() -> DatabaseTlsGuard.check(flyway)).isInstanceOf(IllegalStateException.class)
+            .hasMessageContaining("spring.flyway.url differs from spring.datasource.url")
+            .hasMessageNotContaining("other.example.internal");
+        MockEnvironment sameHikari = env(GOOD);
+        sameHikari.setProperty("spring.datasource.hikari.jdbc-url", GOOD);
+        assertThatCode(() -> DatabaseTlsGuard.check(sameHikari)).doesNotThrowAnyException();
+    }
+
+    @Test
+    void theContextRefusesToStartWithAHikariUrlThatPointsElsewhere() {
+        new ApplicationContextRunner()
+            .withUserConfiguration(DatabaseTlsGuardConfiguration.class)
+            .withPropertyValues("DB_SSL_ROOT_CERT=" + CA, "spring.datasource.url=" + GOOD,
+                "spring.datasource.hikari.jdbc-url=jdbc:postgresql://other.example.internal:5432/db_other?sslmode=verify-full&sslrootcert=" + CA)
+            .run(context -> assertThat(context).hasFailed().getFailure()
+                .hasMessageContaining("spring.datasource.hikari.jdbc-url differs from spring.datasource.url"));
+    }
+
     /** Driver properties set beside the URL (Hikari data-source-properties) cannot switch TLS off either. */
     @Test
     void sslDriverPropertiesBesideTheUrlAreRefused() {
