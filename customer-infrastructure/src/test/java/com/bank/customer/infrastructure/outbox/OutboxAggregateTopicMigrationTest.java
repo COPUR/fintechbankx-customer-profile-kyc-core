@@ -79,6 +79,7 @@ class OutboxAggregateTopicMigrationTest {
 
     private Flyway flyway(String target) {
         var config = Flyway.configure().dataSource(dataSource).schemas(SCHEMA).defaultSchema(SCHEMA)
+            .placeholders(PostgresTestDatabase.flywayPlaceholders())
             .locations("classpath:db/migration");
         if (target != null) {
             config.target(target);

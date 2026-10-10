@@ -56,10 +56,12 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
 /**
- * Boots the whole service against PostgreSQL: Flyway builds sc_cus_profile_kyc,
- * Hibernate validates the entities against it, and customers are created and
- * have credit reserved over HTTP the way the loan service calls it, with
- * their events landing in the outbox and then on (a mocked) Kafka.
+ * Boots the whole service against PostgreSQL: the test context migrates
+ * sc_cus_profile_kyc as the schema owner (what the chart's migration Job does;
+ * the service itself only validates), Hibernate validates the entities against
+ * it, and customers are created and have credit reserved over HTTP the way the
+ * loan service calls it, as the runtime role, with their events landing in the
+ * outbox and then on (a mocked) Kafka.
  */
 @SpringBootTest(properties = "customer.outbox.relay.enabled=false")
 @AutoConfigureMockMvc
@@ -102,10 +104,12 @@ class CustomerServiceIT {
 
     @BeforeEach
     void cleanTables() {
-        jdbc.update("delete from sc_cus_profile_kyc.outbox_event");
-        jdbc.update("delete from sc_cus_profile_kyc.credit_movement");
-        jdbc.update("delete from sc_cus_profile_kyc.credit_reservation");
-        jdbc.update("delete from sc_cus_profile_kyc.customer");
+        // As the migration owner: the runtime role the service connects as may not DELETE customers or movements.
+        JdbcTemplate owner = PostgresTestDatabase.owner();
+        owner.update("delete from sc_cus_profile_kyc.outbox_event");
+        owner.update("delete from sc_cus_profile_kyc.credit_movement");
+        owner.update("delete from sc_cus_profile_kyc.credit_reservation");
+        owner.update("delete from sc_cus_profile_kyc.customer");
     }
 
     @Test
@@ -117,6 +121,55 @@ class CustomerServiceIT {
             """, String.class);
 
         assertThat(tables).containsExactly("credit_movement", "credit_reservation", "customer", "outbox_event");
+    }
+
+    /**
+     * The service connects as a runtime role, not as the schema owner that
+     * Flyway migrates with: it may read, create and change customers, journal
+     * movements, keep reservations and work the outbox, but not delete a
+     * customer or a movement, rewrite a journalled movement, change the schema
+     * or record a migration.
+     */
+    @Test
+    void theRuntimeRoleCanOnlyDoWhatTheServiceDoes() throws Exception {
+        String customerId = create("runtime-role@example.com", "20000.00");
+        assertThat(jdbc.queryForObject("select current_user", String.class)).isEqualTo(PostgresTestDatabase.RUNTIME_ROLE);
+        JdbcTemplate runtime = PostgresTestDatabase.runtime();
+
+        // What the service does: update the customer, insert a movement and a reservation, work the outbox.
+        assertThat(runtime.update("update sc_cus_profile_kyc.customer set credit_limit = 30000 where customer_id = ?", customerId)).isOne();
+        runtime.update("update sc_cus_profile_kyc.outbox_event set attempts = attempts where aggregate_type = 'Customer'");
+        assertThat(runtime.update("delete from sc_cus_profile_kyc.outbox_event where published_at < now() - interval '1 year'"))
+            .isZero();
+        // What it never does.
+        assertThatThrownBy(() -> runtime.update("delete from sc_cus_profile_kyc.customer where customer_id = ?", customerId))
+            .rootCause().hasMessageContaining("permission denied for table customer");
+        assertThatThrownBy(() -> runtime.execute("truncate sc_cus_profile_kyc.customer"))
+            .rootCause().hasMessageContaining("permission denied for table customer");
+        assertThatThrownBy(() -> runtime.update("update sc_cus_profile_kyc.credit_movement set amount = 1"))
+            .rootCause().hasMessageContaining("permission denied for table credit_movement");
+        assertThatThrownBy(() -> runtime.update("delete from sc_cus_profile_kyc.credit_movement"))
+            .rootCause().hasMessageContaining("permission denied for table credit_movement");
+        assertThatThrownBy(() -> runtime.update("delete from sc_cus_profile_kyc.credit_reservation"))
+            .rootCause().hasMessageContaining("permission denied for table credit_reservation");
+        assertThatThrownBy(() -> runtime.execute(
+                "alter table sc_cus_profile_kyc.customer drop constraint ck_customer_credit"))
+            .rootCause().hasMessageContaining("must be owner of table customer");
+        assertThatThrownBy(() -> runtime.execute("create table sc_cus_profile_kyc.shadow (id int)"))
+            .rootCause().hasMessageContaining("permission denied for schema sc_cus_profile_kyc");
+        // The service validates the schema history at startup, so it may read but never write it.
+        assertThat(runtime.queryForObject(
+                "select count(*) from sc_cus_profile_kyc.flyway_schema_history where success", Integer.class))
+            .isGreaterThanOrEqualTo(13);
+        assertThatThrownBy(() -> runtime.update(
+                "insert into sc_cus_profile_kyc.flyway_schema_history (installed_rank, version, description, type,"
+                    + " script, checksum, installed_by, execution_time, success)"
+                    + " values (9999, '9999', 'forged', 'SQL', 'V9999__forged.sql', 0, current_user, 0, true)"))
+            .rootCause().hasMessageContaining("permission denied for table flyway_schema_history");
+
+        assertThat(runtime.queryForObject(
+                "select credit_limit from sc_cus_profile_kyc.customer where customer_id = ?", java.math.BigDecimal.class, customerId))
+            .isEqualByComparingTo("30000");
     }
 
     @Test

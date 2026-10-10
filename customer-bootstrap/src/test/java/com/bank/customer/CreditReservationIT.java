@@ -56,10 +56,12 @@ class CreditReservationIT {
 
     @BeforeEach
     void cleanTables() {
-        jdbc.update("delete from sc_cus_profile_kyc.outbox_event");
-        jdbc.update("delete from sc_cus_profile_kyc.credit_movement");
-        jdbc.update("delete from sc_cus_profile_kyc.credit_reservation");
-        jdbc.update("delete from sc_cus_profile_kyc.customer");
+        // As the migration owner: the runtime role the service connects as may not DELETE customers or movements.
+        JdbcTemplate owner = PostgresTestDatabase.owner();
+        owner.update("delete from sc_cus_profile_kyc.outbox_event");
+        owner.update("delete from sc_cus_profile_kyc.credit_movement");
+        owner.update("delete from sc_cus_profile_kyc.credit_reservation");
+        owner.update("delete from sc_cus_profile_kyc.customer");
     }
 
     @Test
