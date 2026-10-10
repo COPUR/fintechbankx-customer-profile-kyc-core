@@ -68,7 +68,9 @@ class CustomerEventEnvelopeFactoryTest {
         assertThat(json.readTree(payload).get("data").fieldNames()).toIterable()
             .containsExactly("customerId", "updatedAt")
             .noneMatch(name -> name.toLowerCase(java.util.Locale.ROOT).contains("score"));
-        assertThat(payload).doesNotContain("newCreditScore", "760");
+        assertThat(payload).doesNotContain("newCreditScore");
+        // The score as a JSON value, not the digits 760 inside a random eventId or a nanosecond timestamp.
+        assertThat(payload).doesNotContainPattern("[:\\[,]\\s*\"?760\"?\\s*[,}\\]]");
         assertThat(java.nio.file.Files.readString(java.nio.file.Path.of("..", "api", "asyncapi", "svc-cus-profile-kyc.yaml")))
             .as("contract schema has no newCreditScore property").doesNotContain("newCreditScore:");
     }
