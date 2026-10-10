@@ -26,6 +26,7 @@ import com.bank.customer.domain.port.in.UpdateCreditLimitUseCase;
 import com.bank.customer.domain.port.out.CreditMovementJournal;
 import com.bank.customer.domain.port.out.CreditReservationLedger;
 import com.bank.customer.domain.CreditReservation;
+import com.bank.customer.domain.ReservationNotFoundException;
 import com.bank.customer.domain.port.out.CustomerEventPublisher;
 import com.bank.customer.domain.port.out.CustomerRepository;
 import com.bank.customer.domain.port.out.IdentityDirectoryPort;
@@ -157,7 +158,9 @@ public class CustomerManagementService implements RegisterCustomerUseCase, GetCu
     /**
      * FR-003: release reserved credit once per idempotency key. A release
      * whose reference names a reservation takes at most what it still holds;
-     * any other release takes at most the untracked used credit.
+     * a release whose reference matches no reservation is always refused
+     * (RESERVATION_NOT_FOUND); only a release without a reference takes the
+     * untracked used credit, at most.
      */
     @Override
     public CreditPosition releaseCredit(CreditMovementCommand command) {
@@ -189,6 +192,9 @@ public class CustomerManagementService implements RegisterCustomerUseCase, GetCu
             }
         } else if (reservation.isPresent()) {
             changed = Optional.of(customer.releaseCredit(command.amount(), reservation.get()));
+        } else if (command.reference() != null) {
+            // An unknown loan id can never touch migrated or unreferenced credit (loan auto-release).
+            throw ReservationNotFoundException.forUnknownReference(command.amount());
         } else {
             customer.releaseUntrackedCredit(command.amount(),
                 creditReservations.openAmount(command.customerId(), creditCurrency(customer)));

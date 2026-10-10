@@ -398,12 +398,14 @@ paths:
         Release by reference: a reference that names one of the customer's
         reservations (the reference sent with earlier reserves) releases at
         most what that reservation still holds; partial releases are fine,
-        more is 422 RELEASE_EXCEEDS_RESERVATION. A release without a
-        reference, or whose reference matches no reservation, releases at
-        most the untracked used credit (used credit minus all open
-        reservations, for example a balance migrated from the monolith);
-        more is 422 RESERVATION_NOT_FOUND. Nothing is floored at zero. An
-        idempotency-key replay is answered before these rules.
+        more is 422 RELEASE_EXCEEDS_RESERVATION. A release that carries a
+        reference matching no reservation is always 422 RESERVATION_NOT_FOUND,
+        whatever the amount, so an unknown loan id never touches migrated
+        credit. Only a release without a reference releases untracked used
+        credit, at most used credit minus all open reservations (for example
+        a balance migrated from the monolith); more is 422
+        RESERVATION_NOT_FOUND. Nothing is floored at zero. An idempotency-key
+        replay is answered before these rules.
       security:
         - bearerAuth: []
       parameters:
@@ -456,7 +458,7 @@ paths:
               schema:
                 $ref: '#/components/schemas/ErrorResponse'
         '422':
-          description: CURRENCY_MISMATCH, a valid ISO 4217 currency other than the customer's credit currency (a malformed currency is 400); RELEASE_EXCEEDS_RESERVATION, the release is larger than what the named reservation still holds; RESERVATION_NOT_FOUND, no reservation matches and the release is larger than the untracked used credit. Nothing is released in any of these cases
+          description: CURRENCY_MISMATCH, a valid ISO 4217 currency other than the customer's credit currency (a malformed currency is 400); RELEASE_EXCEEDS_RESERVATION, the release is larger than what the named reservation still holds; RESERVATION_NOT_FOUND, the reference matches no reservation, or a release without a reference is larger than the untracked used credit. Nothing is released in any of these cases
           content:
             application/json:
               schema:
@@ -642,7 +644,7 @@ components:
         reference:
           type: string
           maxLength: 128
-          description: What the credit is moved for, for example the loan id. Stored with the movement for reconciliation. A reserve with a reference adds to that reservation; a release with a reference takes from it (see releaseCredit). Optional; without it a reserve is untracked.
+          description: What the credit is moved for, for example the loan id. Stored with the movement for reconciliation. A reserve with a reference adds to that reservation; a release with a reference takes from that reservation and is refused with RESERVATION_NOT_FOUND when none matches (see releaseCredit). Optional; without it a reserve is untracked and a release may take only untracked used credit.
 
     KycStatusResponse:
       type: object

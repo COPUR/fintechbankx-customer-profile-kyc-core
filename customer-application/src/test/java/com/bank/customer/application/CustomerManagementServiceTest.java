@@ -240,7 +240,6 @@ class CustomerManagementServiceTest {
         customer.clearDomainEvents();
         when(customerRepository.findById(CustomerId.of("CUST-IDEM"))).thenReturn(Optional.of(customer));
         when(creditReservations.find(CustomerId.of("CUST-IDEM"), "LOAN-UNKNOWN")).thenReturn(Optional.empty());
-        when(creditReservations.openAmount(CustomerId.of("CUST-IDEM"), AED)).thenReturn(aed("0.00"));
 
         assertThatThrownBy(() -> service.releaseCredit(move("CUST-IDEM", "0.01", "key-x", "LOAN-UNKNOWN")))
             .isInstanceOf(ReservationNotFoundException.class);
@@ -251,6 +250,7 @@ class CustomerManagementServiceTest {
         verify(customerRepository, never()).save(any(Customer.class));
         verify(creditReservations, never()).save(any());
         verify(creditMovements, never()).record(any());
+        verify(creditReservations, never()).openAmount(any(), any());
         verifyNoInteractions(eventPublisher);
     }
 
