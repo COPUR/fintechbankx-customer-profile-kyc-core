@@ -131,8 +131,10 @@ Path of the RDS CA bundle file inside the pod (cicd-templates 4f0f266).
 
 {{/*
 The datasource / TLS guard of the platform chart (templates/_fbx_helpers.tpl,
-vendored unchanged from cicd-templates a4f0072; its README, "Vendoring the
-guard"), called at the top of deployment.yaml and migration-job.yaml, then
+copied whole and unchanged, without a header, from cicd-templates 6b6c317;
+its README, "Vendoring the guard"; CI runs scripts/ci/verify-vendored-guard.sh
+with the pinned sha256), called at the top of deployment.yaml and
+migration-job.yaml, then
 this chart's stricter rules (customer.validate). fbx.guard reads only the
 adapter dict below; a route left out is never checked, so every value of this
 chart that reaches a pod's environment is mapped:
@@ -143,7 +145,12 @@ chart that reaches a pod's environment is mapped:
                     the guard refuses envFrom and extraEnvFrom when set and
                     customer.validate refuses the others when set
   databaseCa        enabled true (the chart always mounts the bundle and
-                    renders DB_SSL_ROOT_CERT itself), mountPath, key
+                    renders DB_SSL_ROOT_CERT itself), mountPath, key and
+                    configMapName: the values the templates mount
+                    (customer.databaseCaVolume / databaseCaMount); the guard
+                    pins them to /etc/fintechbankx/rds-ca, global-bundle.pem
+                    and rds-ca-bundle, and requires configMapName (null
+                    deletes the key, so values cannot choose the trust anchor)
   kafka.runtime     .Values.kafka.runtime (renders SPRING_PROFILES_ACTIVE)
   externalSecret    enabled; data = the app secret's keys
                     (SPRING_DATASOURCE_PASSWORD from remoteSecretName,
@@ -170,7 +177,10 @@ because only the chart may render them.
       "envFrom" .Values.envFrom
       "extraEnvFrom" .Values.extraEnvFrom
       "javaToolOptions" .Values.javaToolOptions
-      "databaseCa" (dict "enabled" true "mountPath" .Values.databaseCa.mountPath "key" .Values.databaseCa.key)
+      "databaseCa" (dict "enabled" true
+        "mountPath" .Values.databaseCa.mountPath
+        "key" .Values.databaseCa.key
+        "configMapName" .Values.databaseCa.configMapName)
       "kafka" (dict "runtime" (.Values.kafka | default dict).runtime)
       "externalSecret" (dict "enabled" $es.enabled "data" $data "extraData" $extraData "dataFrom" $es.dataFrom))) -}}
 {{- include "customer.validate" . -}}
