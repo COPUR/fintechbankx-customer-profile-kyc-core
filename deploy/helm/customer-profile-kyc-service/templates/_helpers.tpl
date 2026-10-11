@@ -216,7 +216,13 @@ about this chart's own values):
     profile and tests turn them off). The guard refuses every spelling its
     canonical form reaches (FINTECHBANKX_TLS_ENFORCE, fintechbankx.tls.enforce,
     dashes, indexes); this rule covers the separator-free one it keeps apart
-    (FINTECHBANKXTLSENFORCE), which Spring's relaxed binding reads the same.
+    (FINTECHBANKXTLSENFORCE), which Spring's relaxed binding reads the same;
+  - SPRINGMAIN*: spring.main.* changes how the application context starts
+    (lazy-initialization can skip guards that run when a bean is created,
+    allow-bean-definition-overriding can replace one, sources can add
+    configuration). The startup guards are BeanFactoryPostProcessors, which
+    lazy initialisation does not defer; the chart refuses the family anyway
+    (defence in depth). The guard does not cover spring.main.*.
 */}}
 {{- define "customer.validate" -}}
 {{- if not (regexMatch "^[a-z0-9]([-a-z0-9]{0,61}[a-z0-9])?$" (toString .Values.serviceAccount.name)) -}}
@@ -246,6 +252,9 @@ about this chart's own values):
 {{- end -}}
 {{- if hasPrefix "FINTECHBANKXTLS" $name -}}
 {{- fail (printf "config.%s must not be set: fintechbankx.tls.enforce is the test switch of the TLS startup assertions (on by default; only the local profile and tests turn them off)" $key) -}}
+{{- end -}}
+{{- if hasPrefix "SPRINGMAIN" $name -}}
+{{- fail (printf "config.%s must not be set: spring.main.* changes how the application context starts (lazy initialisation, bean definition overriding, sources); it is not an install-time value" $key) -}}
 {{- end -}}
 {{- end -}}
 {{- end -}}
