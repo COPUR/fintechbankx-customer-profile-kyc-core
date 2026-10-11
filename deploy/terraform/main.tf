@@ -45,8 +45,17 @@ data "aws_partition" "current" {}
 
 # Aurora storage, snapshots, Performance Insights and the RDS-managed master
 # user secret (never synced by External Secrets; as compliance 7d76e85 and risk
-# 7776da9). Untagged, and its key policy denies the External Secrets roles
-# (<cluster>-external-secrets[-platform]) even if someone tags it later.
+# 7776da9). Untagged. Its key policy denies key use to every principal outside
+# var.database_key_user_role_arns and the RDS service-linked role (AWS service
+# principals acting on their grants excepted), whatever the role is called, and
+# still names the External Secrets roles (<cluster>-external-secrets[-platform])
+# so listing one by mistake cannot open the key.
+locals {
+  database_key_users = concat(var.database_key_user_role_arns, [
+    "arn:${data.aws_partition.current.partition}:iam::${data.aws_caller_identity.current.account_id}:role/aws-service-role/rds.amazonaws.com/AWSServiceRoleForRDS",
+  ])
+}
+
 resource "aws_kms_key" "database" {
   description             = "Encrypts ${local.database} storage, snapshots, Performance Insights and the RDS-managed master secret"
   enable_key_rotation     = true
@@ -75,6 +84,17 @@ resource "aws_kms_key" "database" {
               "arn:${data.aws_partition.current.partition}:iam::${data.aws_caller_identity.current.account_id}:role/*-external-secrets-platform",
             ]
           }
+        }
+      },
+      {
+        Sid       = "DenyAllButAllowedKeyUsers"
+        Effect    = "Deny"
+        Principal = { AWS = "*" }
+        Action    = ["kms:Decrypt", "kms:ReEncrypt*", "kms:GenerateDataKey*", "kms:CreateGrant"]
+        Resource  = "*"
+        Condition = {
+          ArnNotLike = { "aws:PrincipalArn" = local.database_key_users }
+          Bool       = { "aws:PrincipalIsAWSService" = "false" }
         }
       },
     ]

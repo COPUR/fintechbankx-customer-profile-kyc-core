@@ -114,12 +114,32 @@ variable "observability_endpoint" {
 
 variable "tags" {
   type        = map(string)
-  description = "Additional tags (cost centre, data classification). Merged into every resource, so never fintechbankx.io/secrets (ADR-023)."
+  description = "Additional tags (cost centre, data classification). Merged into every resource, so never a fintechbankx.io/ key (platform policies key on that prefix, ADR-023)."
   default     = {}
 
   validation {
-    condition     = !contains([for k in keys(var.tags) : lower(k)], "fintechbankx.io/secrets")
-    error_message = "var.tags must not carry fintechbankx.io/secrets: it would reach aws_kms_key.database, which External Secrets must never decrypt (ADR-023). Only aws_kms_key.secrets is tagged, in main.tf."
+    condition     = alltrue([for k in keys(var.tags) : !startswith(lower(trimspace(k)), "fintechbankx.io/")])
+    error_message = "var.tags must not carry any fintechbankx.io/ key: platform policies key on that prefix (fintechbankx.io/secrets lets External Secrets decrypt, ADR-023), and var.tags reaches aws_kms_key.database. Only main.tf sets fintechbankx.io/ tags."
+  }
+}
+
+variable "database_key_user_role_arns" {
+  type        = list(string)
+  description = "IAM role ARNs that may use aws_kms_key.database (Decrypt, ReEncrypt, GenerateDataKey, CreateGrant): the role that runs this Terraform (RDS creates the cluster's grants with its credentials) and any DBA or restore role. Every other principal is denied by the key policy, except the RDS service-linked role and AWS service principals using their grants. Never an External Secrets role (ADR-023)."
+
+  validation {
+    condition     = length(var.database_key_user_role_arns) >= 1
+    error_message = "database_key_user_role_arns needs at least the role that runs this Terraform, or RDS cannot create the cluster's key grants."
+  }
+
+  validation {
+    condition     = alltrue([for a in var.database_key_user_role_arns : can(regex("^arn:aws[a-z-]*:iam::[0-9]{12}:role/[^*?]+$", a))])
+    error_message = "database_key_user_role_arns takes full IAM role ARNs without wildcards (arn:<partition>:iam::<account>:role/<path/name>)."
+  }
+
+  validation {
+    condition     = alltrue([for a in var.database_key_user_role_arns : !strcontains(lower(a), "external-secrets")])
+    error_message = "database_key_user_role_arns must not name an External Secrets role: it must never decrypt with aws_kms_key.database (ADR-023)."
   }
 }
 
