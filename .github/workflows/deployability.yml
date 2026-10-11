@@ -232,6 +232,15 @@ jobs:
             reject_render "config.$key must not be set: fintechbankx.tls.enforce is the test switch of the TLS startup assertions" \
               --set-string "config.$key=false"
           done
+          # spring.main.* changes how the application context starts: lazy initialisation can skip guards that run when
+          # a bean is created, bean definition overriding can replace a guard, sources can add configuration. The
+          # startup guards here are BeanFactoryPostProcessors (not skipped), but no install-time value may set the
+          # family: the chart's normalised rule refuses every key that starts with SPRINGMAIN (defence in depth).
+          for key in SPRING_MAIN_LAZY_INITIALIZATION 'spring\.main\.lazy-initialization' \
+                     'spring\.main\.allow-bean-definition-overriding' SPRING_MAIN_SOURCES; do
+            reject_render "config.${key//\\/} must not be set: spring.main.* changes how the application context starts" \
+              --set-string "config.$key=true"
+          done
           reject_render "config.PGJDBC_SSL_FACTORY is not allowed" --set-string config.PGJDBC_SSL_FACTORY=org.postgresql.ssl.NonValidatingFactory
           reject_render "config.SPRING_SSL_BUNDLE_PEM_DB_TRUSTSTORE_CERTIFICATE is not allowed: an SSL bundle property" \
             --set-string config.SPRING_SSL_BUNDLE_PEM_DB_TRUSTSTORE_CERTIFICATE=/tmp/decoy.pem
