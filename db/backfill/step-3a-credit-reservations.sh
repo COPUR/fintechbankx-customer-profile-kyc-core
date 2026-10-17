@@ -24,7 +24,9 @@
 #
 # <currency> is required (ISO 4217), as for run-backfill.sh. <never-disbursed-file>
 # is required and may be empty: one monolith loan id per line, blank lines and
-# lines starting with # ignored. STEP3A_DRY_RUN=true runs every step and the
+# lines starting with # ignored. Both modes lock credit_reservation,
+# credit_movement and customer (SHARE ROW EXCLUSIVE) for the transaction and
+# wait at most STEP3A_LOCK_TIMEOUT (default 60s) for open writes. STEP3A_DRY_RUN=true runs every step and the
 # checks, prints the figures and rolls back. --rollback (before routing, as the
 # runbook's rollback column says) deletes the reservations that name a monolith
 # loan id and recomputes used_credit from the rest; it refuses once the service
@@ -50,6 +52,7 @@ currency="$3"
 excluded_file="$4"
 schema="sc_cus_profile_kyc"
 dry_run="${STEP3A_DRY_RUN:-false}"
+lock_timeout="${STEP3A_LOCK_TIMEOUT:-60s}"
 
 if ! [[ "$currency" =~ ^[A-Z]{3}$ ]]; then
   echo "currency must be an ISO 4217 code, got '$currency'" >&2
@@ -61,6 +64,10 @@ if [[ "${source_db,,}" == *password* || "${target_db,,}" == *password* || "$sour
 fi
 if [ ! -r "$excluded_file" ]; then
   echo "never-disbursed list '$excluded_file' not readable: the lending squad's list is required (an empty file when there are none)" >&2
+  exit 2
+fi
+if ! [[ "$lock_timeout" =~ ^[0-9]+(ms|s|min)$ ]]; then
+  echo "STEP3A_LOCK_TIMEOUT must look like 60s, 500ms or 2min, got '$lock_timeout'" >&2
   exit 2
 fi
 if [ "$dry_run" != "true" ] && [ "$dry_run" != "false" ]; then
@@ -96,6 +103,11 @@ if [ "$mode" = "rollback" ]; then
   run -d "$target_db" -At <<SQL
 BEGIN;
 SET LOCAL search_path = $schema;
+SET LOCAL lock_timeout = '$lock_timeout';
+-- Waits for any open service write on these tables and blocks new ones until
+-- COMMIT, so the checks below see every committed movement (the runbook freeze
+-- should already stop them; this does not rely on it).
+LOCK TABLE credit_reservation, credit_movement, customer IN SHARE ROW EXCLUSIVE MODE;
 CREATE TEMP TABLE step3a_loan (id text PRIMARY KEY, customer_id bigint, loan_amount numeric(19,2), is_paid boolean) ON COMMIT DROP;
 CREATE TEMP TABLE step3a_problem (line text) ON COMMIT DROP;
 \copy step3a_loan FROM '$work/loans.csv' WITH (FORMAT csv)
@@ -133,6 +145,11 @@ echo "Inserting reservations, setting used_credit and checking (one transaction)
 run -d "$target_db" -At -v currency="$currency" <<SQL
 BEGIN;
 SET LOCAL search_path = $schema;
+SET LOCAL lock_timeout = '$lock_timeout';
+-- Waits for any open service write on these tables and blocks new ones until
+-- COMMIT, so the checks below see every committed movement (the runbook freeze
+-- should already stop them; this does not rely on it).
+LOCK TABLE credit_reservation, credit_movement, customer IN SHARE ROW EXCLUSIVE MODE;
 CREATE TEMP TABLE step3a_loan (id text PRIMARY KEY, customer_id bigint, loan_amount numeric(19,2), is_paid boolean) ON COMMIT DROP;
 CREATE TEMP TABLE step3a_excluded (id text PRIMARY KEY) ON COMMIT DROP;
 CREATE TEMP TABLE step3a_problem (line text) ON COMMIT DROP;
