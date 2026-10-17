@@ -3,8 +3,11 @@
 api/openapi/*.accepted-breaking.txt @COPUR
 **/*.accepted-breaking.txt @COPUR
 
-# Vendored platform guard, its verifier and the workflow that pins the guard's sha256
-# (cicd-templates 6b6c317): a change here can weaken every chart refusal, so the platform owner reviews it.
-deploy/helm/customer-profile-kyc-service/templates/_fbx_helpers.tpl @COPUR
-scripts/ci/verify-vendored-guard.sh @COPUR
-.github/workflows/deployability.yml @COPUR
+# Platform guard (fintechbankx-platform-delivery-iac-cicd-templates,
+# charts/fintechbankx-service README, "Vendoring the guard"; vendored at 73e1881): only the
+# platform owners approve a change to the vendored file, the verifier, the workflow that pins
+# the digest, or this file. Keep below every broader rule (the last matching rule wins).
+/deploy/helm/*/templates/_fbx_helpers.tpl   @COPUR
+/scripts/ci/verify-vendored-guard.sh        @COPUR
+/.github/workflows/deployability.yml        @COPUR
+/.github/CODEOWNERS                         @COPUR
