@@ -223,6 +223,11 @@ about this chart's own values):
     configuration). The startup guards are BeanFactoryPostProcessors, which
     lazy initialisation does not defer; the chart refuses the family anyway
     (defence in depth). The guard does not cover spring.main.*.
+  - SPRINGJPA*, SPRINGSQLINIT*, HIBERNATE*, JAKARTA/JAVAXPERSISTENCE*: Hibernate
+    schema management and SQL init would change the schema at startup; the
+    schema belongs to the migration Job;
+  - CUSTOMERDATABASEFLYWAY*: customer.database.flyway is validate in every pod;
+    only the migration Job's db-migrate profile migrates.
 */}}
 {{- define "customer.validate" -}}
 {{- if not (regexMatch "^[a-z0-9]([-a-z0-9]{0,61}[a-z0-9])?$" (toString .Values.serviceAccount.name)) -}}
@@ -255,6 +260,12 @@ about this chart's own values):
 {{- end -}}
 {{- if hasPrefix "SPRINGMAIN" $name -}}
 {{- fail (printf "config.%s must not be set: spring.main.* changes how the application context starts (lazy initialisation, bean definition overriding, sources); it is not an install-time value" $key) -}}
+{{- end -}}
+{{- if regexMatch "^(SPRINGJPA|SPRINGSQLINIT|HIBERNATE|JAKARTAPERSISTENCE|JAVAXPERSISTENCE)" $name -}}
+{{- fail (printf "config.%s must not be set: the schema belongs to the migration Job; Hibernate schema management and SQL init would change it at startup" $key) -}}
+{{- end -}}
+{{- if hasPrefix "CUSTOMERDATABASEFLYWAY" $name -}}
+{{- fail (printf "config.%s must not be set: the service validates the schema in every pod; only the migration Job migrates" $key) -}}
 {{- end -}}
 {{- end -}}
 {{- end -}}

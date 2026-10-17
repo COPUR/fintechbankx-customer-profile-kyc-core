@@ -241,6 +241,19 @@ jobs:
             reject_render "config.${key//\\/} must not be set: spring.main.* changes how the application context starts" \
               --set-string "config.$key=true"
           done
+          # Hibernate's schema management and Spring's SQL init change the schema at startup, before the runtime-role
+          # check runs; the schema belongs to the migration Job alone, so the chart refuses both families.
+          for key in SPRING_JPA_HIBERNATE_DDL_AUTO 'spring\.jpa\.hibernate\.ddl-auto' SPRING_JPA_GENERATE_DDL \
+              'spring\.jpa\.properties\.hibernate\.hbm2ddl\.auto' SPRING_SQL_INIT_MODE 'spring\.sql\.init\.schema-locations' \
+              'hibernate\.hbm2ddl\.auto' 'jakarta\.persistence\.schema-generation\.database\.action'; do
+            reject_render "config.${key//\\/} must not be set: the schema belongs to the migration Job" \
+              --set-string "config.$key=update"
+          done
+          # The service's own Flyway mode (customer.database.flyway) is validate in every pod; only the migration Job,
+          # through its db-migrate profile, migrates. No install-time value may change it.
+          for key in CUSTOMER_DATABASE_FLYWAY 'customer\.database\.flyway' customer-database-flyway; do
+            reject_render "config.${key//\\/} must not be set: the service validates the schema" --set-string "config.$key=migrate"
+          done
           reject_render "config.PGJDBC_SSL_FACTORY is not allowed" --set-string config.PGJDBC_SSL_FACTORY=org.postgresql.ssl.NonValidatingFactory
           reject_render "config.SPRING_SSL_BUNDLE_PEM_DB_TRUSTSTORE_CERTIFICATE is not allowed: an SSL bundle property" \
             --set-string config.SPRING_SSL_BUNDLE_PEM_DB_TRUSTSTORE_CERTIFICATE=/tmp/decoy.pem
