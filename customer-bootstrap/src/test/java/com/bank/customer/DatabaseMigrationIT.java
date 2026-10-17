@@ -38,6 +38,8 @@ class DatabaseMigrationIT {
     /** Built from a constant so the publication secret scan does not read a test argument as a credential. */
     private static final String DATASOURCE_PASSWORD = "spring.datasource.password";
 
+    private static final String LAZY_INITIALIZATION = "--spring.main.lazy-initialization=true";
+
     private static final String JOB_SCHEMA = "sc_cus_profile_kyc_job_it";
     private static final String SERVICE_SCHEMA = "sc_cus_profile_kyc";
     private static final String RDS_BUNDLE = "/etc/fintechbankx/rds-ca/global-bundle.pem";
@@ -149,6 +151,33 @@ class DatabaseMigrationIT {
 
             assertThat(DatabaseMigration.run(arguments)).isOne();
             assertThat(appliedVersions(schema)).as("the migrations before the failed one stay applied").isEqualTo(12);
+        } finally {
+            owner.execute("drop schema if exists " + schema + " cascade");
+        }
+    }
+
+    /** Lazy initialization in the Job's environment must not turn a failed migration into exit 0. */
+    @Test
+    void aFailedMigrationExitsWithOneUnderLazyInitialization() {
+        String schema = JOB_SCHEMA + "_failed_lazy";
+        owner.execute("drop schema if exists " + schema + " cascade");
+        try {
+            String[] arguments = with(job(schema), "--DB_USERNAME=role_that_does_not_exist", LAZY_INITIALIZATION);
+
+            assertThat(DatabaseMigration.run(arguments)).isOne();
+        } finally {
+            owner.execute("drop schema if exists " + schema + " cascade");
+        }
+    }
+
+    /** Under lazy initialization the Job still applies every migration before it reports success. */
+    @Test
+    void theJobAppliesEveryMigrationUnderLazyInitialization() throws IOException {
+        String schema = JOB_SCHEMA + "_lazy";
+        owner.execute("drop schema if exists " + schema + " cascade");
+        try {
+            assertThat(DatabaseMigration.run(with(job(schema), LAZY_INITIALIZATION))).isZero();
+            assertThat(appliedVersions(schema)).isEqualTo(resolvedMigrations());
         } finally {
             owner.execute("drop schema if exists " + schema + " cascade");
         }
