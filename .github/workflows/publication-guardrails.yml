@@ -26,11 +26,42 @@ jobs:
         uses: actions/checkout@v4
       - name: Scan secret-like patterns
         run: |
-          set -euo pipefail
-          PATTERN='BEGIN (RSA|EC|OPENSSH|PRIVATE KEY)|AKIA[0-9A-Z]{16}|ghp_[A-Za-z0-9]{36}|github_pat_[A-Za-z0-9_]{20,}|secret[_-]?key|password\s*[:=]'
-          # A password set to a placeholder (<...>, ${...}, var.name) or a boolean switch is not a secret.
-          PLACEHOLDER='password\s*[:=]\s*["\x27]?(<|\$\{|var\.|(true|false)\b)'
-          if rg -n "$PATTERN" . --glob '!**/.git/**' --glob '!**/build/**' --glob '!**/.gradle/**' --glob '!**/node_modules/**' | rg -v "$PLACEHOLDER"; then
+          set -uo pipefail
+          command -v rg >/dev/null || { echo "ripgrep (rg) is required on this runner"; exit 1; }
+          EXCLUDES=(--glob '!**/.git/**' --glob '!**/build/**' --glob '!**/.gradle/**' --glob '!**/node_modules/**')
+          found=0
+
+          # Key material and token formats: no placeholder exemption.
+          status=0
+          hits=$(rg -n 'BEGIN (RSA|EC|OPENSSH|PRIVATE KEY)|AKIA[0-9A-Z]{16}|ghp_[A-Za-z0-9]{36}|github_pat_[A-Za-z0-9_]{20,}|secret[_-]?key' . "${EXCLUDES[@]}") || status=$?
+          case $status in
+            0) echo "$hits"; found=1 ;;
+            1) ;;
+            *) echo "rg failed with exit $status"; exit "$status" ;;
+          esac
+
+          # A password value is tested one match at a time, as a whole word (not RUNTIME_PASSWORD or ownerPassword). A placeholder (<name>, ${NAME}, var.name)
+          # or a whole boolean switch (true or false) is not a secret; any other value is.
+          # A Spring default is a placeholder only when it is empty or another placeholder: ${NAME:} or ${NAME:${other:}}.
+          PLACEHOLDER='password\s*[:=]\s*[\x22\x27]?(<[A-Za-z0-9_. -]+>|\$\{[A-Za-z_][A-Za-z0-9_.-]*(:(\$\{[A-Za-z_][A-Za-z0-9_.-]*:?)?)?|var\.[A-Za-z_][A-Za-z0-9_]*|true|false)[\x22\x27]?\s*$'
+          status=0
+          values=$(rg -i -o -n '\bpassword\s*[:=]\s*[\x22\x27]?[^\x22\x27\s,;}#]*' . "${EXCLUDES[@]}") || status=$?
+          case $status in
+            0) ;;
+            1) values= ;;
+            *) echo "rg failed with exit $status"; exit "$status" ;;
+          esac
+          if [ -n "$values" ]; then
+            status=0
+            kept=$(printf '%s\n' "$values" | rg -v -i -e "$PLACEHOLDER") || status=$?
+            case $status in
+              0) echo "$kept"; found=1 ;;
+              1) ;;
+              *) echo "rg failed with exit $status"; exit "$status" ;;
+            esac
+          fi
+
+          if [ "$found" -ne 0 ]; then
             echo "Potential secret pattern detected"
             exit 1
           fi
