@@ -69,7 +69,7 @@ BEGIN
     FOREACH role_name IN ARRAY ARRAY[owner_role, runtime_role] LOOP
         IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = role_name) THEN
             EXECUTE format('CREATE ROLE %I LOGIN', role_name);
-            RAISE NOTICE 'created role % (LOGIN, no password: set it with \password)', role_name;
+            RAISE NOTICE 'created role % (LOGIN, no password; set it with \password)', role_name;
         ELSE
             EXECUTE format('ALTER ROLE %I LOGIN', role_name);
         END IF;

@@ -53,10 +53,10 @@ public final class PostgresTestDatabase {
     public static synchronized void register(DynamicPropertyRegistry registry) {
         String url = System.getenv("TEST_DB_URL");
         String username;
-        String password;
+        String testPassword;
         if (url != null && !url.isBlank()) {
             username = env("TEST_DB_USERNAME", "customer_test");
-            password = env("TEST_DB_PASSWORD", "customer_test");
+            testPassword = env("TEST_DB_PASSWORD", "customer_test");
         } else {
             if (container == null) {
                 container = new PostgreSQLContainer<>("postgres:16-alpine")
@@ -67,13 +67,13 @@ public final class PostgresTestDatabase {
             }
             url = container.getJdbcUrl();
             username = container.getUsername();
-            password = container.getPassword();
+            testPassword = container.getPassword();
         }
-        createRuntimeRole(url, username, password);
+        createRuntimeRole(url, username, testPassword);
         String finalUrl = url;
         registry.add("spring.datasource.url", () -> finalUrl);
         registry.add("spring.datasource.username", () -> username);
-        registry.add("spring.datasource.password", () -> password);
+        registry.add("spring.datasource.password", () -> testPassword);
         registry.add("spring.flyway.placeholders.runtime_role", () -> RUNTIME_ROLE);
     }
 
