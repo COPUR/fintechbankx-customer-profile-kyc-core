@@ -1,11 +1,13 @@
 package com.bank.customer;
 
 import com.bank.customer.infrastructure.config.DatabaseTlsGuardConfiguration;
+import org.flywaydb.core.Flyway;
 import org.springframework.boot.Banner;
 import org.springframework.boot.SpringApplication;
 import org.springframework.boot.WebApplicationType;
 import org.springframework.boot.autoconfigure.ImportAutoConfiguration;
 import org.springframework.boot.autoconfigure.flyway.FlywayAutoConfiguration;
+import org.springframework.boot.autoconfigure.flyway.FlywayMigrationInitializer;
 import org.springframework.boot.autoconfigure.jdbc.DataSourceAutoConfiguration;
 import org.springframework.context.ConfigurableApplicationContext;
 import org.springframework.context.annotation.Import;
@@ -62,12 +64,30 @@ public final class DatabaseMigration {
         }
     }
 
-    /** Starts the migrate-only context; Flyway has run when this returns. */
+    /**
+     * Starts the migrate-only context; Flyway has run when this returns.
+     *
+     * <p>Success does not rest on bean-time work alone: spring.main.lazy-initialization
+     * would leave the Flyway initializer uncreated and the schema unmigrated. So the
+     * initializer is fetched explicitly (a no-op when it already ran), and the context
+     * is refused while any migration is still pending.
+     */
     static ConfigurableApplicationContext start(String... args) {
         SpringApplication application = new SpringApplication(DatabaseMigration.class);
         application.setWebApplicationType(WebApplicationType.NONE);
         application.setAdditionalProfiles(PROFILE);
         application.setBannerMode(Banner.Mode.OFF);
-        return application.run(args);
+        ConfigurableApplicationContext context = application.run(args);
+        try {
+            context.getBean(FlywayMigrationInitializer.class);
+            int pending = context.getBean(Flyway.class).info().pending().length;
+            if (pending > 0) {
+                throw new IllegalStateException(pending + " migration(s) still pending after the migrate-only run");
+            }
+            return context;
+        } catch (RuntimeException e) {
+            context.close();
+            throw e;
+        }
     }
 }
