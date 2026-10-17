@@ -14,10 +14,27 @@ jobs:
       - name: Detect local path or identity leakage
         run: |
           set -euo pipefail
-          if rg -n "/Users/|\\\\Users\\\\|/home/|alicopur" . --glob '!**/.git/**' --glob '!**/build/**' --glob '!**/.gradle/**' --glob '!**/node_modules/**'; then
-            echo "Local path / identity leakage detected"
-            exit 1
-          fi
+          # ripgrep is pinned and checked before use, so a missing or failing rg is an error, never a clean scan.
+          RG_DIR=$(mktemp -d)
+          case "$(uname -m)" in
+            x86_64)
+              rg_asset=ripgrep-14.1.0-x86_64-unknown-linux-musl; rg_sha=f84757b07f425fe5cf11d87df6644691c644a5cd2348a2c670894272999d3ba7 ;;
+            aarch64|arm64)
+              rg_asset=ripgrep-14.1.0-aarch64-unknown-linux-gnu; rg_sha=c8c210b99844fbf16b7a36d1c963e8351bca5ff2dd7c788f5fba4ac18ba8c60d ;;
+            *) echo "unsupported runner architecture $(uname -m)"; exit 1 ;;
+          esac
+          curl -sSfL -o "$RG_DIR/rg.tar.gz" "https://github.com/BurntSushi/ripgrep/releases/download/14.1.0/${rg_asset}.tar.gz"
+          echo "${rg_sha}  $RG_DIR/rg.tar.gz" | sha256sum -c -
+          tar -xz -C "$RG_DIR" -f "$RG_DIR/rg.tar.gz"
+          export PATH="$RG_DIR/${rg_asset}:$PATH"
+          command -v rg >/dev/null || { echo "ripgrep (rg) is required on this runner"; exit 1; }
+          status=0
+          rg -n "/Users/|\\\\Users\\\\|/home/|alicopur" . --glob '!**/.git/**' --glob '!**/build/**' --glob '!**/.gradle/**' --glob '!**/node_modules/**' || status=$?
+          case $status in
+            0) echo "Local path / identity leakage detected"; exit 1 ;;
+            1) ;;
+            *) echo "rg failed with exit $status"; exit "$status" ;;
+          esac
 
   secret-pattern-scan:
     runs-on: ubuntu-latest
@@ -26,7 +43,20 @@ jobs:
         uses: actions/checkout@v4
       - name: Scan secret-like patterns
         run: |
-          set -uo pipefail
+          set -euo pipefail
+          # ripgrep is pinned and checked before use, so a missing or failing rg is an error, never a clean scan.
+          RG_DIR=$(mktemp -d)
+          case "$(uname -m)" in
+            x86_64)
+              rg_asset=ripgrep-14.1.0-x86_64-unknown-linux-musl; rg_sha=f84757b07f425fe5cf11d87df6644691c644a5cd2348a2c670894272999d3ba7 ;;
+            aarch64|arm64)
+              rg_asset=ripgrep-14.1.0-aarch64-unknown-linux-gnu; rg_sha=c8c210b99844fbf16b7a36d1c963e8351bca5ff2dd7c788f5fba4ac18ba8c60d ;;
+            *) echo "unsupported runner architecture $(uname -m)"; exit 1 ;;
+          esac
+          curl -sSfL -o "$RG_DIR/rg.tar.gz" "https://github.com/BurntSushi/ripgrep/releases/download/14.1.0/${rg_asset}.tar.gz"
+          echo "${rg_sha}  $RG_DIR/rg.tar.gz" | sha256sum -c -
+          tar -xz -C "$RG_DIR" -f "$RG_DIR/rg.tar.gz"
+          export PATH="$RG_DIR/${rg_asset}:$PATH"
           command -v rg >/dev/null || { echo "ripgrep (rg) is required on this runner"; exit 1; }
           EXCLUDES=(--glob '!**/.git/**' --glob '!**/build/**' --glob '!**/.gradle/**' --glob '!**/node_modules/**')
           found=0
@@ -40,9 +70,9 @@ jobs:
             *) echo "rg failed with exit $status"; exit "$status" ;;
           esac
 
-          # A password value is tested one match at a time, as a whole word (not RUNTIME_PASSWORD or ownerPassword). A placeholder (<name>, ${NAME}, var.name)
-          # or a whole boolean switch (true or false) is not a secret; any other value is.
-          # A Spring default is a placeholder only when it is empty or another placeholder: ${NAME:} or ${NAME:${other:}}.
+          # A password value is tested one match at a time. A placeholder (<name>, ${NAME}, var.name)
+          # or a whole boolean switch (true or false) is not a secret; ${NAME:} and a nested ${...} default carry no value.
+          # Any other value, including a literal shell default such as ${NAME:-value} or ${NAME:value}, is reported.
           PLACEHOLDER='password\s*[:=]\s*[\x22\x27]?(<[A-Za-z0-9_. -]+>|\$\{[A-Za-z_][A-Za-z0-9_.-]*(:(\$\{[A-Za-z_][A-Za-z0-9_.-]*:?)?)?|var\.[A-Za-z_][A-Za-z0-9_]*|true|false)[\x22\x27]?\s*$'
           status=0
           values=$(rg -i -o -n '\bpassword\s*[:=]\s*[\x22\x27]?[^\x22\x27\s,;}#]*' . "${EXCLUDES[@]}") || status=$?
