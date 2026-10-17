@@ -25,9 +25,10 @@
 # <currency> is required (ISO 4217), as for run-backfill.sh. <never-disbursed-file>
 # is required and may be empty: one monolith loan id per line, blank lines and
 # lines starting with # ignored. STEP3A_DRY_RUN=true runs every step and the
-# checks, prints the figures and rolls back. --rollback deletes the reservations
-# that name a monolith loan id and resets used_credit of migrated customers to
-# 0, the value step 3 left (before routing, as the runbook's rollback column says).
+# checks, prints the figures and rolls back. --rollback (before routing, as the
+# runbook's rollback column says) deletes the reservations that name a monolith
+# loan id and recomputes used_credit from the rest; it refuses once the service
+# has moved credit.
 # Passwords come from PGPASSWORD or ~/.pgpass, never from arguments.
 set -euo pipefail
 
@@ -74,7 +75,7 @@ run() { psql -X -q -v ON_ERROR_STOP=1 "$@"; }
 grep -v -e '^[[:space:]]*#' -e '^[[:space:]]*$' "$excluded_file" | tr -d '[:blank:]\r' > "$work/excluded.csv" || true
 
 echo "Exporting loans from the monolith (read-only snapshot)..."
-run "$source_db" <<SQL
+run -d "$source_db" <<SQL
 BEGIN ISOLATION LEVEL REPEATABLE READ READ ONLY;
 \copy (SELECT id, customer_id, loan_amount, is_paid FROM loans ORDER BY id) TO '$work/loans.csv' WITH (FORMAT csv)
 COMMIT;
@@ -84,22 +85,52 @@ finish="COMMIT"
 [ "$dry_run" = "true" ] && finish="ROLLBACK"
 
 if [ "$mode" = "rollback" ]; then
-  run "$target_db" <<SQL
+  # Before routing only (runbook step 3a's rollback column). Once the service
+  # has moved credit (step 5 or later), deleting rows would lose real positions,
+  # so the run refuses: any reservation of a monolith loan that moved since step
+  # 3a inserted it, or any journalled credit movement of a migrated customer.
+  # Reservations that name no monolith loan stay, and used_credit is recomputed
+  # from the reservations that remain.
+  rollback_verb="rollback: deleted"; rollback_suffix=" of monolith loans"
+  [ "$dry_run" = "true" ] && rollback_verb="dry run: would delete" && rollback_suffix=", rolled back"
+  run -d "$target_db" -At <<SQL
 BEGIN;
 SET LOCAL search_path = $schema;
 CREATE TEMP TABLE step3a_loan (id text PRIMARY KEY, customer_id bigint, loan_amount numeric(19,2), is_paid boolean) ON COMMIT DROP;
+CREATE TEMP TABLE step3a_problem (line text) ON COMMIT DROP;
 \copy step3a_loan FROM '$work/loans.csv' WITH (FORMAT csv)
-DELETE FROM credit_reservation r USING customer c, step3a_loan l
- WHERE r.customer_id = c.customer_id AND c.legacy_customer_id = l.customer_id AND r.reference = l.id;
-UPDATE customer SET used_credit = 0 WHERE legacy_customer_id IS NOT NULL;
-\echo rollback: reservations of monolith loans deleted, used_credit of migrated customers reset to 0
+CREATE TEMP VIEW step3a_target AS
+  SELECT r.* FROM credit_reservation r
+    JOIN customer c ON c.customer_id = r.customer_id
+    JOIN step3a_loan l ON l.customer_id = c.legacy_customer_id AND l.id = r.reference;
+INSERT INTO step3a_problem
+  SELECT reference || ' reservation moved since step 3a (released ' || released_amount::numeric(19,2) || ')' FROM step3a_target
+   WHERE released_amount <> 0 OR updated_at <> created_at;
+INSERT INTO step3a_problem
+  SELECT DISTINCT m.customer_id || ' the service journalled credit movements (runbook step 5 or later)'
+    FROM credit_movement m JOIN customer c ON c.customer_id = m.customer_id WHERE c.legacy_customer_id IS NOT NULL;
+SELECT line FROM step3a_problem ORDER BY line;
+DO \$\$
+BEGIN
+  IF EXISTS (SELECT 1 FROM step3a_problem) THEN
+    RAISE EXCEPTION 'STEP 3A ROLLBACK REFUSED: % problem(s) listed above; nothing was changed', (SELECT count(*) FROM step3a_problem);
+  END IF;
+END
+\$\$;
+WITH deleted AS (
+  DELETE FROM credit_reservation r USING step3a_target t WHERE r.reservation_id = t.reservation_id RETURNING 1
+) SELECT '$rollback_verb ' || count(*) || ' reservation(s)$rollback_suffix' FROM deleted;
+UPDATE customer c
+   SET used_credit = coalesce((SELECT sum(r.reserved_amount - r.released_amount) FROM credit_reservation r WHERE r.customer_id = c.customer_id), 0)
+ WHERE c.legacy_customer_id IS NOT NULL;
 $finish;
 SQL
+  [ "$dry_run" = "true" ] || echo "rollback: done; used_credit of migrated customers recomputed from the reservations that remain"
   exit 0
 fi
 
 echo "Inserting reservations, setting used_credit and checking (one transaction)..."
-run "$target_db" -At -v currency="$currency" <<SQL
+run -d "$target_db" -At -v currency="$currency" <<SQL
 BEGIN;
 SET LOCAL search_path = $schema;
 CREATE TEMP TABLE step3a_loan (id text PRIMARY KEY, customer_id bigint, loan_amount numeric(19,2), is_paid boolean) ON COMMIT DROP;

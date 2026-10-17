@@ -127,7 +127,7 @@ positions "the rollback recomputes used_credit from the reservations that remain
 psql_q -d "$dst_db" -c "DELETE FROM $schema.credit_reservation WHERE reference = 'LN-KEEP-1'" -c "UPDATE $schema.customer SET used_credit = 0 WHERE customer_id = '3'"
 
 echo "--- rollback done, then the loan of customer 2 grows to 8000: with 201 in, 11000 is over the 10000 limit"
-positions "the rollback deletes the reservations of monolith loans and resets used_credit to 0" "1:0.00,2:0.00,3:0.00 0/0.00"
+positions "after the rollback every migrated position is back to 0" "1:0.00,2:0.00,3:0.00 0/0.00"
 psql_q -d "$src_db" -c "UPDATE loans SET loan_amount = 8000 WHERE id = '202'"
 expect_refusal "a customer whose open reservations exceed the credit limit fails" "^2 open reservations 11000.00 exceed credit_limit 10000.00" "$step" "$src" "$dst" USD "$work/empty.txt"
 positions "the over-limit run changes nothing" "1:0.00,2:0.00,3:0.00 0/0.00"
