@@ -97,8 +97,43 @@ resource "aws_kms_key" "database" {
           Bool       = { "aws:PrincipalIsAWSService" = "false" }
         }
       },
+      {
+        # The listed deployer, DBA and restore roles use the key only through RDS and the
+        # RDS-managed master secret in this region, never directly.
+        Sid       = "DenyListedKeyUsersOutsideRdsAndSecretsManager"
+        Effect    = "Deny"
+        Principal = { AWS = "*" }
+        Action    = ["kms:Decrypt", "kms:ReEncrypt*", "kms:GenerateDataKey*", "kms:CreateGrant"]
+        Resource  = "*"
+        Condition = {
+          ArnLike = { "aws:PrincipalArn" = var.database_key_user_role_arns }
+          StringNotEquals = {
+            "kms:ViaService" = [
+              "rds.${var.aws_region}.amazonaws.com",
+              "secretsmanager.${var.aws_region}.amazonaws.com",
+            ]
+          }
+        }
+      },
+      {
+        Sid       = "DenyGrantsNotForAwsResources"
+        Effect    = "Deny"
+        Principal = { AWS = "*" }
+        Action    = "kms:CreateGrant"
+        Resource  = "*"
+        Condition = {
+          Bool = { "kms:GrantIsForAWSResource" = "false" }
+        }
+      },
     ]
   })
+
+  lifecycle {
+    precondition {
+      condition     = alltrue([for a in var.database_key_user_role_arns : split(":", a)[4] == data.aws_caller_identity.current.account_id])
+      error_message = "database_key_user_role_arns must name roles in the account this Terraform runs in."
+    }
+  }
 }
 
 resource "aws_kms_alias" "database" {
