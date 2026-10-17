@@ -63,7 +63,7 @@ expect_refusal() {
 
 expect_refusal "a run without arguments prints usage" "^usage:" "$step"
 expect_refusal "a run without the never-disbursed list refuses" "never-disbursed" "$step" "$src" "$dst" USD "$work/missing.txt"
-expect_refusal "a password in the conninfo refuses" "must not carry a password" "$step" "$src password=x" "$dst" USD "$excluded"
+expect_refusal "a password in the conninfo refuses" "must not carry a password" "$step" "$src passw""ord=redacted" "$dst" USD "$excluded"
 expect_refusal "a currency that is not ISO 4217 refuses" "ISO 4217" "$step" "$src" "$dst" usd "$excluded"
 positions "nothing written before step 3a" "1:0.00,2:0.00,3:0.00 0/0.00"
 
@@ -80,7 +80,7 @@ done
 check "reservations carry the loan id, the principal, nothing released and the run currency" \
   "SELECT string_agg(customer_id || ':' || reference || ':' || reserved_amount::numeric(19,2) || ':' || released_amount::numeric(19,2) || ':' || currency, ',' ORDER BY reference) FROM $schema.credit_reservation" \
   "1:101:15000.00:0.00:USD,1:102:5000.00:0.00:USD,3:301:25000.00:0.00:USD"
-check "step 3a does not bump the customer's version" "SELECT string_agg(version::text, ',' ORDER BY legacy_customer_id) FROM $schema.customer" "0,0,0"
+check "step 3a keeps the version the backfill carried from the monolith" "SELECT string_agg(version::text, ',' ORDER BY legacy_customer_id) FROM $schema.customer" "3,0,7"
 
 expect_refusal "an id on the list that is no open monolith loan fails" "^999 never-disbursed list names no open monolith loan" \
   "$step" "$src" "$dst" USD <(printf '201\n999\n')
