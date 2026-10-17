@@ -21,18 +21,19 @@ mock_provider "aws" {
 }
 
 variables {
-  aws_region                   = "me-central-1"
-  environment                  = "dev"
-  vpc_id                       = "vpc-0123456789abcdef0"
-  private_subnet_ids           = ["subnet-0123456789abcdef0", "subnet-0fedcba9876543210"]
-  workload_security_group_id   = "sg-0123456789abcdef0"
-  eks_oidc_provider_arn        = "arn:aws:iam::111122223333:oidc-provider/oidc.eks.me-central-1.amazonaws.com/id/EXAMPLE"
-  eks_oidc_provider_url        = "oidc.eks.me-central-1.amazonaws.com/id/EXAMPLE"
-  identity_provider_url        = "https://identity.dev.example.internal/realms/fintechbankx"
-  observability_endpoint       = "https://otel.dev.example.internal"
-  database_key_user_role_arns  = ["arn:aws:iam::111122223333:role/dev-terraform-deployer"]
-  database_key_admin_role_arns = ["arn:aws:iam::111122223333:role/dev-terraform-deployer"]
-  msk_cluster_arn              = "arn:aws:kafka:me-central-1:111122223333:cluster/platform-msk/0a1b2c3d-4e5f-6789-abcd-ef0123456789-1"
+  aws_region                         = "me-central-1"
+  environment                        = "dev"
+  vpc_id                             = "vpc-0123456789abcdef0"
+  private_subnet_ids                 = ["subnet-0123456789abcdef0", "subnet-0fedcba9876543210"]
+  workload_security_group_id         = "sg-0123456789abcdef0"
+  eks_oidc_provider_arn              = "arn:aws:iam::111122223333:oidc-provider/oidc.eks.me-central-1.amazonaws.com/id/EXAMPLE"
+  eks_oidc_provider_url              = "oidc.eks.me-central-1.amazonaws.com/id/EXAMPLE"
+  identity_provider_url              = "https://identity.dev.example.internal/realms/fintechbankx"
+  observability_endpoint             = "https://otel.dev.example.internal"
+  database_key_user_role_arns        = ["arn:aws:iam::111122223333:role/dev-terraform-deployer"]
+  database_key_admin_role_arns       = ["arn:aws:iam::111122223333:role/dev-terraform-deployer"]
+  database_key_break_glass_role_arns = ["arn:aws:iam::111122223333:role/aws-reserved/sso.amazonaws.com/AWSReservedSSO_BreakGlassAdministrator_0123456789abcdef"]
+  msk_cluster_arn                    = "arn:aws:kafka:me-central-1:111122223333:cluster/platform-msk/0a1b2c3d-4e5f-6789-abcd-ef0123456789-1"
 }
 
 run "workload_writes_only_the_customer_aggregate_topic" {

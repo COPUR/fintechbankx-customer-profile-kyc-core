@@ -49,7 +49,8 @@ variables {
     "arn:aws:iam::111122223333:role/dev-terraform-deployer",
     "arn:aws:iam::111122223333:role/dev-dba-break-glass",
   ]
-  database_key_admin_role_arns = ["arn:aws:iam::111122223333:role/dev-terraform-deployer"]
+  database_key_admin_role_arns       = ["arn:aws:iam::111122223333:role/dev-terraform-deployer"]
+  database_key_break_glass_role_arns = ["arn:aws:iam::111122223333:role/aws-reserved/sso.amazonaws.com/AWSReservedSSO_BreakGlassAdministrator_0123456789abcdef"]
 }
 
 run "listed_key_users_may_use_the_key_only_through_rds_and_secrets_manager" {
