@@ -115,6 +115,25 @@ expect_refusal "a rollback refuses when the service journalled a credit movement
 psql_q -d "$dst_db" -c "DELETE FROM $schema.credit_movement"
 positions "a refused rollback changes nothing" "1:20000.00,2:9000.00,3:25000.00 5/54000.00"
 
+# A service writer whose transaction is still open when step 3a starts: step 3a
+# must wait for it (and then see its rows), not read past it. With a short
+# lock timeout the run fails instead of waiting.
+hold_open_write() {
+  printf '%s\nSELECT pg_sleep(15);\nROLLBACK;\n' "BEGIN; $1;" | psql -X -q -d "$dst_db" > /dev/null 2>&1 &
+  holder=$!
+  sleep 1
+}
+release_holder() { kill "$holder" 2>/dev/null || true; wait "$holder" 2>/dev/null || true; }
+hold_open_write "INSERT INTO $schema.credit_movement (movement_id, customer_id, idempotency_key, movement_type, currency, amount, reference, occurred_at) VALUES (gen_random_uuid(), '1', 'k-open', 'RELEASE', 'USD', 100, '101', now())"
+expect_refusal "a rollback waits for an open service write instead of reading past it" "lock timeout" \
+  env STEP3A_LOCK_TIMEOUT=2s "$step" --rollback "$src" "$dst" USD "$excluded"
+release_holder
+hold_open_write "UPDATE $schema.customer SET email = 'open@example.invalid' WHERE customer_id = '2'"
+expect_refusal "a run waits for an open service write instead of reading past it" "lock timeout" \
+  env STEP3A_LOCK_TIMEOUT=2s "$step" "$src" "$dst" USD "$work/empty.txt"
+release_holder
+positions "the runs that hit the lock timeout changed nothing" "1:20000.00,2:9000.00,3:25000.00 5/54000.00"
+
 STEP3A_DRY_RUN=true "$step" --rollback "$src" "$dst" USD "$excluded" > "$report"
 grep -q "dry run: would delete 5 reservation(s), rolled back" "$report" || { cat "$report"; echo "FAIL the dry-run rollback did not say what it would delete" >&2; exit 1; }
 positions "a dry-run rollback writes nothing" "1:20000.00,2:9000.00,3:25000.00 5/54000.00"
