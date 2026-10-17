@@ -36,7 +36,7 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 class DatabaseMigrationIT {
 
     /** Built from a constant so the publication secret scan does not read a test argument as a credential. */
-    private static final String DATASOURCE_PASSWORD = "spring.datasource.password";
+    private static final String DATASOURCE_PASSWORD_PROPERTY = "spring.datasource.password";
 
     private static final String LAZY_INITIALIZATION = "--spring.main.lazy-initialization=true";
 
@@ -233,7 +233,7 @@ class DatabaseMigrationIT {
         String[] arguments = with(new String[] {
             "--spring.datasource.url=" + PostgresTestDatabase.url(),
             "--DB_USERNAME=" + PostgresTestDatabase.RUNTIME_ROLE,
-            "--" + DATASOURCE_PASSWORD + "=" + PostgresTestDatabase.RUNTIME_PASSWORD,
+            "--" + DATASOURCE_PASSWORD_PROPERTY + "=" + PostgresTestDatabase.RUNTIME_PASSWORD,
             "--server.port=0",
             "--management.server.port=0",
             "--customer.outbox.relay.enabled=false",

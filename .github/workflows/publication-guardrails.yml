@@ -5,6 +5,9 @@ on:
   push:
     branches: ["main", "dev", "staging"]
 
+permissions:
+  contents: read
+
 jobs:
   local-path-leak-check:
     runs-on: ubuntu-latest
@@ -70,12 +73,18 @@ jobs:
             *) echo "rg failed with exit $status"; exit "$status" ;;
           esac
 
-          # A password value is tested one match at a time. A placeholder (<name>, ${NAME}, var.name)
-          # or a whole boolean switch (true or false) is not a secret; ${NAME:} and a nested ${...} default carry no value.
-          # Any other value, including a literal shell default such as ${NAME:-value} or ${NAME:value}, is reported.
-          PLACEHOLDER='password\s*[:=]\s*[\x22\x27]?(<[A-Za-z0-9_. -]+>|\$\{[A-Za-z_][A-Za-z0-9_.-]*(:(\$\{[A-Za-z_][A-Za-z0-9_.-]*:?)?)?|var\.[A-Za-z_][A-Za-z0-9_]*|true|false)[\x22\x27]?\s*$'
+          # A password value is tested one match at a time. An empty value, a placeholder (<name>, ${NAME}, ${NAME:}, ${NAME:-},
+          # ${NAME:?message}, a nested ${...} default, var.name, env.NAME), an environment or Terraform reference (env(...),
+          # System.getenv(...), resource.name.attr), a Helm action {{ ... }} or a whole boolean (true or false) is not a secret.
+          # Any other value is reported, including a literal shell default such as ${NAME:-value} or ${NAME:=value}, a value
+          # glued to a placeholder such as ${NAME}abc, and a key whose name ends in password (DB_PASSWORD, dbPassword, PGPASSWORD).
+          PLACEHOLDER='password\s*[:=]\s*[\x22\x27]?(<[A-Za-z0-9_. -]+>|\$\{[A-Za-z_][A-Za-z0-9_.-]*(:(\$\{[A-Za-z0-9_.:-]*\})?|:-)?\}|\$\{[A-Za-z_][A-Za-z0-9_.-]*:\?[^\s}]*\}?|-\}|var\.[A-Za-z_][A-Za-z0-9_]*|env\.[A-Za-z_][A-Za-z0-9_]*|env\([^)]*\)|[A-Za-z_.]*[Gg]etenv\([^)]*\)|[a-z]+(_[a-z0-9]+)+\.[A-Za-z][A-Za-z0-9_-]*\.[a-z_]+|true|false|\{\{([^\s}]*\}\})?)?[\x22\x27]?\s*$'
           status=0
-          values=$(rg -i -o -n '\bpassword\s*[:=]\s*[\x22\x27]?[^\x22\x27\s,;}#]*' . "${EXCLUDES[@]}") || status=$?
+          # Listed exemption for this repo (password values only; key and token formats still scan these files):
+          # the integration-test helpers that create throwaway roles in the ephemeral test database.
+          PASSWORD_EXEMPT=(--glob '!customer-bootstrap/src/test/java/com/bank/customer/PostgresTestDatabase.java' \
+            --glob '!customer-infrastructure/src/test/java/com/bank/customer/infrastructure/persistence/PostgresTestDatabase.java')
+          values=$(rg -i -o -n '[A-Za-z0-9_.-]*password\s*[:=]\s*[^\s,;#\x60]*' . "${EXCLUDES[@]}" "${PASSWORD_EXEMPT[@]}") || status=$?
           case $status in
             0) ;;
             1) values= ;;
