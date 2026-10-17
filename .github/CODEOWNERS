@@ -10,4 +10,5 @@ api/openapi/*.accepted-breaking.txt @COPUR
 /deploy/helm/*/templates/_fbx_helpers.tpl   @COPUR
 /scripts/ci/verify-vendored-guard.sh        @COPUR
 /.github/workflows/deployability.yml        @COPUR
+/scripts/ci/chart-render-probes.sh          @COPUR
 /.github/CODEOWNERS                         @COPUR
