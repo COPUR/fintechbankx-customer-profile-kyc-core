@@ -92,7 +92,7 @@ expect_refusal "a reservation that differs from the loan's principal fails" "^10
 psql_q -d "$dst_db" -c "UPDATE $schema.credit_reservation SET reserved_amount = 15000 WHERE reference = '101'"
 
 echo "--- the monolith has customer 4 with an open loan, never backfilled"
-psql_q -d "$src_db" -c "INSERT INTO customers (id, name, surname, credit_limit) VALUES (4, 'Sami', 'Khalil', 5000)" \
+psql_q -d "$src_db" -c "INSERT INTO customers (id, name, surname, credit_limit) VALUES (4, 'Test', 'Customer-Four', 5000)" \
   -c "INSERT INTO loans (id, customer_id, loan_amount, number_of_installments, interest_rate) VALUES ('401', 4, 1000, 6, 0.2)"
 expect_refusal "an open loan of a customer the service does not have fails" "^401 customer 4 is not a migrated customer" "$step" "$src" "$dst" USD "$excluded"
 psql_q -d "$src_db" -c "DELETE FROM loans WHERE id = '401'" -c "DELETE FROM customers WHERE id = 4"
@@ -104,8 +104,29 @@ positions "an empty list keeps every open loan" "1:20000.00,2:9000.00,3:25000.00
 expect_refusal "a never-disbursed loan that has a reservation fails" "^201 never-disbursed loan has a reservation" "$step" "$src" "$dst" USD "$excluded"
 positions "a failed run changes nothing" "1:20000.00,2:9000.00,3:25000.00 5/54000.00"
 
-echo "--- rollback, then the loan of customer 2 grows to 8000: with 201 in, 11000 is over the 10000 limit"
+echo "--- the rollback refuses once the service has moved credit (runbook step 5 or later)"
+psql_q -d "$dst_db" -c "UPDATE $schema.credit_reservation SET released_amount = 1000, updated_at = updated_at + interval '1 minute' WHERE reference = '101'" \
+  -c "UPDATE $schema.customer SET used_credit = used_credit - 1000 WHERE customer_id = '1'"
+expect_refusal "a rollback refuses when a reservation of a monolith loan moved since step 3a" "^101 reservation moved since step 3a" "$step" --rollback "$src" "$dst" USD "$excluded"
+psql_q -d "$dst_db" -c "UPDATE $schema.credit_reservation SET released_amount = 0, updated_at = created_at WHERE reference = '101'" \
+  -c "UPDATE $schema.customer SET used_credit = used_credit + 1000 WHERE customer_id = '1'"
+psql_q -d "$dst_db" -c "INSERT INTO $schema.credit_movement (movement_id, customer_id, idempotency_key, movement_type, currency, amount, reference, occurred_at) VALUES (gen_random_uuid(), '3', 'k-1', 'RESERVE', 'USD', 100, 'LN-NEW-1', now())"
+expect_refusal "a rollback refuses when the service journalled a credit movement" "^3 the service journalled credit movements" "$step" --rollback "$src" "$dst" USD "$excluded"
+psql_q -d "$dst_db" -c "DELETE FROM $schema.credit_movement"
+positions "a refused rollback changes nothing" "1:20000.00,2:9000.00,3:25000.00 5/54000.00"
+
+STEP3A_DRY_RUN=true "$step" --rollback "$src" "$dst" USD "$excluded" > "$report"
+grep -q "dry run: would delete 5 reservation(s), rolled back" "$report" || { cat "$report"; echo "FAIL the dry-run rollback did not say what it would delete" >&2; exit 1; }
+positions "a dry-run rollback writes nothing" "1:20000.00,2:9000.00,3:25000.00 5/54000.00"
+
+echo "--- a reservation that names no monolith loan survives the rollback and still counts in used_credit"
+psql_q -d "$dst_db" -c "INSERT INTO $schema.credit_reservation (reservation_id, customer_id, reference, currency, reserved_amount, released_amount, created_at, updated_at) VALUES (gen_random_uuid(), '3', 'LN-KEEP-1', 'USD', 2500, 0, now(), now())" \
+  -c "UPDATE $schema.customer SET used_credit = used_credit + 2500 WHERE customer_id = '3'"
 "$step" --rollback "$src" "$dst" USD "$excluded"
+positions "the rollback recomputes used_credit from the reservations that remain" "1:0.00,2:0.00,3:2500.00 1/2500.00"
+psql_q -d "$dst_db" -c "DELETE FROM $schema.credit_reservation WHERE reference = 'LN-KEEP-1'" -c "UPDATE $schema.customer SET used_credit = 0 WHERE customer_id = '3'"
+
+echo "--- rollback done, then the loan of customer 2 grows to 8000: with 201 in, 11000 is over the 10000 limit"
 positions "the rollback deletes the reservations of monolith loans and resets used_credit to 0" "1:0.00,2:0.00,3:0.00 0/0.00"
 psql_q -d "$src_db" -c "UPDATE loans SET loan_amount = 8000 WHERE id = '202'"
 expect_refusal "a customer whose open reservations exceed the credit limit fails" "^2 open reservations 11000.00 exceed credit_limit 10000.00" "$step" "$src" "$dst" USD "$work/empty.txt"
