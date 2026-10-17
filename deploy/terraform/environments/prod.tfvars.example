@@ -10,6 +10,7 @@ observability_endpoint     = "https://otel.example.internal"
 # Roles that may use the database KMS key; every other principal is denied (key policy
 # DenyAllButAllowedKeyUsers). At least the role that runs this Terraform. Never an External Secrets role.
 database_key_user_role_arns = ["arn:aws:iam::<account>:role/<prod-terraform-deployer>"]
+database_key_admin_role_arns = ["arn:aws:iam::<account>:role/<prod-terraform-deployer>"]
 aurora_instance_count      = 3
 aurora_max_capacity        = 16
 backup_retention_days      = 35

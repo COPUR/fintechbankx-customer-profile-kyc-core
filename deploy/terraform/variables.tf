@@ -143,6 +143,26 @@ variable "database_key_user_role_arns" {
   }
 }
 
+variable "database_key_admin_role_arns" {
+  type        = list(string)
+  description = "IAM role ARNs that may administer aws_kms_key.database (PutKeyPolicy, ScheduleKeyDeletion, DisableKey, DisableKeyRotation). Include the role that runs this Terraform, or it cannot update the key policy. Every other principal is denied these actions by the key policy, except the account root user (break-glass). Per environment, from platform's key-admin role naming."
+
+  validation {
+    condition     = length(var.database_key_admin_role_arns) >= 1
+    error_message = "database_key_admin_role_arns needs at least the role that runs this Terraform, or the key policy can no longer be updated."
+  }
+
+  validation {
+    condition     = alltrue([for a in var.database_key_admin_role_arns : can(regex("^arn:aws[a-z-]*:iam::[0-9]{12}:role/[^*?]+$", a))])
+    error_message = "database_key_admin_role_arns takes full IAM role ARNs without wildcards (arn:<partition>:iam::<account>:role/<path/name>)."
+  }
+
+  validation {
+    condition     = alltrue([for a in var.database_key_admin_role_arns : !strcontains(lower(a), "external-secrets")])
+    error_message = "database_key_admin_role_arns must not name an External Secrets role (ADR-023)."
+  }
+}
+
 variable "hpa_max_replicas" {
   type        = number
   description = "autoscaling.maxReplicas of the Helm values for this environment; sizes the connection alarm."

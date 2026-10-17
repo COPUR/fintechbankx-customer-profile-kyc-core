@@ -51,6 +51,7 @@ variables {
     "arn:aws:iam::111122223333:role/dev-terraform-deployer",
     "arn:aws:iam::111122223333:role/dev-dba-break-glass",
   ]
+  database_key_admin_role_arns = ["arn:aws:iam::111122223333:role/dev-terraform-deployer"]
 }
 
 run "database_key_denies_every_principal_outside_the_allow_list" {

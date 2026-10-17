@@ -35,16 +35,17 @@ mock_provider "aws" {
 }
 
 variables {
-  aws_region                  = "me-central-1"
-  environment                 = "dev"
-  vpc_id                      = "vpc-0123456789abcdef0"
-  private_subnet_ids          = ["subnet-0123456789abcdef0", "subnet-0fedcba9876543210"]
-  workload_security_group_id  = "sg-0123456789abcdef0"
-  eks_oidc_provider_arn       = "arn:aws:iam::111122223333:oidc-provider/oidc.eks.me-central-1.amazonaws.com/id/EXAMPLE"
-  eks_oidc_provider_url       = "oidc.eks.me-central-1.amazonaws.com/id/EXAMPLE"
-  identity_provider_url       = "https://identity.dev.example.internal/realms/fintechbankx"
-  observability_endpoint      = "https://otel.dev.example.internal"
-  database_key_user_role_arns = ["arn:aws:iam::111122223333:role/dev-terraform-deployer"]
+  aws_region                   = "me-central-1"
+  environment                  = "dev"
+  vpc_id                       = "vpc-0123456789abcdef0"
+  private_subnet_ids           = ["subnet-0123456789abcdef0", "subnet-0fedcba9876543210"]
+  workload_security_group_id   = "sg-0123456789abcdef0"
+  eks_oidc_provider_arn        = "arn:aws:iam::111122223333:oidc-provider/oidc.eks.me-central-1.amazonaws.com/id/EXAMPLE"
+  eks_oidc_provider_url        = "oidc.eks.me-central-1.amazonaws.com/id/EXAMPLE"
+  identity_provider_url        = "https://identity.dev.example.internal/realms/fintechbankx"
+  observability_endpoint       = "https://otel.dev.example.internal"
+  database_key_user_role_arns  = ["arn:aws:iam::111122223333:role/dev-terraform-deployer"]
+  database_key_admin_role_arns = ["arn:aws:iam::111122223333:role/dev-terraform-deployer"]
 }
 
 run "secrets_and_database_use_separate_keys" {

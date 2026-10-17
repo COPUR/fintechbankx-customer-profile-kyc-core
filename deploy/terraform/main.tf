@@ -65,11 +65,29 @@ resource "aws_kms_key" "database" {
     Version = "2012-10-17"
     Statement = [
       {
+        # Kept so the account can never lose the key (AWS's lockout safety); key use and key
+        # administration are narrowed by the deny statements below.
         Sid       = "EnableIamPolicies"
         Effect    = "Allow"
         Principal = { AWS = "arn:${data.aws_partition.current.partition}:iam::${data.aws_caller_identity.current.account_id}:root" }
         Action    = "kms:*"
         Resource  = "*"
+      },
+      {
+        # Only the named key admins (and the account root user, the break-glass path) may edit the
+        # policy, schedule deletion or disable the key, so no IAM grant can remove these denies.
+        Sid       = "DenyKeyAdministrationOutsideKeyAdmins"
+        Effect    = "Deny"
+        Principal = { AWS = "*" }
+        Action    = ["kms:PutKeyPolicy", "kms:ScheduleKeyDeletion", "kms:DisableKey", "kms:DisableKeyRotation"]
+        Resource  = "*"
+        Condition = {
+          ArnNotLike = {
+            "aws:PrincipalArn" = concat(var.database_key_admin_role_arns, [
+              "arn:${data.aws_partition.current.partition}:iam::${data.aws_caller_identity.current.account_id}:root",
+            ])
+          }
+        }
       },
       {
         Sid       = "DenyExternalSecrets"
@@ -132,6 +150,10 @@ resource "aws_kms_key" "database" {
     precondition {
       condition     = alltrue([for a in var.database_key_user_role_arns : split(":", a)[4] == data.aws_caller_identity.current.account_id])
       error_message = "database_key_user_role_arns must name roles in the account this Terraform runs in."
+    }
+    precondition {
+      condition     = alltrue([for a in var.database_key_admin_role_arns : split(":", a)[4] == data.aws_caller_identity.current.account_id])
+      error_message = "database_key_admin_role_arns must name roles in the account this Terraform runs in."
     }
   }
 }
