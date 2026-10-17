@@ -1,0 +1,14 @@
+# Waivers of the OpenAPI and AsyncAPI breaking-change gates need the API owner's review
+# (any *.accepted-breaking.txt, as in delivery-iac-cicd-templates #11 13d09a1).
+api/openapi/*.accepted-breaking.txt @COPUR
+**/*.accepted-breaking.txt @COPUR
+
+# Platform guard (fintechbankx-platform-delivery-iac-cicd-templates,
+# charts/fintechbankx-service README, "Vendoring the guard"; vendored at 73e1881): only the
+# platform owners approve a change to the vendored file, the verifier, the workflow that pins
+# the digest, or this file. Keep below every broader rule (the last matching rule wins).
+/deploy/helm/*/templates/_fbx_helpers.tpl   @COPUR
+/scripts/ci/verify-vendored-guard.sh        @COPUR
+/.github/workflows/deployability.yml        @COPUR
+/scripts/ci/chart-render-probes.sh          @COPUR
+/.github/CODEOWNERS                         @COPUR

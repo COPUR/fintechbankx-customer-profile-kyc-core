@@ -67,17 +67,21 @@ public final class CreditProfile implements ValueObject {
         return new CreditProfile(creditLimit, usedCredit.add(amount));
     }
     
+    /**
+     * Gives back used credit. More than is used is refused, never floored at
+     * zero; which release is allowed at all (by reservation) is the
+     * Customer's rule.
+     */
     public CreditProfile releaseCredit(Money amount) {
-        Money newUsedCredit = usedCredit.subtract(amount);
-        if (newUsedCredit.isNegative()) {
-            newUsedCredit = Money.zero(usedCredit.getCurrency());
+        if (amount.compareTo(usedCredit) > 0) {
+            throw new IllegalArgumentException("Release exceeds used credit");
         }
-        return new CreditProfile(creditLimit, newUsedCredit);
+        return new CreditProfile(creditLimit, usedCredit.subtract(amount));
     }
     
     public CreditProfile updateCreditLimit(Money newCreditLimit) {
         if (newCreditLimit.compareTo(usedCredit) < 0) {
-            throw new IllegalArgumentException("New credit limit cannot be less than used credit");
+            throw new CreditLimitBelowUsedCreditException("New credit limit cannot be less than used credit");
         }
         return new CreditProfile(newCreditLimit, usedCredit);
     }

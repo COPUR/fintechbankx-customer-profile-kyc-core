@@ -1,0 +1,12 @@
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: {{ include "customer.name" . }}
+  labels:
+    {{- include "customer.labels" . | nindent 4 }}
+spec:
+  {{- $min := .Values.podDisruptionBudget.minAvailable }}
+  minAvailable: {{ if kindIs "string" $min }}{{ $min | quote }}{{ else }}{{ $min | int }}{{ end }}
+  selector:
+    matchLabels:
+      {{- include "customer.podSelectorLabels" . | nindent 6 }}

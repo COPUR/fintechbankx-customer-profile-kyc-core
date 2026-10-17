@@ -1,0 +1,17 @@
+.gradle/
+build/
+**/build/
+*.iml
+.idea/
+/out/
+# Hexagonal port packages are named "out"; never ignore source directories.
+!**/src/**/out/
+
+# Terraform working files
+**/.terraform/
+**/.terraform.lock.hcl
+*.tfstate
+*.tfstate.*
+
+# npm dependencies of scripts/ci/asyncapi (installed by npm ci in CI)
+node_modules/

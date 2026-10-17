@@ -21,16 +21,137 @@ class CustomerContextOpenApiContractTest {
         assertThat(spec).contains("\n  /api/v1/customers/{customerId}/credit-limit:\n");
         assertThat(spec).contains("\n  /api/v1/customers/{customerId}/credit/reserve:\n");
         assertThat(spec).contains("\n  /api/v1/customers/{customerId}/credit/release:\n");
+        assertThat(spec).contains("\n  /api/v1/customers/{customerId}/identity-link:\n");
+    }
+
+    /**
+     * Platform contract addendum 2026-10-08: DPoP binds open-finance TPP
+     * tokens only. This service is called with internal client-credentials,
+     * staff and first-party customer tokens, so the contract must not promise
+     * a DPoP check the service does not make.
+     */
+    @Test
+    @SuppressWarnings("unchecked")
+    void theDpopHeaderIsOptionalAndSaysWhyThisServiceDoesNotVerifyIt() throws IOException {
+        java.util.Map<String, Object> spec = new org.yaml.snakeyaml.Yaml().load(loadSpec());
+        java.util.Map<String, Object> dpop = (java.util.Map<String, Object>) ((java.util.Map<String, Object>)
+            ((java.util.Map<String, Object>) spec.get("components")).get("parameters")).get("DPoP");
+
+        assertThat(dpop).containsEntry("name", "DPoP").containsEntry("in", "header").containsEntry("required", false);
+        assertThat((String) dpop.get("description")).contains("TPP").contains("not verify");
+        java.util.Map<String, Object> paths = (java.util.Map<String, Object>) spec.get("paths");
+        paths.forEach((path, item) -> ((java.util.Map<String, Object>) item).forEach((method, operation) -> {
+            List<java.util.Map<String, Object>> security = (List<java.util.Map<String, Object>>)
+                ((java.util.Map<String, Object>) operation).get("security");
+            assertThat(security).as("%s %s security: bearer only, no dpopAuth alternative", method, path)
+                .containsExactly(java.util.Map.of("bearerAuth", List.of()));
+        }));
+        java.util.Map<String, Object> schemes = (java.util.Map<String, Object>) ((java.util.Map<String, Object>)
+            spec.get("components")).get("securitySchemes");
+        assertThat(schemes).containsOnlyKeys("bearerAuth");
+    }
+
+    /** Review 5456301261: a replay is recognised only when the whole movement matches. */
+    @Test
+    @SuppressWarnings("unchecked")
+    void reserveAndReleaseStateTheFullReplayKey() throws IOException {
+        java.util.Map<String, Object> spec = new org.yaml.snakeyaml.Yaml().load(loadSpec());
+        java.util.Map<String, Object> paths = (java.util.Map<String, Object>) spec.get("paths");
+        for (String path : List.of("/api/v1/customers/{customerId}/credit/reserve",
+                "/api/v1/customers/{customerId}/credit/release")) {
+            java.util.Map<String, Object> post = (java.util.Map<String, Object>)
+                ((java.util.Map<String, Object>) paths.get(path)).get("post");
+            assertThat(((String) post.get("description")).replaceAll("\\s+", " "))
+                .as(path).contains("same key, movement type, amount, currency and reference");
+        }
     }
 
     @Test
-    void shouldRequireDpopForProtectedOperations() throws IOException {
-        String spec = loadSpec();
+    @SuppressWarnings("unchecked")
+    void creditMovementsAnswerWithTheCreditPositionOnly() throws IOException {
+        java.util.Map<String, Object> spec = new org.yaml.snakeyaml.Yaml().load(loadSpec());
+        java.util.Map<String, Object> paths = (java.util.Map<String, Object>) spec.get("paths");
 
-        assertThat(spec).contains("name: DPoP");
-        assertThat(spec).contains("required: true");
-        assertThat(spec).contains("/api/v1/customers:");
-        assertThat(spec).contains("security:");
+        for (String path : List.of("/api/v1/customers/{customerId}/credit/reserve",
+                "/api/v1/customers/{customerId}/credit/release", "/api/v1/customers/{customerId}/credit")) {
+            java.util.Map<String, Object> operations = (java.util.Map<String, Object>) paths.get(path);
+            java.util.Map<String, Object> operation = (java.util.Map<String, Object>)
+                operations.getOrDefault("post", operations.get("get"));
+            java.util.Map<String, Object> ok = (java.util.Map<String, Object>)
+                ((java.util.Map<String, Object>) operation.get("responses")).get("200");
+            java.util.Map<String, Object> schema = (java.util.Map<String, Object>) ((java.util.Map<String, Object>)
+                ((java.util.Map<String, Object>) ok.get("content")).get("application/json")).get("schema");
+            assertThat(schema.get("$ref")).as(path).isEqualTo("#/components/schemas/CustomerCreditResponse");
+        }
+    }
+
+    /** Release by reference (loan PR #14 review): the two new refusals are documented on the release 422. */
+    @Test
+    @SuppressWarnings("unchecked")
+    void releaseDocumentsTheReservationRefusals() throws IOException {
+        java.util.Map<String, Object> spec = new org.yaml.snakeyaml.Yaml().load(loadSpec());
+        java.util.Map<String, Object> release = (java.util.Map<String, Object>) ((java.util.Map<String, Object>)
+            ((java.util.Map<String, Object>) spec.get("paths")).get("/api/v1/customers/{customerId}/credit/release")).get("post");
+        java.util.Map<String, Object> unprocessable = (java.util.Map<String, Object>)
+            ((java.util.Map<String, Object>) release.get("responses")).get("422");
+
+        assertThat((String) unprocessable.get("description"))
+            .contains("CURRENCY_MISMATCH", "RELEASE_EXCEEDS_RESERVATION", "RESERVATION_NOT_FOUND");
+        assertThat(((String) release.get("description")).replaceAll("\\s+", " "))
+            .contains("untracked used credit")
+            .contains("more is 422 RELEASE_EXCEEDS_RESERVATION (0 < held < amount)")
+            .contains("A release whose reference names a reservation that holds nothing any more (fully released), "
+                + "or matches no reservation at all, is always 422 RESERVATION_NOT_FOUND, whatever the amount")
+            .contains("Only a release without a reference releases untracked used credit")
+            .doesNotContain("or whose reference matches no reservation");
+        assertThat(((String) unprocessable.get("description")).replaceAll("\\s+", " "))
+            .contains("RELEASE_EXCEEDS_RESERVATION, the named reservation still holds something but less than the release")
+            .contains("RESERVATION_NOT_FOUND, the reference matches no reservation or names one that holds nothing any more, "
+                + "or a release without a reference is larger than the untracked used credit");
+    }
+
+    /** The loan service is the consumer; its keys must be deterministic so a retry resends the same key. */
+    @Test
+    @SuppressWarnings("unchecked")
+    void theIdempotencyKeyIsDocumentedAsDerivedFromTheLoan() throws IOException {
+        java.util.Map<String, Object> spec = new org.yaml.snakeyaml.Yaml().load(loadSpec());
+        java.util.Map<String, Object> key = (java.util.Map<String, Object>) ((java.util.Map<String, Object>)
+            ((java.util.Map<String, Object>) spec.get("components")).get("parameters")).get("IdempotencyKey");
+
+        assertThat((String) key.get("description"))
+            .contains("deterministic")
+            .contains("<loanId>:reserve")
+            .contains("<loanId>:release")
+            .contains("random");
+    }
+
+    /** Payments reads only the KYC fields; staff set the status. No personal data in either answer. */
+    @Test
+    @SuppressWarnings("unchecked")
+    void theKycStatusEndpointsAnswerWithTheKycFieldsOnly() throws IOException {
+        java.util.Map<String, Object> spec = new org.yaml.snakeyaml.Yaml().load(loadSpec());
+        java.util.Map<String, Object> kyc = (java.util.Map<String, Object>)
+            ((java.util.Map<String, Object>) spec.get("paths")).get("/api/v1/customers/{customerId}/kyc-status");
+
+        assertThat(kyc).as("kyc-status path").containsKeys("get", "put");
+        for (String method : List.of("get", "put")) {
+            java.util.Map<String, Object> responses = (java.util.Map<String, Object>)
+                ((java.util.Map<String, Object>) kyc.get(method)).get("responses");
+            java.util.Map<String, Object> schema = (java.util.Map<String, Object>) ((java.util.Map<String, Object>)
+                ((java.util.Map<String, Object>) ((java.util.Map<String, Object>) responses.get("200")).get("content"))
+                    .get("application/json")).get("schema");
+            assertThat(schema.get("$ref")).isEqualTo("#/components/schemas/KycStatusResponse");
+            assertThat(responses).containsKey("404");
+        }
+        java.util.Map<String, Object> schemas = (java.util.Map<String, Object>)
+            ((java.util.Map<String, Object>) spec.get("components")).get("schemas");
+        java.util.Map<String, Object> response = (java.util.Map<String, Object>) schemas.get("KycStatusResponse");
+        assertThat(((java.util.Map<String, Object>) response.get("properties")).keySet())
+            .containsExactlyInAnyOrder("customerId", "kycVerified", "kycStatus", "kycSource", "verifiedAt");
+        java.util.Map<String, Object> request = (java.util.Map<String, Object>) schemas.get("ChangeKycStatusRequest");
+        java.util.Map<String, Object> status = (java.util.Map<String, Object>)
+            ((java.util.Map<String, Object>) request.get("properties")).get("status");
+        assertThat((List<String>) status.get("enum")).containsExactly("VERIFIED", "REJECTED");
     }
 
     private static String loadSpec() throws IOException {
