@@ -21,7 +21,7 @@ dst="dbname=$dst_db"
 psql_q() { psql -X -q -v ON_ERROR_STOP=1 "$@"; }
 
 for db in "$src_db" "$dst_db"; do
-  psql_q -d postgres -c "DROP DATABASE IF EXISTS $db" -c "CREATE DATABASE $db"
+  psql_q -d postgres -c "DROP DATABASE IF EXISTS $db WITH (FORCE)" -c "CREATE DATABASE $db"
 done
 psql_q -d "$src_db" -f "$root/db/backfill/test/monolith_fixture.sql" -f "$root/db/backfill/test/monolith_loans_fixture.sql"
 
@@ -33,7 +33,9 @@ done
 "$root/db/backfill/run-backfill.sh" "$src" "$dst" USD > /dev/null
 
 work="$(mktemp -d)"
-trap 'rm -rf "$work"' EXIT
+# Ends any open-write holder session left by a failed check (see hold_open_write below).
+end_holders() { psql -X -q -d postgres -c "SELECT pg_terminate_backend(pid) FROM pg_stat_activity WHERE application_name = 'step3a-holder' AND pid <> pg_backend_pid()" > /dev/null 2>&1 || true; }
+trap 'end_holders; rm -rf "$work"' EXIT
 report="$work/report"
 excluded="$work/never-disbursed.txt"
 printf '# never-disbursed loans, from the lending squad\n201\n\n' > "$excluded"
@@ -119,11 +121,16 @@ positions "a refused rollback changes nothing" "1:20000.00,2:9000.00,3:25000.00 
 # must wait for it (and then see its rows), not read past it. With a short
 # lock timeout the run fails instead of waiting.
 hold_open_write() {
-  printf '%s\nSELECT pg_sleep(15);\nROLLBACK;\n' "BEGIN; $1;" | psql -X -q -d "$dst_db" > /dev/null 2>&1 &
+  printf '%s\nSELECT pg_sleep(15);\nROLLBACK;\n' "BEGIN; $1;" | PGAPPNAME=step3a-holder psql -X -q -d "$dst_db" > /dev/null 2>&1 &
   holder=$!
-  sleep 1
+  # Wait until the holder's write has taken its lock, rather than a fixed sleep.
+  for _ in $(seq 1 100); do
+    [ "$(psql -X -At -d "$dst_db" -c "SELECT count(*) FROM pg_stat_activity WHERE application_name = 'step3a-holder' AND pid <> pg_backend_pid() AND state = 'active' AND query LIKE '%pg_sleep%'")" = 1 ] && return 0
+    sleep 0.1
+  done
+  echo "FAIL the open-write holder did not start" >&2; exit 1
 }
-release_holder() { kill "$holder" 2>/dev/null || true; wait "$holder" 2>/dev/null || true; }
+release_holder() { end_holders; wait "$holder" 2>/dev/null || true; }
 hold_open_write "INSERT INTO $schema.credit_movement (movement_id, customer_id, idempotency_key, movement_type, currency, amount, reference, occurred_at) VALUES (gen_random_uuid(), '1', 'k-open', 'RELEASE', 'USD', 100, '101', now())"
 expect_refusal "a rollback waits for an open service write instead of reading past it" "lock timeout" \
   env STEP3A_LOCK_TIMEOUT=2s "$step" --rollback "$src" "$dst" USD "$excluded"
