@@ -61,32 +61,83 @@ resource "aws_kms_key" "database" {
   enable_key_rotation     = true
   deletion_window_in_days = 30
 
+  # No statement allows the account root, so IAM alone grants nothing on this key: every
+  # principal that may use or administer it is named here (platform, round 11). Two kinds of
+  # administrator per environment, so losing one never locks the key: the deployer tf-apply
+  # roles and a break-glass Identity Center administrator role. Only break-glass may disable
+  # or enable the key. The tf-apply role must be in database_key_admin_role_arns, or KMS
+  # refuses the policy (lockout safety check).
   policy = jsonencode({
     Version = "2012-10-17"
-    Statement = [
+    Statement = concat([
       {
-        # Kept so the account can never lose the key (AWS's lockout safety); key use and key
-        # administration are narrowed by the deny statements below.
-        Sid       = "EnableIamPolicies"
+        Sid       = "AllowKeyAdministrationByDeployer"
         Effect    = "Allow"
-        Principal = { AWS = "arn:${data.aws_partition.current.partition}:iam::${data.aws_caller_identity.current.account_id}:root" }
-        Action    = "kms:*"
+        Principal = { AWS = var.database_key_admin_role_arns }
+        Action = [
+          "kms:DescribeKey", "kms:GetKeyPolicy", "kms:GetKeyRotationStatus", "kms:ListResourceTags",
+          "kms:PutKeyPolicy", "kms:ScheduleKeyDeletion", "kms:CancelKeyDeletion", "kms:EnableKeyRotation",
+          "kms:UpdateKeyDescription", "kms:TagResource", "kms:UntagResource",
+          "kms:CreateAlias", "kms:UpdateAlias", "kms:DeleteAlias",
+        ]
+        Resource = "*"
+      },
+      {
+        Sid       = "AllowKeyAdministrationByBreakGlass"
+        Effect    = "Allow"
+        Principal = { AWS = var.database_key_break_glass_role_arns }
+        Action = [
+          "kms:DescribeKey", "kms:GetKeyPolicy", "kms:GetKeyRotationStatus", "kms:ListResourceTags", "kms:ListGrants",
+          "kms:PutKeyPolicy", "kms:ScheduleKeyDeletion", "kms:CancelKeyDeletion",
+          "kms:EnableKey", "kms:DisableKey", "kms:EnableKeyRotation", "kms:DisableKeyRotation",
+          "kms:UpdateKeyDescription", "kms:TagResource", "kms:UntagResource",
+          "kms:CreateAlias", "kms:UpdateAlias", "kms:DeleteAlias", "kms:RevokeGrant",
+        ]
+        Resource = "*"
+      },
+      {
+        # The listed deployer, DBA and restore roles use the key only through RDS and the
+        # RDS-managed master secret in this region; grants only for AWS resources.
+        Sid       = "AllowKeyUsersThroughRdsAndSecretsManager"
+        Effect    = "Allow"
+        Principal = { AWS = var.database_key_user_role_arns }
+        Action    = ["kms:Encrypt", "kms:Decrypt", "kms:ReEncrypt*", "kms:GenerateDataKey*", "kms:DescribeKey", "kms:CreateGrant"]
+        Resource  = "*"
+        Condition = {
+          StringEquals = {
+            "kms:ViaService" = [
+              "rds.${var.aws_region}.amazonaws.com",
+              "secretsmanager.${var.aws_region}.amazonaws.com",
+            ]
+          }
+        }
+      },
+      {
+        Sid       = "AllowRdsServiceLinkedRole"
+        Effect    = "Allow"
+        Principal = { AWS = ["arn:${data.aws_partition.current.partition}:iam::${data.aws_caller_identity.current.account_id}:role/aws-service-role/rds.amazonaws.com/AWSServiceRoleForRDS"] }
+        Action    = ["kms:Encrypt", "kms:Decrypt", "kms:ReEncrypt*", "kms:GenerateDataKey*", "kms:DescribeKey", "kms:CreateGrant", "kms:ListGrants", "kms:RetireGrant"]
         Resource  = "*"
       },
       {
-        # Only the named key admins (and the account root user, the break-glass path) may edit the
-        # policy, schedule deletion or disable the key, so no IAM grant can remove these denies.
+        # Denies stay so a statement added later cannot widen administration.
         Sid       = "DenyKeyAdministrationOutsideKeyAdmins"
         Effect    = "Deny"
         Principal = { AWS = "*" }
-        Action    = ["kms:PutKeyPolicy", "kms:ScheduleKeyDeletion", "kms:DisableKey", "kms:DisableKeyRotation"]
+        Action    = ["kms:PutKeyPolicy", "kms:ScheduleKeyDeletion", "kms:CancelKeyDeletion"]
         Resource  = "*"
         Condition = {
-          ArnNotLike = {
-            "aws:PrincipalArn" = concat(var.database_key_admin_role_arns, [
-              "arn:${data.aws_partition.current.partition}:iam::${data.aws_caller_identity.current.account_id}:root",
-            ])
-          }
+          ArnNotLike = { "aws:PrincipalArn" = concat(var.database_key_admin_role_arns, var.database_key_break_glass_role_arns) }
+        }
+      },
+      {
+        Sid       = "DenyKeyStateChangesOutsideBreakGlass"
+        Effect    = "Deny"
+        Principal = { AWS = "*" }
+        Action    = ["kms:DisableKey", "kms:EnableKey", "kms:DisableKeyRotation"]
+        Resource  = "*"
+        Condition = {
+          ArnNotLike = { "aws:PrincipalArn" = var.database_key_break_glass_role_arns }
         }
       },
       {
@@ -143,7 +194,16 @@ resource "aws_kms_key" "database" {
           Bool = { "kms:GrantIsForAWSResource" = "false" }
         }
       },
-    ]
+      ], length(var.database_key_reader_role_arns) == 0 ? [] : [
+      {
+        # The tf-plan role reads the key; it cannot change or use it.
+        Sid       = "AllowPlanRead"
+        Effect    = "Allow"
+        Principal = { AWS = var.database_key_reader_role_arns }
+        Action    = ["kms:DescribeKey", "kms:GetKeyPolicy", "kms:GetKeyRotationStatus", "kms:ListResourceTags"]
+        Resource  = "*"
+      },
+    ])
   })
 
   lifecycle {
@@ -154,6 +214,14 @@ resource "aws_kms_key" "database" {
     precondition {
       condition     = alltrue([for a in var.database_key_admin_role_arns : split(":", a)[4] == data.aws_caller_identity.current.account_id])
       error_message = "database_key_admin_role_arns must name roles in the account this Terraform runs in."
+    }
+    precondition {
+      condition     = alltrue([for a in concat(var.database_key_break_glass_role_arns, var.database_key_reader_role_arns) : split(":", a)[4] == data.aws_caller_identity.current.account_id])
+      error_message = "database_key_break_glass_role_arns and database_key_reader_role_arns must name roles in the account this Terraform runs in."
+    }
+    precondition {
+      condition     = length(setintersection(var.database_key_admin_role_arns, var.database_key_break_glass_role_arns)) == 0
+      error_message = "database_key_break_glass_role_arns must be a different role from the deployer roles in database_key_admin_role_arns, so losing one never locks the key."
     }
   }
 }
