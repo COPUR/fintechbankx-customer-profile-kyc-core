@@ -75,16 +75,13 @@ jobs:
 
           # A password value is tested one match at a time. An empty value, a placeholder (<name>, ${NAME}, ${NAME:}, ${NAME:-},
           # ${NAME:?message}, a nested ${...} default, var.name, env.NAME), an environment or Terraform reference (env(...),
-          # System.getenv(...), resource.name.attr), a Helm action {{ ... }} or a whole boolean (true or false) is not a secret.
+          # System.getenv(...), a getter x.getPassword(), resource.name.attr), a Helm action {{ ... }} or a whole boolean (true or false)
+          # is not a secret.
           # Any other value is reported, including a literal shell default such as ${NAME:-value} or ${NAME:=value}, a value
           # glued to a placeholder such as ${NAME}abc, and a key whose name ends in password (DB_PASSWORD, dbPassword, PGPASSWORD).
-          PLACEHOLDER='password\s*[:=]\s*[\x22\x27]?(<[A-Za-z0-9_. -]+>|\$\{[A-Za-z_][A-Za-z0-9_.-]*(:(\$\{[A-Za-z0-9_.:-]*\})?|:-)?\}|\$\{[A-Za-z_][A-Za-z0-9_.-]*:\?[^\s}]*\}?|-\}|var\.[A-Za-z_][A-Za-z0-9_]*|env\.[A-Za-z_][A-Za-z0-9_]*|env\([^)]*\)|[A-Za-z_.]*[Gg]etenv\([^)]*\)|[a-z]+(_[a-z0-9]+)+\.[A-Za-z][A-Za-z0-9_-]*\.[a-z_]+|true|false|\{\{([^\s}]*\}\})?)?[\x22\x27]?\s*$'
+          PLACEHOLDER='password\s*[:=]\s*[\x22\x27]?(<[A-Za-z0-9_. -]+>|\$\{[A-Za-z_][A-Za-z0-9_.-]*(:(\$\{[A-Za-z0-9_.:-]*\})?|:-)?\}|\$\{[A-Za-z_][A-Za-z0-9_.-]*:\?[^\s}]*\}?|-\}|var\.[A-Za-z_][A-Za-z0-9_]*|env\.[A-Za-z_][A-Za-z0-9_]*|env\([^)]*\)|[A-Za-z_.]*[Gg]etenv\([^)]*\)|[A-Za-z_][A-Za-z0-9_.]*\.[Gg]et[A-Za-z0-9_]*\([^)]*\)|[a-z]+(_[a-z0-9]+)+\.[A-Za-z][A-Za-z0-9_-]*\.[a-z_]+|true|false|\{\{([^\s}]*\}\})?)?[\x22\x27]?\s*$'
           status=0
-          # Listed exemption for this repo (password values only; key and token formats still scan these files):
-          # the integration-test helpers that create throwaway roles in the ephemeral test database.
-          PASSWORD_EXEMPT=(--glob '!customer-bootstrap/src/test/java/com/bank/customer/PostgresTestDatabase.java' \
-            --glob '!customer-infrastructure/src/test/java/com/bank/customer/infrastructure/persistence/PostgresTestDatabase.java')
-          values=$(rg -i -o -n '[A-Za-z0-9_.-]*password\s*[:=]\s*[^\s,;#\x60]*' . "${EXCLUDES[@]}" "${PASSWORD_EXEMPT[@]}") || status=$?
+          values=$(rg -i -o -n '[A-Za-z0-9_.-]*password\s*[:=]\s*[^\s,;#\x60]*' . "${EXCLUDES[@]}") || status=$?
           case $status in
             0) ;;
             1) values= ;;
@@ -92,7 +89,23 @@ jobs:
           esac
           if [ -n "$values" ]; then
             status=0
+            # Listed exemptions for this repo: exact path and matched text (the line number is ignored), each with its reason.
+            # Any other line, the same text in another file included, is still reported (scripts/ci/secret-scan-exemptions-test.sh).
+            ALLOWED=(
+              # throwaway runtime role the integration tests create in the ephemeral test database
+              './customer-bootstrap/src/test/java/com/bank/customer/PostgresTestDatabase.java:RUNTIME_PASSWORD = "customer_runtime_it"'
+              # local fallback for the ephemeral test database owner when TEST_DB_PASSWORD is unset
+              './customer-bootstrap/src/test/java/com/bank/customer/PostgresTestDatabase.java:ownerPassword = env("TEST_DB_PASSWORD"'
+              # throwaway runtime role the integration tests create in the ephemeral test database
+              './customer-infrastructure/src/test/java/com/bank/customer/infrastructure/persistence/PostgresTestDatabase.java:RUNTIME_PASSWORD = "customer_runtime_it"'
+              # local fallback for the ephemeral test database owner when TEST_DB_PASSWORD is unset
+              './customer-infrastructure/src/test/java/com/bank/customer/infrastructure/persistence/PostgresTestDatabase.java:testPassword = env("TEST_DB_PASSWORD"'
+            )
             kept=$(printf '%s\n' "$values" | rg -v -i -e "$PLACEHOLDER") || status=$?
+            if [ "$status" -eq 0 ]; then
+              status=0
+              kept=$(printf '%s\n' "$kept" | sed -E 's/^([^:]*):[0-9]+:/\1:/' | grep -vxF -f <(printf '%s\n' "${ALLOWED[@]}")) || status=$?
+            fi
             case $status in
               0) echo "$kept"; found=1 ;;
               1) ;;
@@ -104,6 +117,8 @@ jobs:
             echo "Potential secret pattern detected"
             exit 1
           fi
+      - name: Listed exemptions stay exact
+        run: bash scripts/ci/secret-scan-exemptions-test.sh
 
   readme-doc-link-check:
     runs-on: ubuntu-latest
