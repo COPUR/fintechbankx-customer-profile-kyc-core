@@ -76,6 +76,7 @@ config:
   SERVICE_CALLERS: svc-ln-loan-lifecycle   # token azp values allowed to read and move credit
   SERVICE_CALLERS_KYC: svc-pay-initiation-settlement   # token azp values allowed to read the KYC status
   SERVICE_CALLERS_CREDIT_STANDING: svc-rsk-decisioning   # token azp values allowed to read the credit standing (position with the score); no movements
+  SERVICE_CALLERS_SCREENING: svc-cmp-evidence   # token azp values allowed to read the screening profile (name and KYC status only)
   # Off (as the application default): the relay cannot reach
   # MSK until mesh #11's egress is applied. Turn it on with
   # --set config.OUTBOX_RELAY_ENABLED=true (runbook step 6). Events wait in the

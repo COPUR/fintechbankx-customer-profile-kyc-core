@@ -7,7 +7,10 @@ import com.bank.customer.domain.port.in.CustomerProfile;
 import com.bank.customer.domain.port.in.CreditStanding;
 import com.bank.customer.domain.port.in.GetCreditPositionUseCase;
 import com.bank.customer.domain.port.in.GetCreditStandingUseCase;
+import com.bank.customer.domain.port.in.GetScreeningProfileUseCase;
+import com.bank.customer.domain.port.in.ScreeningProfile;
 import com.bank.customer.infrastructure.web.dto.CreditStandingResponse;
+import com.bank.customer.infrastructure.web.dto.ScreeningProfileResponse;
 import com.bank.customer.domain.port.in.GetCustomerProfileUseCase;
 import com.bank.customer.domain.port.in.MoveCreditUseCase;
 import com.bank.customer.domain.port.in.RegisterCustomerCommand;
@@ -42,6 +45,7 @@ class CustomerControllerTest {
     @Mock private GetCustomerProfileUseCase getCustomerProfile;
     @Mock private GetCreditPositionUseCase getCreditPosition;
     @Mock private GetCreditStandingUseCase getCreditStanding;
+    @Mock private GetScreeningProfileUseCase getScreeningProfile;
     @Mock private UpdateCreditLimitUseCase updateCreditLimit;
     @Mock private MoveCreditUseCase moveCredit;
 
@@ -50,7 +54,24 @@ class CustomerControllerTest {
     @BeforeEach
     void setUp() {
         controller = new CustomerController(registerCustomer, getCustomerProfile, getCreditPosition, getCreditStanding,
-            updateCreditLimit, moveCredit);
+            getScreeningProfile, updateCreditLimit, moveCredit);
+    }
+
+    /** The screening profile is the name and the KYC status, and nothing else: four fields, by type. */
+    @Test
+    void screeningProfileCarriesTheNameAndKycStatusOnly() throws Exception {
+        Customer customer = Customer.createWithCreditScore(CustomerId.of("CUST-WEB-011"), "Ali", "Sample",
+            "ali@example.com", "+971500000001", aed("1000.00"), 712);
+        when(getScreeningProfile.getScreeningProfile(CustomerId.of("CUST-WEB-011"))).thenReturn(ScreeningProfile.of(customer));
+
+        ScreeningProfileResponse body = controller.getScreeningProfile("CUST-WEB-011").getBody();
+
+        assertThat(body).isEqualTo(new ScreeningProfileResponse("CUST-WEB-011", "Ali", "Sample", "PENDING"));
+        assertThat(ScreeningProfileResponse.class.getRecordComponents())
+            .extracting(java.lang.reflect.RecordComponent::getName)
+            .containsExactly("customerId", "firstName", "lastName", "kycStatus");
+        assertThat(new com.fasterxml.jackson.databind.ObjectMapper().writeValueAsString(body))
+            .doesNotContain("example.com", "+9715", "712", "credit", "income");
     }
 
     /** The eligibility decider reads the score with the position, and nothing personal; a missing score is absent, not null. */

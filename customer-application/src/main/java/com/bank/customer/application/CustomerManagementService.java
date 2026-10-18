@@ -17,6 +17,8 @@ import com.bank.customer.domain.port.in.CustomerProfile;
 import com.bank.customer.domain.port.in.CreditStanding;
 import com.bank.customer.domain.port.in.GetCreditPositionUseCase;
 import com.bank.customer.domain.port.in.GetCreditStandingUseCase;
+import com.bank.customer.domain.port.in.GetScreeningProfileUseCase;
+import com.bank.customer.domain.port.in.ScreeningProfile;
 import com.bank.customer.domain.port.in.GetCustomerProfileUseCase;
 import com.bank.customer.domain.port.in.IdentityLink;
 import com.bank.customer.domain.port.in.LinkIdentityCommand;
@@ -54,7 +56,8 @@ import java.util.UUID;
 @Service
 @Transactional
 public class CustomerManagementService implements RegisterCustomerUseCase, GetCustomerProfileUseCase,
-        GetCreditPositionUseCase, GetCreditStandingUseCase, UpdateCreditLimitUseCase, MoveCreditUseCase, LinkIdentityUseCase,
+        GetCreditPositionUseCase, GetCreditStandingUseCase, GetScreeningProfileUseCase, UpdateCreditLimitUseCase,
+        MoveCreditUseCase, LinkIdentityUseCase,
         GetKycStatusUseCase, ChangeKycStatusUseCase {
 
     private final CustomerRepository customerRepository;
@@ -131,6 +134,13 @@ public class CustomerManagementService implements RegisterCustomerUseCase, GetCu
     @Transactional(readOnly = true)
     public CreditStanding getCreditStanding(CustomerId customerId) {
         return CreditStanding.of(load(customerId));
+    }
+
+    /** Name and KYC status only, for the compliance service (sanctions and PEP matching). */
+    @Override
+    @Transactional(readOnly = true)
+    public ScreeningProfile getScreeningProfile(CustomerId customerId) {
+        return ScreeningProfile.of(load(customerId));
     }
 
     /** KYC status only, for service callers (payments) that must not see personal data. */

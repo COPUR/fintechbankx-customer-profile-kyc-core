@@ -535,6 +535,24 @@ class CustomerManagementServiceTest {
     }
 
     @Test
+    void screeningProfileCarriesTheNameAndTheKycStatusOnly() {
+        Customer customer = existingCustomer();
+        when(customerRepository.findById(CustomerId.of("CUST-IDEM"))).thenReturn(Optional.of(customer));
+
+        com.bank.customer.domain.port.in.ScreeningProfile screening = service.getScreeningProfile(CustomerId.of("CUST-IDEM"));
+
+        assertThat(screening.customerId()).isEqualTo(CustomerId.of("CUST-IDEM"));
+        assertThat(screening.firstName()).isEqualTo(customer.getFirstName());
+        assertThat(screening.lastName()).isEqualTo(customer.getLastName());
+        assertThat(screening.kycStatus()).isEqualTo(customer.getKycStatus());
+        assertThat(com.bank.customer.domain.port.in.ScreeningProfile.class.getRecordComponents())
+            .extracting(java.lang.reflect.RecordComponent::getName)
+            .containsExactly("customerId", "firstName", "lastName", "kycStatus");
+        when(customerRepository.findById(CustomerId.of("CUST-NONE"))).thenReturn(Optional.empty());
+        assertThatThrownBy(() -> service.getScreeningProfile(CustomerId.of("CUST-NONE"))).isInstanceOf(CustomerNotFoundException.class);
+    }
+
+    @Test
     void creditPositionOfAnUnknownCustomerIsNotFound() {
         when(customerRepository.findById(CustomerId.of("CUST-NONE"))).thenReturn(Optional.empty());
 

@@ -82,4 +82,19 @@ class PortInModelTest {
         assertThat(CreditStanding.of(unscored).creditScore()).isNull();
         assertThatNullPointerException().isThrownBy(() -> new CreditStanding(null, 712));
     }
+
+    /** The screening profile is the name and the KYC status, nothing else; a customer id and a status are required. */
+    @Test
+    void screeningProfileCarriesTheNameAndTheKycStatusOnly() {
+        Customer customer = Customer.create(CustomerId.of("CUST-5"), "Ali", "Sample", "ali@example.com",
+            "+971500000001", aed("5000.00"));
+
+        assertThat(ScreeningProfile.of(customer)).isEqualTo(new ScreeningProfile(CustomerId.of("CUST-5"), "Ali", "Sample",
+            com.bank.customer.domain.KycStatus.pending()));
+        assertThat(ScreeningProfile.class.getRecordComponents()).extracting(java.lang.reflect.RecordComponent::getName)
+            .containsExactly("customerId", "firstName", "lastName", "kycStatus");
+        assertThatNullPointerException().isThrownBy(() -> new ScreeningProfile(null, "Ali", "Sample",
+            com.bank.customer.domain.KycStatus.pending()));
+        assertThatNullPointerException().isThrownBy(() -> new ScreeningProfile(CustomerId.of("CUST-5"), "Ali", "Sample", null));
+    }
 }

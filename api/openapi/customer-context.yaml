@@ -197,6 +197,53 @@ paths:
               schema:
                 $ref: '#/components/schemas/ErrorResponse'
 
+  /api/v1/customers/{customerId}/screening-profile:
+    get:
+      tags: [CustomerManagement]
+      summary: Get a customer's screening profile (name and KYC status only)
+      operationId: getCustomerScreeningProfile
+      description: |-
+        The customer's name and KYC status for sanctions and PEP matching by
+        the compliance service, and nothing else: no contact details, credit
+        figures, credit score or income. Callers: SERVICE tokens whose client
+        (azp) is on SERVICE_CALLERS_SCREENING (default svc-cmp-evidence; no
+        other allow-list applies here, and this list opens no other route),
+        BANKER and ADMIN. kycStatus is the same enum as
+        KycStatusResponse.kycStatus. New capability with no monolith
+        counterpart.
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: '#/components/parameters/Authorization'
+        - $ref: '#/components/parameters/DPoP'
+        - $ref: '#/components/parameters/InteractionId'
+        - $ref: '#/components/parameters/CustomerId'
+      responses:
+        '200':
+          description: Screening profile
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ScreeningProfileResponse'
+        '401':
+          description: Unauthorized
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '403':
+          description: Forbidden
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '404':
+          description: Customer not found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
   /api/v1/customers/{customerId}/kyc-status:
     get:
       tags: [CustomerManagement]
@@ -209,7 +256,8 @@ paths:
         payment and refuses the payment, before any screening runs, when the
         status is unknown (the customer cannot be read, the call fails, or
         kycStatus is outside the enum); svc-cmp-evidence records the status
-        in its evidence. The kycStatus values, kycVerified and the response
+        in its evidence (it reads the same value on GET .../screening-profile
+        under its own list, not here). The kycStatus values, kycVerified and the response
         shape are a breaking-change boundary for both. Callers: SERVICE
         tokens whose client (azp) is on SERVICE_CALLERS_KYC (default
         svc-pay-initiation-settlement; the credit allow-list does not apply
@@ -760,6 +808,22 @@ components:
         availableCredit:
           type: number
           format: double
+
+    ScreeningProfileResponse:
+      type: object
+      description: Name and KYC status only, for sanctions and PEP matching; never contact details, credit figures, score or income.
+      required: [customerId, firstName, lastName, kycStatus]
+      additionalProperties: false
+      properties:
+        customerId:
+          type: string
+        firstName:
+          type: string
+        lastName:
+          type: string
+        kycStatus:
+          type: string
+          enum: [PENDING, VERIFIED, REJECTED]
 
     CreditStandingResponse:
       type: object

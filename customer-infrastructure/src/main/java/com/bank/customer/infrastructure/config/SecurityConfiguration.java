@@ -34,7 +34,8 @@ import java.util.Map;
  * (azp) on the allow-list of the endpoint group ({@link ServiceCallerPolicy}:
  * SERVICE_CALLERS for the credit position and movements, SERVICE_CALLERS_KYC
  * for the KYC status, SERVICE_CALLERS_CREDIT_STANDING for the position with
- * the score). Realm
+ * the score, SERVICE_CALLERS_SCREENING for the name and KYC status). Each
+ * list opens only its own group, and an empty list denies every service. Realm
  * roles become ROLE_* authorities for the @PreAuthorize rules on
  * CustomerController.
  *
@@ -89,6 +90,17 @@ public class SecurityConfiguration {
     @Bean("creditStandingServiceCallers")
     ServiceCallerPolicy creditStandingServiceCallers(
             @Value("${fintechbankx.security.service-callers-credit-standing}") String clients) {
+        return new ServiceCallerPolicy(clients);
+    }
+
+    /**
+     * Clients (azp) that may read the screening profile (name and KYC status,
+     * nothing else) with the SERVICE role: the compliance service, for
+     * sanctions and PEP name matching. Its own list, so compliance reads no
+     * contact details, credit figures, score or income.
+     */
+    @Bean("screeningServiceCallers")
+    ServiceCallerPolicy screeningServiceCallers(@Value("${fintechbankx.security.service-callers-screening}") String clients) {
         return new ServiceCallerPolicy(clients);
     }
 

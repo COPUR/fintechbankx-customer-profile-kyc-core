@@ -3,7 +3,9 @@ package com.bank.customer.infrastructure.web;
 import com.bank.customer.domain.port.in.CreditMovementCommand;
 import com.bank.customer.domain.port.in.GetCreditPositionUseCase;
 import com.bank.customer.domain.port.in.GetCreditStandingUseCase;
+import com.bank.customer.domain.port.in.GetScreeningProfileUseCase;
 import com.bank.customer.infrastructure.web.dto.CreditStandingResponse;
+import com.bank.customer.infrastructure.web.dto.ScreeningProfileResponse;
 import com.bank.customer.domain.port.in.GetCustomerProfileUseCase;
 import com.bank.customer.domain.port.in.MoveCreditUseCase;
 import com.bank.customer.domain.port.in.RegisterCustomerUseCase;
@@ -54,11 +56,15 @@ public class CustomerController {
     /** Risk decisioning (SERVICE_CALLERS_CREDIT_STANDING): the position with the score; no movement. */
     static final String CREDIT_STANDING_READERS =
         "hasAnyRole('BANKER', 'ADMIN') or (hasRole('SERVICE') and @creditStandingServiceCallers.allowed(authentication))";
+    /** Compliance (SERVICE_CALLERS_SCREENING): name and KYC status for sanctions and PEP matching; nothing else. */
+    static final String SCREENING_READERS =
+        "hasAnyRole('BANKER', 'ADMIN') or (hasRole('SERVICE') and @screeningServiceCallers.allowed(authentication))";
 
     private final RegisterCustomerUseCase registerCustomer;
     private final GetCustomerProfileUseCase getCustomerProfile;
     private final GetCreditPositionUseCase getCreditPosition;
     private final GetCreditStandingUseCase getCreditStanding;
+    private final GetScreeningProfileUseCase getScreeningProfile;
     private final UpdateCreditLimitUseCase updateCreditLimit;
     private final MoveCreditUseCase moveCredit;
 
@@ -66,12 +72,14 @@ public class CustomerController {
                               GetCustomerProfileUseCase getCustomerProfile,
                               GetCreditPositionUseCase getCreditPosition,
                               GetCreditStandingUseCase getCreditStanding,
+                              GetScreeningProfileUseCase getScreeningProfile,
                               UpdateCreditLimitUseCase updateCreditLimit,
                               MoveCreditUseCase moveCredit) {
         this.registerCustomer = registerCustomer;
         this.getCustomerProfile = getCustomerProfile;
         this.getCreditPosition = getCreditPosition;
         this.getCreditStanding = getCreditStanding;
+        this.getScreeningProfile = getScreeningProfile;
         this.updateCreditLimit = updateCreditLimit;
         this.moveCredit = moveCredit;
     }
@@ -115,6 +123,17 @@ public class CustomerController {
     @PreAuthorize(CREDIT_STANDING_READERS)
     public ResponseEntity<CreditStandingResponse> getCreditStanding(@PathVariable String customerId) {
         return ResponseEntity.ok(CreditStandingResponse.from(getCreditStanding.getCreditStanding(CustomerId.of(customerId))));
+    }
+
+    /**
+     * Screening profile: the name and the KYC status for sanctions and PEP
+     * matching by the compliance service, and nothing else (no contact
+     * details, credit figures, score or income).
+     */
+    @GetMapping("/{customerId}/screening-profile")
+    @PreAuthorize(SCREENING_READERS)
+    public ResponseEntity<ScreeningProfileResponse> getScreeningProfile(@PathVariable String customerId) {
+        return ResponseEntity.ok(ScreeningProfileResponse.from(getScreeningProfile.getScreeningProfile(CustomerId.of(customerId))));
     }
     
     /**
