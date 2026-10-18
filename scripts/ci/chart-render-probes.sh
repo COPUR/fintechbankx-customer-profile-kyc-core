@@ -230,6 +230,16 @@ reject_render 'kafka.runtime must be "", msk or strimzi (got "local")' --set-str
 reject_render 'kafka.runtime must be "", msk or strimzi (got "kafka-msk")' --set-string kafka.runtime=kafka-msk
 reject_render "kafka.runtime must be msk or strimzi: the service publishes" --set-string kafka.runtime=
 reject_render "kafkaTls.secretName is required for the kafka-strimzi profile" --set kafka.runtime=strimzi
+# Service allow-lists fail closed at install time: a config.SERVICE_CALLERS* key dropped (null deletes the key) or
+# emptied must fail the render, never fall back to the application defaults (requiredConfig covers missing keys too).
+for key in SERVICE_CALLERS SERVICE_CALLERS_KYC SERVICE_CALLERS_CREDIT_STANDING SERVICE_CALLERS_SCREENING; do
+  reject_render "config.$key is required" --set "config.$key=null"
+  reject_render "config.$key is required" --set-string "config.$key="
+done
+# The same for every other required key when dropped, not only when emptied.
+for key in OIDC_ISSUER_URI OIDC_JWK_SET_URI OIDC_AUDIENCE KAFKA_BOOTSTRAP_SERVERS; do
+  reject_render "config.$key is required" --set "config.$key=null"
+done
 # Kafka TLS on the config route (the guard): SASL_SSL with msk, SSL with strimzi, never PLAINTEXT.
 reject_render "config.KAFKA_SECURITY_PROTOCOL must be SASL_SSL or SSL" --set-string config.KAFKA_SECURITY_PROTOCOL=PLAINTEXT
 reject_render "must be SASL_SSL with kafka.runtime msk" --set-string 'config.spring\.kafka\.producer\.security\.protocol=SSL'
