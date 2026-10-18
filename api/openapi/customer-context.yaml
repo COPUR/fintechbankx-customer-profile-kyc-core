@@ -715,7 +715,7 @@ components:
 
     CustomerResponse:
       type: object
-      required: [customerId, firstName, lastName, creditLimit, usedCredit, availableCredit, status, createdAt, lastModifiedAt]
+      required: [customerId, firstName, lastName, creditLimit, usedCredit, availableCredit, status, kycStatus, createdAt, lastModifiedAt]
       properties:
         customerId:
           type: string
@@ -742,6 +742,10 @@ components:
           format: double
         status:
           type: string
+        kycStatus:
+          type: string
+          enum: [PENDING, VERIFIED, REJECTED]
+          description: The customer's KYC status, the same enum as KycStatusResponse.kycStatus. Additive, added before the contract's first release.
         creditScore:
           type: integer
           nullable: true

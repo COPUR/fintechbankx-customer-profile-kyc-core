@@ -66,6 +66,7 @@ class PortInModelTest {
         assertThat(profile.email()).isEqualTo("ali@example.com");
         assertThat(profile.credit()).isEqualTo(new CreditPosition(
             CustomerId.of("CUST-2"), aed("5000.00"), aed("1250.00"), aed("3750.00")));
+        assertThat(profile.kycStatus()).isEqualTo(com.bank.customer.domain.KycStatus.pending());
         assertThat(profile.createdAt()).isNotNull();
     }
 }

@@ -21,6 +21,8 @@ public record CustomerResponse(
     BigDecimal usedCredit,
     BigDecimal availableCredit,
     String status,
+    /** PENDING, VERIFIED or REJECTED: the same enum as KycStatusResponse.kycStatus on GET .../kyc-status. */
+    String kycStatus,
     Integer creditScore,
     BigDecimal monthlyIncome,
     Instant createdAt,
@@ -38,6 +40,7 @@ public record CustomerResponse(
             profile.credit().usedCredit().getAmount(),
             profile.credit().availableCredit().getAmount(),
             "ACTIVE", // Default status
+            profile.kycStatus().status().name(),
             profile.creditScore(),
             profile.monthlyIncome() != null ? profile.monthlyIncome().getAmount() : null,
             toInstant(profile.createdAt()),

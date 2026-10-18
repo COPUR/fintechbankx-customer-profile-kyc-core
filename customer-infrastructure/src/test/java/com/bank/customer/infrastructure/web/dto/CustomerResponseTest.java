@@ -36,6 +36,7 @@ class CustomerResponseTest {
         assertThat(response.usedCredit()).isEqualByComparingTo("500.00");
         assertThat(response.availableCredit()).isEqualByComparingTo("7500.00");
         assertThat(response.status()).isEqualTo("ACTIVE");
+        assertThat(response.kycStatus()).isEqualTo("PENDING"); // registered here, waiting for staff
         assertThat(response.creditScore()).isEqualTo(700);
         assertThat(response.monthlyIncome()).isEqualByComparingTo("2000.00");
         assertThat(response.createdAt()).isNotNull();
@@ -54,5 +55,18 @@ class CustomerResponseTest {
         assertThat(response.monthlyIncome()).isNull();
         assertThat(response.createdAt()).isNull();
         assertThat(response.availableCredit()).isEqualByComparingTo("1000.00");
+        assertThat(response.kycStatus()).isEqualTo("PENDING"); // a snapshot without a KYC status reads as PENDING
+    }
+
+    /** Staff decisions show on the profile with the same value as GET .../kyc-status. */
+    @Test
+    void kycStatusFollowsTheStaffDecision() {
+        Customer customer = Customer.createWithCreditScore(CustomerId.of("CUST-RESP-002"), "Ali", "Sample",
+            "ali@example.com", "+971500000001", Money.aed(new BigDecimal("2000.00")), 700);
+        customer.verifyKyc("banker-sub-1", java.time.Instant.parse("2026-10-08T10:00:00Z"));
+
+        assertThat(CustomerResponse.from(CustomerProfile.of(customer)).kycStatus()).isEqualTo("VERIFIED");
+        customer.rejectKyc("banker-sub-1", java.time.Instant.parse("2026-10-08T10:00:01Z"));
+        assertThat(CustomerResponse.from(CustomerProfile.of(customer)).kycStatus()).isEqualTo("REJECTED");
     }
 }

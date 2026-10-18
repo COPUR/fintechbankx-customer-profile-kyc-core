@@ -1,6 +1,7 @@
 package com.bank.customer.domain.port.in;
 
 import com.bank.customer.domain.Customer;
+import com.bank.customer.domain.KycStatus;
 import com.bank.shared.kernel.domain.CustomerId;
 import com.bank.shared.kernel.domain.Money;
 
@@ -20,6 +21,7 @@ public record CustomerProfile(
     CreditPosition credit,
     Integer creditScore,
     Money monthlyIncome,
+    KycStatus kycStatus,
     LocalDateTime createdAt,
     LocalDateTime updatedAt
 ) {
@@ -27,6 +29,6 @@ public record CustomerProfile(
     public static CustomerProfile of(Customer customer) {
         return new CustomerProfile(customer.getId(), customer.getFirstName(), customer.getLastName(),
             customer.getEmail(), customer.getPhoneNumber(), CreditPosition.of(customer), customer.getCreditScore(),
-            customer.getMonthlyIncome(), customer.getCreatedAt(), customer.getUpdatedAt());
+            customer.getMonthlyIncome(), customer.getKycStatus(), customer.getCreatedAt(), customer.getUpdatedAt());
     }
 }
