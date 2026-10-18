@@ -77,7 +77,7 @@ public class CustomerEventEnvelopeFactory {
             case CustomerCreditReleasedEvent e -> new PublicEvent("CreditReleased", withReference(data(
                 "customerId", e.getCustomerId().getValue(),
                 "releasedAmount", money(e.getReleasedAmount())), e.getReference()));
-            // Never the score value (restricted data): consumers read it through GET /credit under the azp allow-list.
+            // Never the score value (restricted data): consumers read it through GET /credit-standing under the azp allow-list.
             case CustomerCreditScoreUpdatedEvent e -> new PublicEvent("CreditScoreUpdated", data(
                 "customerId", e.getCustomerId().getValue(),
                 "updatedAt", e.getOccurredOn().toString()));

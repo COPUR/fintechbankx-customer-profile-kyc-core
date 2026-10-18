@@ -13,7 +13,7 @@ data:
   {{- /* Every required key must be present and non-empty: a key dropped with --set config.X=null fails too,
          so the pod never falls back to the image's application.yml defaults (the service allow-lists among them). */}}
   {{- range $key := .Values.requiredConfig }}
-  {{- if or (not (hasKey $.Values.config $key)) (empty (index $.Values.config $key)) }}
+  {{- if or (not (hasKey $.Values.config $key)) (empty (index $.Values.config $key)) (empty (trim (toString (index $.Values.config $key)))) }}
   {{- fail (printf "config.%s is required" $key) }}
   {{- end }}
   {{- end }}

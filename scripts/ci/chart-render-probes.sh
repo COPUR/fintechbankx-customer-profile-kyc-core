@@ -235,6 +235,7 @@ reject_render "kafkaTls.secretName is required for the kafka-strimzi profile" --
 for key in SERVICE_CALLERS SERVICE_CALLERS_KYC SERVICE_CALLERS_CREDIT_STANDING SERVICE_CALLERS_SCREENING; do
   reject_render "config.$key is required" --set "config.$key=null"
   reject_render "config.$key is required" --set-string "config.$key="
+  reject_render "config.$key is required" --set-string "config.$key=   "
 done
 # The same for every other required key when dropped, not only when emptied.
 for key in OIDC_ISSUER_URI OIDC_JWK_SET_URI OIDC_AUDIENCE KAFKA_BOOTSTRAP_SERVERS; do
