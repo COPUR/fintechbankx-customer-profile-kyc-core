@@ -343,7 +343,9 @@ class CustomerServiceIT {
         String customerId = create("self@example.com", "3000.00");
 
         mvc.perform(asIdentityCustomer(get("/api/v1/customers/{id}", customerId), "kc-user-1", customerId))
-            .andExpect(status().isOk());
+            .andExpect(status().isOk())
+            .andExpect(jsonPath("$.firstName").value("Noor"))
+            .andExpect(jsonPath("$.kycStatus").value("PENDING")); // registered here, waiting for staff
         mvc.perform(asIdentityCustomer(get("/api/v1/customers/{id}", customerId), "kc-user-2", "someone-else"))
             .andExpect(status().isForbidden());
         mvc.perform(asService(get("/api/v1/customers/{id}", customerId)))
@@ -404,7 +406,8 @@ class CustomerServiceIT {
 
         mvc.perform(asBanker(get("/api/v1/customers/{id}", "42")))
             .andExpect(status().isOk())
-            .andExpect(jsonPath("$.email").doesNotExist());
+            .andExpect(jsonPath("$.email").doesNotExist())
+            .andExpect(jsonPath("$.kycStatus").value("VERIFIED")); // the profile carries the KYC status (same enum as /kyc-status)
         mvc.perform(asService(get("/api/v1/customers/{id}/credit", "42")))
             .andExpect(status().isOk())
             .andExpect(jsonPath("$.availableCredit").value(30000.00));
