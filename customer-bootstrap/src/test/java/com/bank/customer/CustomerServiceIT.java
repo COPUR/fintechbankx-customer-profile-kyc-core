@@ -38,6 +38,7 @@ import java.math.BigDecimal;
 import java.time.Clock;
 import java.time.Duration;
 import java.util.List;
+import java.util.Map;
 import java.util.UUID;
 import java.util.concurrent.CompletableFuture;
 
@@ -51,6 +52,7 @@ import static org.springframework.security.test.web.servlet.request.SecurityMock
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.put;
+import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.content;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.header;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
@@ -645,6 +647,30 @@ class CustomerServiceIT {
             .andExpect(status().isNotFound())
             .andExpect(jsonPath("$.code").value("CUSTOMER_NOT_FOUND"))
             .andExpect(jsonPath("$.interactionId").value("it-interaction-1"));
+    }
+
+    /**
+     * Risk and compliance key on this: an unknown customer is 404 with the
+     * service's ErrorResponse (application/json, the same shape as every
+     * other error here, not problem+json) whose "code" is CUSTOMER_NOT_FOUND
+     * and whose interactionId echoes the request's.
+     */
+    @Test
+    void unknownCustomerIsA404WithCodeCustomerNotFoundOnTheRiskAndComplianceReads() throws Exception {
+        for (var read : Map.of("/api/v1/customers/{id}/credit-standing", RISK,
+                "/api/v1/customers/{id}/screening-profile", COMPLIANCE).entrySet()) {
+            String body = mvc.perform(asService(get(read.getKey(), "CUST-MISSING"), read.getValue()))
+                .andExpect(status().isNotFound())
+                .andExpect(content().contentTypeCompatibleWith(MediaType.APPLICATION_JSON))
+                .andExpect(jsonPath("$.code").value("CUSTOMER_NOT_FOUND"))
+                .andExpect(jsonPath("$.message").value("Customer not found"))
+                .andExpect(jsonPath("$.interactionId").value("it-interaction-4"))
+                .andExpect(jsonPath("$.timestamp").exists())
+                .andReturn().getResponse().getContentAsString();
+            assertThat(json.readTree(body).fieldNames()).toIterable()
+                .as("%s error body", read.getKey())
+                .containsExactlyInAnyOrder("code", "message", "interactionId", "timestamp");
+        }
     }
 
     @Test

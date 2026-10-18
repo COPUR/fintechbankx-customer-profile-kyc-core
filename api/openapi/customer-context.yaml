@@ -191,7 +191,11 @@ paths:
               schema:
                 $ref: '#/components/schemas/ErrorResponse'
         '404':
-          description: Customer not found
+          description: |-
+            Customer not found. ErrorResponse (application/json, the same
+            shape as every other error of this service, not problem+json)
+            with code CUSTOMER_NOT_FOUND; callers key on code. interactionId
+            echoes the request's x-fapi-interaction-id.
           content:
             application/json:
               schema:
@@ -238,7 +242,11 @@ paths:
               schema:
                 $ref: '#/components/schemas/ErrorResponse'
         '404':
-          description: Customer not found
+          description: |-
+            Customer not found. ErrorResponse (application/json, the same
+            shape as every other error of this service, not problem+json)
+            with code CUSTOMER_NOT_FOUND; callers key on code. interactionId
+            echoes the request's x-fapi-interaction-id.
           content:
             application/json:
               schema:
