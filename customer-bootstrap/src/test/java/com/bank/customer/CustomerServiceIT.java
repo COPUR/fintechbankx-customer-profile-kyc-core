@@ -379,6 +379,42 @@ class CustomerServiceIT {
         assertThat(jdbc.queryForObject("select count(*) from sc_cus_profile_kyc.credit_movement", Integer.class)).isZero();
     }
 
+    /**
+     * SERVICE_CALLERS_SCREENING (compliance) opens the screening profile and
+     * nothing else: exactly the name and the KYC status for sanctions and PEP
+     * matching, never contact details, credit figures, score or income; no
+     * credit route, no full profile, no KYC route (the screening profile
+     * already carries the status). No other list opens the screening profile.
+     */
+    @Test
+    void complianceReadsTheScreeningProfileAndNothingElse() throws Exception {
+        String customerId = create("screen@example.com", "4000.00");
+
+        String screening = mvc.perform(asService(get("/api/v1/customers/{id}/screening-profile", customerId), COMPLIANCE))
+            .andExpect(status().isOk())
+            .andExpect(jsonPath("$.customerId").value(customerId))
+            .andExpect(jsonPath("$.firstName").value("Noor"))
+            .andExpect(jsonPath("$.lastName").value("Rahman"))
+            .andExpect(jsonPath("$.kycStatus").value("PENDING"))
+            .andReturn().getResponse().getContentAsString();
+        assertThat(json.readTree(screening).fieldNames()).toIterable()
+            .containsExactlyInAnyOrder("customerId", "firstName", "lastName", "kycStatus");
+        assertThat(screening).doesNotContain("example.com", "+9715", "credit", "Credit", "score", "Score", "income", "Income");
+        mvc.perform(asBanker(get("/api/v1/customers/{id}/screening-profile", customerId)))
+            .andExpect(status().isOk());
+
+        for (String path : List.of("/api/v1/customers/{id}", "/api/v1/customers/{id}/credit",
+                "/api/v1/customers/{id}/credit-standing", "/api/v1/customers/{id}/kyc-status")) {
+            mvc.perform(asService(get(path, customerId), COMPLIANCE)).andExpect(status().isForbidden());
+        }
+        mvc.perform(asService(get("/api/v1/customers/{id}/screening-profile", customerId)))
+            .andExpect(status().isForbidden()); // lending
+        mvc.perform(asService(get("/api/v1/customers/{id}/screening-profile", customerId), RISK))
+            .andExpect(status().isForbidden());
+        mvc.perform(asUnlistedService(get("/api/v1/customers/{id}/screening-profile", customerId)))
+            .andExpect(status().isForbidden());
+    }
+
     @Test
     void servicesReadOnlyTheCreditPositionAndOnlyListedServicesMayUseIt() throws Exception {
         String customerId = create("self@example.com", "3000.00");
@@ -649,4 +685,5 @@ class CustomerServiceIT {
     }
 
     private static final String RISK = "svc-rsk-decisioning";
+    private static final String COMPLIANCE = "svc-cmp-evidence";
 }

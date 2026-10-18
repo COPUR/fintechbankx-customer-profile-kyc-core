@@ -91,6 +91,13 @@ class KycStatusIT {
             .andExpect(status().isForbidden());
         mvc.perform(asService(get("/api/v1/customers/{id}/kyc-status", customerId), "svc-rsk-decisioning"))
             .andExpect(status().isForbidden());
+        // Compliance reads the KYC status on its screening profile, not here; an unlisted client reads nothing.
+        mvc.perform(asService(get("/api/v1/customers/{id}/kyc-status", customerId), "svc-cmp-evidence"))
+            .andExpect(status().isForbidden());
+        mvc.perform(asService(get("/api/v1/customers/{id}/kyc-status", customerId), "svc-unlisted-example"))
+            .andExpect(status().isForbidden());
+        mvc.perform(asService(get("/api/v1/customers/{id}/screening-profile", customerId), "svc-pay-initiation-settlement"))
+            .andExpect(status().isForbidden());
         mvc.perform(asService(get("/api/v1/customers/{id}/credit", customerId), "svc-pay-initiation-settlement"))
             .andExpect(status().isForbidden());
         mvc.perform(asService(get("/api/v1/customers/{id}", customerId), "svc-pay-initiation-settlement"))
