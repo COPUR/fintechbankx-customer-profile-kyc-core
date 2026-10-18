@@ -69,4 +69,17 @@ class PortInModelTest {
         assertThat(profile.kycStatus()).isEqualTo(com.bank.customer.domain.KycStatus.pending());
         assertThat(profile.createdAt()).isNotNull();
     }
+
+    /** The standing the eligibility decider reads: the position and the score; null score for a customer without one. */
+    @Test
+    void creditStandingCarriesThePositionAndTheScore() {
+        Customer scored = Customer.createWithCreditScore(CustomerId.of("CUST-3"), "Ali", "Sample", "ali@example.com",
+            "+971500000001", aed("5000.00"), 712);
+        Customer unscored = Customer.create(CustomerId.of("CUST-4"), "Ali", "Sample", "ali@example.com",
+            "+971500000001", aed("5000.00"));
+
+        assertThat(CreditStanding.of(scored)).isEqualTo(new CreditStanding(CreditPosition.of(scored), 712));
+        assertThat(CreditStanding.of(unscored).creditScore()).isNull();
+        assertThatNullPointerException().isThrownBy(() -> new CreditStanding(null, 712));
+    }
 }

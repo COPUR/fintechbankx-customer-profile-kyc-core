@@ -519,6 +519,22 @@ class CustomerManagementServiceTest {
     }
 
     @Test
+    void creditStandingCarriesThePositionAndTheScore() {
+        Customer customer = existingCustomer();
+        customer.reserveCredit(Money.aed(new BigDecimal("1000.00")));
+        when(customerRepository.findById(CustomerId.of("CUST-IDEM"))).thenReturn(Optional.of(customer));
+
+        com.bank.customer.domain.port.in.CreditStanding standing = service.getCreditStanding(CustomerId.of("CUST-IDEM"));
+
+        assertThat(standing.position().availableCredit()).isEqualTo(aed("4000.00"));
+        assertThat(standing.creditScore()).isEqualTo(customer.getCreditScore());
+        assertThat(com.bank.customer.domain.port.in.CreditStanding.class.getRecordComponents())
+            .extracting(java.lang.reflect.RecordComponent::getName).containsExactly("position", "creditScore");
+        when(customerRepository.findById(CustomerId.of("CUST-NONE"))).thenReturn(Optional.empty());
+        assertThatThrownBy(() -> service.getCreditStanding(CustomerId.of("CUST-NONE"))).isInstanceOf(CustomerNotFoundException.class);
+    }
+
+    @Test
     void creditPositionOfAnUnknownCustomerIsNotFound() {
         when(customerRepository.findById(CustomerId.of("CUST-NONE"))).thenReturn(Optional.empty());
 

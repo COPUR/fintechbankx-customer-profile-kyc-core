@@ -149,6 +149,54 @@ paths:
               schema:
                 $ref: '#/components/schemas/ErrorResponse'
 
+  /api/v1/customers/{customerId}/credit-standing:
+    get:
+      tags: [CustomerManagement]
+      summary: Get a customer's credit standing (position with the credit score, no personal data)
+      operationId: getCustomerCreditStanding
+      description: |-
+        Credit limit, used and available credit, currency and the credit
+        score, without personal data, for the eligibility decider (ADR-031
+        decision 2). Callers: SERVICE tokens whose client (azp) is on
+        SERVICE_CALLERS_CREDIT_STANDING (default svc-rsk-decisioning; the
+        credit allow-list SERVICE_CALLERS does not apply here, so lending never
+        reads the score), BANKER and ADMIN. creditScore is absent for a
+        customer without a score. The score is read here, never from the event
+        Customer.Customer.CreditScoreUpdated.v1, which says only that it
+        changed. New capability with no monolith counterpart.
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: '#/components/parameters/Authorization'
+        - $ref: '#/components/parameters/DPoP'
+        - $ref: '#/components/parameters/InteractionId'
+        - $ref: '#/components/parameters/CustomerId'
+      responses:
+        '200':
+          description: Credit standing
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CreditStandingResponse'
+        '401':
+          description: Unauthorized
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '403':
+          description: Forbidden
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '404':
+          description: Customer not found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
   /api/v1/customers/{customerId}/kyc-status:
     get:
       tags: [CustomerManagement]
@@ -712,6 +760,33 @@ components:
         availableCredit:
           type: number
           format: double
+
+    CreditStandingResponse:
+      type: object
+      description: |-
+        Credit standing without personal data, for the eligibility decider:
+        the position (as CustomerCreditResponse) plus the credit score.
+        creditScore is absent (not null) for a customer without a score.
+      required: [customerId, currency, creditLimit, usedCredit, availableCredit]
+      properties:
+        customerId:
+          type: string
+        currency:
+          type: string
+        creditLimit:
+          type: number
+          format: double
+        usedCredit:
+          type: number
+          format: double
+        availableCredit:
+          type: number
+          format: double
+        creditScore:
+          type: integer
+          minimum: 300
+          maximum: 850
+          description: Credit score (300 to 850); absent for a customer without one.
 
     CustomerResponse:
       type: object

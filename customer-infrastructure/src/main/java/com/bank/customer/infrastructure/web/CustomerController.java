@@ -2,6 +2,8 @@ package com.bank.customer.infrastructure.web;
 
 import com.bank.customer.domain.port.in.CreditMovementCommand;
 import com.bank.customer.domain.port.in.GetCreditPositionUseCase;
+import com.bank.customer.domain.port.in.GetCreditStandingUseCase;
+import com.bank.customer.infrastructure.web.dto.CreditStandingResponse;
 import com.bank.customer.domain.port.in.GetCustomerProfileUseCase;
 import com.bank.customer.domain.port.in.MoveCreditUseCase;
 import com.bank.customer.domain.port.in.RegisterCustomerUseCase;
@@ -46,23 +48,30 @@ import java.util.Currency;
 public class CustomerController {
     
     static final String IDEMPOTENCY_KEY = "x-idempotency-key";
+    /** Lending (SERVICE_CALLERS): the position, reserve and release; never the score. */
     static final String CREDIT_CALLERS =
         "hasAnyRole('BANKER', 'ADMIN') or (hasRole('SERVICE') and @serviceCallers.allowed(authentication))";
+    /** Risk decisioning (SERVICE_CALLERS_CREDIT_STANDING): the position with the score; no movement. */
+    static final String CREDIT_STANDING_READERS =
+        "hasAnyRole('BANKER', 'ADMIN') or (hasRole('SERVICE') and @creditStandingServiceCallers.allowed(authentication))";
 
     private final RegisterCustomerUseCase registerCustomer;
     private final GetCustomerProfileUseCase getCustomerProfile;
     private final GetCreditPositionUseCase getCreditPosition;
+    private final GetCreditStandingUseCase getCreditStanding;
     private final UpdateCreditLimitUseCase updateCreditLimit;
     private final MoveCreditUseCase moveCredit;
 
     public CustomerController(RegisterCustomerUseCase registerCustomer,
                               GetCustomerProfileUseCase getCustomerProfile,
                               GetCreditPositionUseCase getCreditPosition,
+                              GetCreditStandingUseCase getCreditStanding,
                               UpdateCreditLimitUseCase updateCreditLimit,
                               MoveCreditUseCase moveCredit) {
         this.registerCustomer = registerCustomer;
         this.getCustomerProfile = getCustomerProfile;
         this.getCreditPosition = getCreditPosition;
+        this.getCreditStanding = getCreditStanding;
         this.updateCreditLimit = updateCreditLimit;
         this.moveCredit = moveCredit;
     }
@@ -94,6 +103,18 @@ public class CustomerController {
     @PreAuthorize(CREDIT_CALLERS + " or (hasRole('CUSTOMER') and #customerId == authentication.name)")
     public ResponseEntity<CustomerCreditResponse> getCreditPosition(@PathVariable String customerId) {
         return ResponseEntity.ok(CustomerCreditResponse.from(getCreditPosition.getCreditPosition(CustomerId.of(customerId))));
+    }
+
+    /**
+     * Credit standing (limit, used, available, credit score), without personal
+     * data, for the eligibility decider (ADR-031 decision 2). The score is read
+     * here, under its own allow-list, never from the CreditScoreUpdated event
+     * and never on the lending route.
+     */
+    @GetMapping("/{customerId}/credit-standing")
+    @PreAuthorize(CREDIT_STANDING_READERS)
+    public ResponseEntity<CreditStandingResponse> getCreditStanding(@PathVariable String customerId) {
+        return ResponseEntity.ok(CreditStandingResponse.from(getCreditStanding.getCreditStanding(CustomerId.of(customerId))));
     }
     
     /**

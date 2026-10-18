@@ -4,7 +4,10 @@ import com.bank.customer.domain.Customer;
 import com.bank.customer.domain.port.in.CreditMovementCommand;
 import com.bank.customer.domain.port.in.CreditPosition;
 import com.bank.customer.domain.port.in.CustomerProfile;
+import com.bank.customer.domain.port.in.CreditStanding;
 import com.bank.customer.domain.port.in.GetCreditPositionUseCase;
+import com.bank.customer.domain.port.in.GetCreditStandingUseCase;
+import com.bank.customer.infrastructure.web.dto.CreditStandingResponse;
 import com.bank.customer.domain.port.in.GetCustomerProfileUseCase;
 import com.bank.customer.domain.port.in.MoveCreditUseCase;
 import com.bank.customer.domain.port.in.RegisterCustomerCommand;
@@ -38,6 +41,7 @@ class CustomerControllerTest {
     @Mock private RegisterCustomerUseCase registerCustomer;
     @Mock private GetCustomerProfileUseCase getCustomerProfile;
     @Mock private GetCreditPositionUseCase getCreditPosition;
+    @Mock private GetCreditStandingUseCase getCreditStanding;
     @Mock private UpdateCreditLimitUseCase updateCreditLimit;
     @Mock private MoveCreditUseCase moveCredit;
 
@@ -45,8 +49,28 @@ class CustomerControllerTest {
 
     @BeforeEach
     void setUp() {
-        controller = new CustomerController(registerCustomer, getCustomerProfile, getCreditPosition,
+        controller = new CustomerController(registerCustomer, getCustomerProfile, getCreditPosition, getCreditStanding,
             updateCreditLimit, moveCredit);
+    }
+
+    /** The eligibility decider reads the score with the position, and nothing personal; a missing score is absent, not null. */
+    @Test
+    void creditStandingCarriesThePositionAndTheScoreButNoPersonalData() throws Exception {
+        Customer customer = Customer.createWithCreditScore(CustomerId.of("CUST-WEB-009"), "Ali", "Sample",
+            "ali@example.com", "+971500000001", aed("1000.00"), 712);
+        customer.reserveCredit(aed("1000.00"));
+        when(getCreditStanding.getCreditStanding(CustomerId.of("CUST-WEB-009"))).thenReturn(CreditStanding.of(customer));
+        var json = new com.fasterxml.jackson.databind.ObjectMapper();
+
+        CreditStandingResponse body = controller.getCreditStanding("CUST-WEB-009").getBody();
+
+        assertThat(body).isEqualTo(new CreditStandingResponse("CUST-WEB-009", "AED",
+            customer.getCreditProfile().getCreditLimit().getAmount(), new BigDecimal("1000.00"),
+            customer.getCreditProfile().getAvailableCredit().getAmount(), 712));
+        assertThat(json.writeValueAsString(body))
+            .contains("\"creditScore\":712").doesNotContain("Ali", "Sample", "example.com", "+9715");
+        assertThat(json.writeValueAsString(CreditStandingResponse.from(new CreditStanding(profile("CUST-WEB-010").credit(), null))))
+            .doesNotContain("creditScore");
     }
 
     @Test

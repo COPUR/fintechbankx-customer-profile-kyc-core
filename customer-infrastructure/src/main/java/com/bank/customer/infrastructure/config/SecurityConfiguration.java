@@ -32,7 +32,9 @@ import java.util.Map;
  * a Keycloak audience mapper on each calling client), so a token minted for
  * another client is refused; SERVICE-role callers must have their client id
  * (azp) on the allow-list of the endpoint group ({@link ServiceCallerPolicy}:
- * SERVICE_CALLERS for credit, SERVICE_CALLERS_KYC for the KYC status). Realm
+ * SERVICE_CALLERS for the credit position and movements, SERVICE_CALLERS_KYC
+ * for the KYC status, SERVICE_CALLERS_CREDIT_STANDING for the position with
+ * the score). Realm
  * roles become ROLE_* authorities for the @PreAuthorize rules on
  * CustomerController.
  *
@@ -75,6 +77,18 @@ public class SecurityConfiguration {
     /** Clients (azp) that may read the KYC status with the SERVICE role: the payment service. */
     @Bean("kycServiceCallers")
     ServiceCallerPolicy kycServiceCallers(@Value("${fintechbankx.security.service-callers-kyc}") String clients) {
+        return new ServiceCallerPolicy(clients);
+    }
+
+    /**
+     * Clients (azp) that may read the credit standing (position with the
+     * credit score) with the SERVICE role: risk decisioning, the eligibility
+     * decider (ADR-031 decision 2). Kept apart from SERVICE_CALLERS so that
+     * the decider cannot move credit and lending never reads the score.
+     */
+    @Bean("creditStandingServiceCallers")
+    ServiceCallerPolicy creditStandingServiceCallers(
+            @Value("${fintechbankx.security.service-callers-credit-standing}") String clients) {
         return new ServiceCallerPolicy(clients);
     }
 

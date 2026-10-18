@@ -14,7 +14,9 @@ import com.bank.customer.domain.port.in.GetKycStatusUseCase;
 import com.bank.customer.domain.port.in.KycStatusView;
 import com.bank.customer.domain.port.in.CreditPosition;
 import com.bank.customer.domain.port.in.CustomerProfile;
+import com.bank.customer.domain.port.in.CreditStanding;
 import com.bank.customer.domain.port.in.GetCreditPositionUseCase;
+import com.bank.customer.domain.port.in.GetCreditStandingUseCase;
 import com.bank.customer.domain.port.in.GetCustomerProfileUseCase;
 import com.bank.customer.domain.port.in.IdentityLink;
 import com.bank.customer.domain.port.in.LinkIdentityCommand;
@@ -52,7 +54,7 @@ import java.util.UUID;
 @Service
 @Transactional
 public class CustomerManagementService implements RegisterCustomerUseCase, GetCustomerProfileUseCase,
-        GetCreditPositionUseCase, UpdateCreditLimitUseCase, MoveCreditUseCase, LinkIdentityUseCase,
+        GetCreditPositionUseCase, GetCreditStandingUseCase, UpdateCreditLimitUseCase, MoveCreditUseCase, LinkIdentityUseCase,
         GetKycStatusUseCase, ChangeKycStatusUseCase {
 
     private final CustomerRepository customerRepository;
@@ -122,6 +124,13 @@ public class CustomerManagementService implements RegisterCustomerUseCase, GetCu
     @Transactional(readOnly = true)
     public CreditPosition getCreditPosition(CustomerId customerId) {
         return CreditPosition.of(load(customerId));
+    }
+
+    /** Credit position and score, for the eligibility decider (risk) that must not see personal data. */
+    @Override
+    @Transactional(readOnly = true)
+    public CreditStanding getCreditStanding(CustomerId customerId) {
+        return CreditStanding.of(load(customerId));
     }
 
     /** KYC status only, for service callers (payments) that must not see personal data. */

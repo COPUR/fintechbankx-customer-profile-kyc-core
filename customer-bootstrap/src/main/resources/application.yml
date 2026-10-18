@@ -99,6 +99,9 @@ fintechbankx:
     service-callers: ${SERVICE_CALLERS:svc-ln-loan-lifecycle}
     # Client ids (token "azp") allowed to read the KYC status with the SERVICE role.
     service-callers-kyc: ${SERVICE_CALLERS_KYC:svc-pay-initiation-settlement}
+    # Client ids (token "azp") allowed to read the credit standing (position with the credit score) with the
+    # SERVICE role: risk decisioning, the eligibility decider (ADR-031). Not on service-callers: it moves no credit.
+    service-callers-credit-standing: ${SERVICE_CALLERS_CREDIT_STANDING:svc-rsk-decisioning}
   identity:
     # Onboarding sets the Keycloak user attribute customer_id through the admin
     # API (PUT /api/v1/customers/{id}/identity-link). Off by default: linking
