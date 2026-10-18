@@ -75,9 +75,32 @@ class SecurityConfigurationTest {
         var policy = new ServiceCallerPolicy("svc-ln-loan-lifecycle, svc-pay-initiation-settlement");
 
         assertThat(policy.allowed(SecurityConfiguration.keycloakRealmRoles().convert(jwt(Map.of("azp", "svc-ln-loan-lifecycle"))))).isTrue();
-        assertThat(policy.allowed(SecurityConfiguration.keycloakRealmRoles().convert(jwt(Map.of("azp", "svc-rsk-decisioning"))))).isFalse();
+        assertThat(policy.allowed(SecurityConfiguration.keycloakRealmRoles().convert(jwt(Map.of("azp", "svc-unlisted-example"))))).isFalse();
         assertThat(policy.allowed(SecurityConfiguration.keycloakRealmRoles().convert(jwt(Map.of())))).isFalse();
         assertThat(policy.allowed(null)).isFalse();
+    }
+
+    /**
+     * Fail closed on every list: an empty or blank allow-list (an unset or
+     * emptied SERVICE_CALLERS* value) allows no client, not even the one the
+     * list is meant for; there is no fallback to a built-in default.
+     */
+    @Test
+    void anEmptyAllowListDeniesEveryServiceOnEachList() {
+        SecurityConfiguration configuration = new SecurityConfiguration();
+        Map<String, java.util.function.Function<String, ServiceCallerPolicy>> lists = Map.of(
+            "svc-ln-loan-lifecycle", configuration::serviceCallers,
+            "svc-pay-initiation-settlement", configuration::kycServiceCallers,
+            "svc-rsk-decisioning", configuration::creditStandingServiceCallers,
+            "svc-cmp-evidence", configuration::screeningServiceCallers);
+
+        lists.forEach((client, list) -> {
+            var listed = SecurityConfiguration.keycloakRealmRoles().convert(jwt(Map.of("azp", client)));
+            assertThat(list.apply(client).allowed(listed)).as("%s on its own list", client).isTrue();
+            for (String empty : List.of("", " ", ",", " , ,")) {
+                assertThat(list.apply(empty).allowed(listed)).as("%s with the list '%s'", client, empty).isFalse();
+            }
+        });
     }
 
     private static Jwt jwt(Map<String, Object> claims) {
