@@ -1,0 +1,11 @@
+# Exemptions for the publication guardrails secret scan. One line per exemption:
+# file<TAB>exact line text<TAB>reason. A hit is dropped only when its file and whole line are listed.
+customer-bootstrap/src/test/java/com/bank/customer/DatabaseMigrationIT.java	            "--DB_MIGRATION_PASSWORD=" + migrationPassword,	test builds the migration Job argument from a variable holding the ephemeral test database password
+customer-bootstrap/src/test/java/com/bank/customer/PostgresTestDatabase.java	    static final String RUNTIME_PASSWORD = "customer_runtime_it";	throwaway runtime role the integration tests create in the ephemeral test database
+customer-bootstrap/src/test/java/com/bank/customer/PostgresTestDatabase.java	            ownerPassword = env("TEST_DB_PASSWORD", "customer_test");	local fallback for the ephemeral test database owner when TEST_DB_PASSWORD is unset
+.github/workflows/required-gates.yml	          POSTGRES_PASSWORD: customer_test	throwaway password of the ephemeral PostgreSQL service container the CI test job starts and discards
+.github/workflows/required-gates.yml	      TEST_DB_PASSWORD: customer_test	throwaway password of the ephemeral PostgreSQL service container the CI test job starts and discards
+.github/workflows/deployability.yml	          POSTGRES_PASSWORD: backfill	throwaway password of the ephemeral PostgreSQL container the backfill test job starts and discards
+.github/workflows/deployability.yml	      PGPASSWORD: backfill	throwaway password of the ephemeral PostgreSQL container the backfill test job starts and discards
+customer-infrastructure/src/test/java/com/bank/customer/infrastructure/persistence/PostgresTestDatabase.java	    private static final String RUNTIME_PASSWORD = "customer_runtime_it";	throwaway runtime role the integration tests create in the ephemeral test database
+customer-infrastructure/src/test/java/com/bank/customer/infrastructure/persistence/PostgresTestDatabase.java	            testPassword = env("TEST_DB_PASSWORD", "customer_test");	local fallback for the ephemeral test database owner when TEST_DB_PASSWORD is unset

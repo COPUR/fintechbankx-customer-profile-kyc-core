@@ -5,45 +5,60 @@
 // Manages customer onboarding, profiles, and lifecycle
 // =================================================================
 
+import org.springframework.boot.gradle.plugin.SpringBootPlugin
+
 plugins {
     id 'java-library'
+    id 'org.springframework.boot' version '3.3.6' apply false
+    id 'io.spring.dependency-management' version '1.1.6' apply false
 }
 
 description = 'Customer Context - Customer management bounded context'
 
-// Parent module configuration
+ext {
+    mapstructVersion = '1.6.3'
+}
+
+allprojects {
+    group = 'com.bank.customer'
+    version = '0.1.0'
+
+    repositories {
+        mavenCentral()
+    }
+}
+
 subprojects {
     apply plugin: 'java-library'
     apply plugin: 'io.spring.dependency-management'
 
-    dependencyManagement {
-        imports {
-            mavenBom 'org.springframework.boot:spring-boot-dependencies:3.3.6'
+    java {
+        toolchain {
+            languageVersion = JavaLanguageVersion.of(23)
         }
     }
-    
+
+    dependencyManagement {
+        imports {
+            mavenBom SpringBootPlugin.BOM_COORDINATES
+        }
+    }
+
     dependencies {
-        // Shared Foundation
-        api project(':shared-kernel')
-        api project(':shared-infrastructure')
-        
         // Testing
         testImplementation 'org.springframework.boot:spring-boot-starter-test'
         testImplementation 'org.junit.jupiter:junit-jupiter'
         testImplementation 'org.assertj:assertj-core'
         testImplementation 'org.mockito:mockito-core'
+        testRuntimeOnly 'org.junit.platform:junit-platform-launcher'
     }
-    
-    // Configure JAR tasks
-    afterEvaluate {
-        jar {
-            enabled = true
-            archiveClassifier = ''
-        }
-    }
-}
 
-// No direct dependencies for parent module
-dependencies {
-    // This parent module aggregates the submodules
+    tasks.withType(JavaCompile).configureEach {
+        options.encoding = 'UTF-8'
+        options.compilerArgs << '-parameters'
+    }
+
+    tasks.withType(Test).configureEach {
+        useJUnitPlatform()
+    }
 }

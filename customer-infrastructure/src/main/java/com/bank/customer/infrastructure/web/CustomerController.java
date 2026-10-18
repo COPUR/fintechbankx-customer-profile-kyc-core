@@ -1,15 +1,30 @@
 package com.bank.customer.infrastructure.web;
 
-import com.bank.customer.application.CustomerManagementService;
-import com.bank.customer.application.dto.CreateCustomerRequest;
-import com.bank.customer.application.dto.CustomerResponse;
+import com.bank.customer.domain.port.in.CreditMovementCommand;
+import com.bank.customer.domain.port.in.GetCreditPositionUseCase;
+import com.bank.customer.domain.port.in.GetCreditStandingUseCase;
+import com.bank.customer.domain.port.in.GetScreeningProfileUseCase;
+import com.bank.customer.infrastructure.web.dto.CreditStandingResponse;
+import com.bank.customer.infrastructure.web.dto.ScreeningProfileResponse;
+import com.bank.customer.domain.port.in.GetCustomerProfileUseCase;
+import com.bank.customer.domain.port.in.MoveCreditUseCase;
+import com.bank.customer.domain.port.in.RegisterCustomerUseCase;
+import com.bank.customer.domain.port.in.UpdateCreditLimitUseCase;
+import com.bank.customer.infrastructure.web.dto.CreateCustomerRequest;
+import com.bank.customer.infrastructure.web.dto.CustomerCreditResponse;
+import com.bank.customer.infrastructure.web.dto.CustomerResponse;
+import com.bank.shared.kernel.domain.CustomerId;
 import com.bank.shared.kernel.domain.Money;
 import jakarta.validation.Valid;
+import jakarta.validation.constraints.AssertTrue;
+import jakarta.validation.constraints.NotNull;
+import jakarta.validation.constraints.Positive;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.web.bind.annotation.*;
 
+import java.math.BigDecimal;
 import java.util.Currency;
 
 /**
@@ -17,15 +32,56 @@ import java.util.Currency;
  * 
  * Implements Hexagonal Architecture - Adapter for HTTP requests
  * Functional Requirements: FR-001 through FR-004
+ *
+ * Credit reserve, release and the credit-position read are called by other
+ * services (loan lifecycle) with a SERVICE-role client-credentials token whose
+ * client is on the allowed list (ServiceCallerPolicy). Services never get the
+ * full customer record: all three answer with the credit position only, and
+ * personal data stays with staff and the customer.
+ * A customer reads only their own profile and credit: the path id must equal
+ * authentication.name, which SecurityConfiguration sets to the token's
+ * customer_id claim (platform contract, "End-user and caller claims"; set by
+ * the identity link) and to the subject when the claim is absent.
+ * Every credit movement needs an x-idempotency-key, so a retried call never
+ * moves credit twice.
  */
 @RestController
 @RequestMapping("/api/v1/customers")
 public class CustomerController {
     
-    private final CustomerManagementService customerService;
-    
-    public CustomerController(CustomerManagementService customerService) {
-        this.customerService = customerService;
+    static final String IDEMPOTENCY_KEY = "x-idempotency-key";
+    /** Lending (SERVICE_CALLERS): the position, reserve and release; never the score. */
+    static final String CREDIT_CALLERS =
+        "hasAnyRole('BANKER', 'ADMIN') or (hasRole('SERVICE') and @serviceCallers.allowed(authentication))";
+    /** Risk decisioning (SERVICE_CALLERS_CREDIT_STANDING): the position with the score; no movement. */
+    static final String CREDIT_STANDING_READERS =
+        "hasAnyRole('BANKER', 'ADMIN') or (hasRole('SERVICE') and @creditStandingServiceCallers.allowed(authentication))";
+    /** Compliance (SERVICE_CALLERS_SCREENING): name and KYC status for sanctions and PEP matching; nothing else. */
+    static final String SCREENING_READERS =
+        "hasAnyRole('BANKER', 'ADMIN') or (hasRole('SERVICE') and @screeningServiceCallers.allowed(authentication))";
+
+    private final RegisterCustomerUseCase registerCustomer;
+    private final GetCustomerProfileUseCase getCustomerProfile;
+    private final GetCreditPositionUseCase getCreditPosition;
+    private final GetCreditStandingUseCase getCreditStanding;
+    private final GetScreeningProfileUseCase getScreeningProfile;
+    private final UpdateCreditLimitUseCase updateCreditLimit;
+    private final MoveCreditUseCase moveCredit;
+
+    public CustomerController(RegisterCustomerUseCase registerCustomer,
+                              GetCustomerProfileUseCase getCustomerProfile,
+                              GetCreditPositionUseCase getCreditPosition,
+                              GetCreditStandingUseCase getCreditStanding,
+                              GetScreeningProfileUseCase getScreeningProfile,
+                              UpdateCreditLimitUseCase updateCreditLimit,
+                              MoveCreditUseCase moveCredit) {
+        this.registerCustomer = registerCustomer;
+        this.getCustomerProfile = getCustomerProfile;
+        this.getCreditPosition = getCreditPosition;
+        this.getCreditStanding = getCreditStanding;
+        this.getScreeningProfile = getScreeningProfile;
+        this.updateCreditLimit = updateCreditLimit;
+        this.moveCredit = moveCredit;
     }
     
     /**
@@ -34,7 +90,7 @@ public class CustomerController {
     @PostMapping
     @PreAuthorize("hasAnyRole('BANKER', 'ADMIN')")
     public ResponseEntity<CustomerResponse> createCustomer(@Valid @RequestBody CreateCustomerRequest request) {
-        CustomerResponse response = customerService.createCustomer(request);
+        CustomerResponse response = CustomerResponse.from(registerCustomer.registerCustomer(request.toCommand()));
         return ResponseEntity.status(HttpStatus.CREATED).body(response);
     }
     
@@ -42,10 +98,42 @@ public class CustomerController {
      * FR-002: Get customer by ID
      */
     @GetMapping("/{customerId}")
-    @PreAuthorize("hasAnyRole('CUSTOMER', 'BANKER', 'ADMIN') and (#customerId == authentication.name or hasRole('BANKER') or hasRole('ADMIN'))")
+    @PreAuthorize("hasAnyRole('BANKER', 'ADMIN') or (hasRole('CUSTOMER') and #customerId == authentication.name)")
     public ResponseEntity<CustomerResponse> getCustomer(@PathVariable String customerId) {
-        CustomerResponse response = customerService.findCustomerById(customerId);
+        CustomerResponse response = CustomerResponse.from(getCustomerProfile.getCustomerProfile(CustomerId.of(customerId)));
         return ResponseEntity.ok(response);
+    }
+
+    /**
+     * Credit position only (limit, used, available), without personal data.
+     */
+    @GetMapping("/{customerId}/credit")
+    @PreAuthorize(CREDIT_CALLERS + " or (hasRole('CUSTOMER') and #customerId == authentication.name)")
+    public ResponseEntity<CustomerCreditResponse> getCreditPosition(@PathVariable String customerId) {
+        return ResponseEntity.ok(CustomerCreditResponse.from(getCreditPosition.getCreditPosition(CustomerId.of(customerId))));
+    }
+
+    /**
+     * Credit standing (limit, used, available, credit score), without personal
+     * data, for the eligibility decider (ADR-031 decision 2). The score is read
+     * here, under its own allow-list, never from the CreditScoreUpdated event
+     * and never on the lending route.
+     */
+    @GetMapping("/{customerId}/credit-standing")
+    @PreAuthorize(CREDIT_STANDING_READERS)
+    public ResponseEntity<CreditStandingResponse> getCreditStanding(@PathVariable String customerId) {
+        return ResponseEntity.ok(CreditStandingResponse.from(getCreditStanding.getCreditStanding(CustomerId.of(customerId))));
+    }
+
+    /**
+     * Screening profile: the name and the KYC status for sanctions and PEP
+     * matching by the compliance service, and nothing else (no contact
+     * details, credit figures, score or income).
+     */
+    @GetMapping("/{customerId}/screening-profile")
+    @PreAuthorize(SCREENING_READERS)
+    public ResponseEntity<ScreeningProfileResponse> getScreeningProfile(@PathVariable String customerId) {
+        return ResponseEntity.ok(ScreeningProfileResponse.from(getScreeningProfile.getScreeningProfile(CustomerId.of(customerId))));
     }
     
     /**
@@ -55,10 +143,10 @@ public class CustomerController {
     @PreAuthorize("hasAnyRole('BANKER', 'ADMIN')")
     public ResponseEntity<CustomerResponse> updateCreditLimit(
             @PathVariable String customerId, 
-            @RequestBody UpdateCreditLimitRequest request) {
+            @Valid @RequestBody UpdateCreditLimitRequest request) {
         
         Money newLimit = Money.of(request.amount(), Currency.getInstance(request.currency()));
-        CustomerResponse response = customerService.updateCreditLimit(customerId, newLimit);
+        CustomerResponse response = CustomerResponse.from(updateCreditLimit.updateCreditLimit(CustomerId.of(customerId), newLimit));
         return ResponseEntity.ok(response);
     }
     
@@ -66,13 +154,15 @@ public class CustomerController {
      * FR-003: Reserve credit for customer
      */
     @PostMapping("/{customerId}/credit/reserve")
-    @PreAuthorize("hasAnyRole('BANKER', 'ADMIN')")
-    public ResponseEntity<CustomerResponse> reserveCredit(
+    @PreAuthorize(CREDIT_CALLERS)
+    public ResponseEntity<CustomerCreditResponse> reserveCredit(
+            @RequestHeader(IDEMPOTENCY_KEY) String idempotencyKey,
             @PathVariable String customerId,
-            @RequestBody ReserveCreditRequest request) {
+            @Valid @RequestBody ReserveCreditRequest request) {
         
         Money amount = Money.of(request.amount(), Currency.getInstance(request.currency()));
-        CustomerResponse response = customerService.reserveCredit(customerId, amount);
+        CustomerCreditResponse response = CustomerCreditResponse.from(moveCredit.reserveCredit(
+            new CreditMovementCommand(CustomerId.of(customerId), amount, idempotencyKey, request.reference())));
         return ResponseEntity.ok(response);
     }
     
@@ -80,18 +170,56 @@ public class CustomerController {
      * FR-003: Release reserved credit
      */
     @PostMapping("/{customerId}/credit/release")
-    @PreAuthorize("hasAnyRole('BANKER', 'ADMIN')")
-    public ResponseEntity<CustomerResponse> releaseCredit(
+    @PreAuthorize(CREDIT_CALLERS)
+    public ResponseEntity<CustomerCreditResponse> releaseCredit(
+            @RequestHeader(IDEMPOTENCY_KEY) String idempotencyKey,
             @PathVariable String customerId,
-            @RequestBody ReleaseCreditRequest request) {
+            @Valid @RequestBody ReleaseCreditRequest request) {
         
         Money amount = Money.of(request.amount(), Currency.getInstance(request.currency()));
-        CustomerResponse response = customerService.releaseCredit(customerId, amount);
+        CustomerCreditResponse response = CustomerCreditResponse.from(moveCredit.releaseCredit(
+            new CreditMovementCommand(CustomerId.of(customerId), amount, idempotencyKey, request.reference())));
         return ResponseEntity.ok(response);
     }
     
-    // Request DTOs for credit operations
-    public record UpdateCreditLimitRequest(java.math.BigDecimal amount, String currency) {}
-    public record ReserveCreditRequest(java.math.BigDecimal amount, String currency) {}
-    public record ReleaseCreditRequest(java.math.BigDecimal amount, String currency) {}
+    // Request DTOs for credit operations. Invalid input is a 400 INVALID_REQUEST
+    // (ApiExceptionHandler), never a 500 or a 422.
+    public record UpdateCreditLimitRequest(
+        @NotNull(message = "amount is required") @Positive(message = "amount must be positive") BigDecimal amount,
+        @NotNull(message = "currency is required") String currency) {
+
+        @AssertTrue(message = "currency must be an ISO 4217 code")
+        public boolean isKnownCurrency() {
+            return isIsoCurrency(currency);
+        }
+    }
+
+    /** reference: what the credit is reserved for, for example the loan id. */
+    public record ReserveCreditRequest(
+        @NotNull(message = "amount is required") @Positive(message = "amount must be positive") BigDecimal amount,
+        @NotNull(message = "currency is required") String currency,
+        String reference) {
+
+        @AssertTrue(message = "currency must be an ISO 4217 code")
+        public boolean isKnownCurrency() {
+            return isIsoCurrency(currency);
+        }
+    }
+
+    public record ReleaseCreditRequest(
+        @NotNull(message = "amount is required") @Positive(message = "amount must be positive") BigDecimal amount,
+        @NotNull(message = "currency is required") String currency,
+        String reference) {
+
+        @AssertTrue(message = "currency must be an ISO 4217 code")
+        public boolean isKnownCurrency() {
+            return isIsoCurrency(currency);
+        }
+    }
+
+    /** Null is reported by @NotNull, so it counts as known here. */
+    static boolean isIsoCurrency(String code) {
+        return code == null || Currency.getAvailableCurrencies().stream()
+            .anyMatch(currency -> currency.getCurrencyCode().equals(code));
+    }
 }

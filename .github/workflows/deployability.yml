@@ -1,0 +1,120 @@
+name: Deployability
+
+# Proves every change still produces a runnable image and valid deployment
+# manifests. Nothing is pushed or applied from here.
+
+on:
+  pull_request:
+    branches: [main, dev, staging]
+  push:
+    branches: [main, dev, staging]
+
+permissions:
+  contents: read
+
+jobs:
+  container:
+    name: deploy/container-image
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build image
+        run: docker build --tag customer-profile-kyc-service:${{ github.sha }} .
+      - name: Image runs as non-root
+        run: |
+          user="$(docker image inspect --format '{{.Config.User}}' customer-profile-kyc-service:${{ github.sha }})"
+          echo "image user: $user"
+          test "$user" = "10001:10001"
+
+  helm:
+    name: deploy/helm
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: azure/setup-helm@v4
+        with:
+          version: v3.16.3
+      - name: Install kubeconform
+        shell: bash
+        run: |
+          tmpdir="$(mktemp -d)"
+          # Asset per runner architecture (hosted amd64, fbx-ci arm64), each checked against the release's sha256
+          # (governance ci-runner/tool-downloads-by-arch.snippet.sh).
+          case "$(uname -m)" in
+            x86_64) kubeconform_arch=amd64; kubeconform_sha=95f14e87aa28c09d5941f11bd024c1d02fdc0303ccaa23f61cef67bc92619d73 ;;
+            aarch64|arm64) kubeconform_arch=arm64; kubeconform_sha=dc82f79bb03c5479b1ae5fd4af221e4b5a3111f62bf01a2795d9c5c20fa96644 ;;
+            *) echo "unsupported runner architecture $(uname -m)"; exit 1 ;;
+          esac
+          curl -sSfL -o "$tmpdir/kubeconform.tar.gz" "https://github.com/yannh/kubeconform/releases/download/v0.6.7/kubeconform-linux-${kubeconform_arch}.tar.gz"
+          echo "${kubeconform_sha}  $tmpdir/kubeconform.tar.gz" | sha256sum -c -
+          tar -xz -C "$tmpdir" -f "$tmpdir/kubeconform.tar.gz"
+          sudo install "$tmpdir/kubeconform" /usr/local/bin/kubeconform
+          rm -rf "$tmpdir"
+      - name: Vendored platform guard
+        run: |
+          # templates/_fbx_helpers.tpl is, whole and unchanged, without a header (README "Vendoring the guard"):
+          #   source repository COPUR/fintechbankx-platform-delivery-iac-cicd-templates
+          #   path              charts/fintechbankx-service/templates/_helpers.tpl
+          #   commit            73e1881
+          # scripts/ci/verify-vendored-guard.sh is copied unchanged from the same commit. It checks the file's
+          # sha256, that no other file of the chart defines an fbx.* template, and that every workload template
+          # runs fbx.guard before it writes anything (here through the adapter customer.guard).
+          templates=deploy/helm/customer-profile-kyc-service/templates
+          bash scripts/ci/verify-vendored-guard.sh deploy/helm/customer-profile-kyc-service 4f2cdfe056f5afce0297f699c8b66cb80dc42e8e311759bf4a973f8a15b28b2d
+          # Both workload templates call the same adapter (customer.guard in _helpers.tpl), so the migration Job
+          # cannot be fed a route the Deployment refuses.
+          for t in deployment.yaml migration-job.yaml; do
+            head -1 "$templates/$t" | grep -qxF '{{- include "customer.guard" . -}}' \
+              || { echo "$t must start with the guard call" >&2; exit 1; }
+          done
+      - name: Lint and render chart
+        run: bash scripts/ci/chart-render-probes.sh
+
+  terraform:
+    name: deploy/terraform
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: deploy/terraform
+    steps:
+      - uses: actions/checkout@v4
+      - uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: 1.9.8
+      - run: terraform fmt -check -recursive
+      - run: terraform init -backend=false -input=false
+      - run: terraform validate
+      # tests/*.tftest.hcl run offline against a mocked AWS provider (KMS key split, ADR-023).
+      - run: terraform test
+
+  data-split:
+    name: deploy/data-split-rehearsal
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_USER: backfill
+          POSTGRES_PASSWORD: backfill
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U backfill"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    env:
+      PGHOST: localhost
+      PGUSER: backfill
+      PGPASSWORD: backfill
+    steps:
+      - uses: actions/checkout@v4
+      - name: Rehearse monolith-to-service customer backfill and reconciliation
+        run: scripts/migration/verify-backfill.sh
+      # Runbook step 3a: credit reservations from the monolith's open loans, with the never-disbursed list.
+      - name: Rehearse runbook step 3a credit reservations
+        run: scripts/migration/verify-step-3a.sh
+      # db/bootstrap/roles.sql (runbook, "Database roles"): run twice as a non-superuser CREATEROLE DBA, then
+      # the migrations as the owner, then once more; checks owner, runtime role and V13's grants.
+      - name: Rehearse the DBA role bootstrap
+        run: scripts/migration/verify-role-bootstrap.sh

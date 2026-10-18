@@ -31,6 +31,12 @@ public class Customer extends AggregateRoot<CustomerId> {
     private Money monthlyIncome;
     private LocalDateTime createdAt;
     private LocalDateTime updatedAt;
+    private IdentityUserId identityUserId;
+    private KycStatus kycStatus = KycStatus.pending();
+
+    /** Rule of the Keycloak user attribute customer_id (platform contract). */
+    private static final java.util.regex.Pattern IDENTITY_ATTRIBUTE_VALUE =
+        java.util.regex.Pattern.compile("^[A-Za-z0-9-]{1,64}$");
     
     // Private constructor for JPA
     protected Customer() {}
@@ -74,6 +80,29 @@ public class Customer extends AggregateRoot<CustomerId> {
         return new Customer(customerId, firstName, lastName, email, phoneNumber, creditProfile);
     }
     
+    /**
+     * Rebuilds a customer from persisted state. Raises no events and skips the
+     * creation rules, which legacy rows (no email, no income) do not meet.
+     */
+    public static Customer rehydrate(CustomerSnapshot snapshot) {
+        Objects.requireNonNull(snapshot, "Snapshot cannot be null");
+        Customer customer = new Customer();
+        customer.customerId = Objects.requireNonNull(snapshot.customerId(), "Customer ID cannot be null");
+        customer.firstName = snapshot.firstName();
+        customer.lastName = snapshot.lastName();
+        customer.email = snapshot.email();
+        customer.phoneNumber = snapshot.phoneNumber();
+        customer.creditProfile = CreditProfile.create(snapshot.creditLimit(), snapshot.usedCredit());
+        customer.creditScore = snapshot.creditScore();
+        customer.monthlyIncome = snapshot.monthlyIncome();
+        customer.createdAt = snapshot.createdAt();
+        customer.updatedAt = snapshot.updatedAt();
+        customer.identityUserId = snapshot.identityUserId();
+        customer.kycStatus = snapshot.kycStatus() == null ? KycStatus.pending() : snapshot.kycStatus();
+        customer.setVersion(snapshot.version());
+        return customer;
+    }
+
     public static Customer createWithCreditScore(CustomerId customerId, String firstName, String lastName,
                                                String email, String phoneNumber, Money monthlyIncome, Integer creditScore) {
         validateCustomerData(firstName, lastName, email);
@@ -124,6 +153,10 @@ public class Customer extends AggregateRoot<CustomerId> {
     }
     
     private Money calculateCreditLimit() {
+        if (monthlyIncome == null && creditProfile != null) {
+            // No income on file (migrated or created with a fixed limit): keep the assigned limit.
+            return creditProfile.getCreditLimit();
+        }
         if (monthlyIncome == null || creditScore == null) {
             return Money.zero(MIN_MONTHLY_INCOME.getCurrency());
         }
@@ -184,6 +217,70 @@ public class Customer extends AggregateRoot<CustomerId> {
         return updatedAt;
     }
     
+    public IdentityUserId getIdentityUserId() {
+        return identityUserId;
+    }
+
+    /**
+     * Links this customer to the end user's identity account. One identity user
+     * per customer: linking the same user again changes nothing and returns
+     * false; a different user is a conflict. Raises no event (the link is not
+     * part of the published contract).
+     *
+     * @return true if the link was added
+     */
+    public KycStatus getKycStatus() {
+        return kycStatus;
+    }
+
+    /**
+     * Staff verified the customer's KYC. Same status again changes nothing.
+     * @return whether the status changed
+     */
+    public boolean verifyKyc(String by, java.time.Instant at) {
+        return changeKyc(KycStatus.Status.VERIFIED, by, at);
+    }
+
+    /**
+     * Staff rejected the customer's KYC (also revokes a verification).
+     * @return whether the status changed
+     */
+    public boolean rejectKyc(String by, java.time.Instant at) {
+        return changeKyc(KycStatus.Status.REJECTED, by, at);
+    }
+
+    private boolean changeKyc(KycStatus.Status target, String by, java.time.Instant at) {
+        if (by == null || by.isBlank()) {
+            throw new IllegalArgumentException("Who changed the KYC status is required");
+        }
+        Objects.requireNonNull(at, "When the KYC status changed is required");
+        if (kycStatus.status() == target) {
+            return false;
+        }
+        KycStatus.Status previous = kycStatus.status();
+        this.kycStatus = new KycStatus(target, KycStatus.Source.STAFF,
+            target == KycStatus.Status.VERIFIED ? at : null, by);
+        this.updatedAt = LocalDateTime.now();
+        addDomainEvent(new CustomerKycStatusChangedEvent(customerId, previous, kycStatus, at));
+        return true;
+    }
+
+    public boolean linkIdentity(IdentityUserId userId) {
+        Objects.requireNonNull(userId, "Identity user id cannot be null");
+        if (userId.equals(identityUserId)) {
+            return false;
+        }
+        if (identityUserId != null) {
+            throw new IdentityLinkConflictException();
+        }
+        if (!IDENTITY_ATTRIBUTE_VALUE.matcher(customerId.getValue()).matches()) {
+            throw new IllegalStateException("Customer id cannot be used as the customer_id identity attribute");
+        }
+        this.identityUserId = userId;
+        this.updatedAt = LocalDateTime.now();
+        return true;
+    }
+
     public void updateContactInformation(String email, String phoneNumber) {
         if (email != null && isValidEmail(email)) {
             this.email = email;
@@ -208,7 +305,64 @@ public class Customer extends AggregateRoot<CustomerId> {
         return creditProfile.canBorrow(amount);
     }
     
+    /** Reserves credit no reservation accounts for (untracked); the event carries no reference. */
     public void reserveCredit(Money amount) {
+        applyReserve(amount, null);
+    }
+    
+    /**
+     * Reserves credit for the purpose the reservation names (its reference)
+     * and returns the reservation with the amount added. Nothing changes if
+     * the credit is insufficient.
+     */
+    public CreditReservation reserveCredit(Money amount, CreditReservation reservation) {
+        requireOwn(reservation);
+        requirePositive(amount);
+        CreditReservation updated = reservation.reserve(amount);
+        applyReserve(amount, reservation.reference());
+        return updated;
+    }
+
+    /**
+     * Releases credit from the reservation the caller named. Partial releases
+     * are allowed; more than the reservation still holds is refused, even if
+     * used credit would cover it, so a cancel can never free another
+     * reservation's credit.
+     *
+     * @return the reservation with the amount released
+     * @throws ReleaseExceedsReservationException if the amount is more than the reservation still holds
+     */
+    public CreditReservation releaseCredit(Money amount, CreditReservation reservation) {
+        requireOwn(reservation);
+        requirePositive(amount);
+        CreditReservation updated = reservation.release(amount);
+        applyRelease(amount, reservation.reference());
+        return updated;
+    }
+
+    /**
+     * Releases credit no reservation accounts for: balances migrated from the
+     * monolith and credit reserved without a reference. At most used credit
+     * minus every open reservation; nothing floors at zero.
+     *
+     * @param openReservations what all this customer's reservations still hold
+     * @throws ReservationNotFoundException if the amount is more than the untracked used credit
+     */
+    public void releaseUntrackedCredit(Money amount, Money openReservations) {
+        requirePositive(amount);
+        Objects.requireNonNull(openReservations, "Open reservations cannot be null");
+        Money untracked = creditProfile.getUsedCredit().subtract(openReservations);
+        if (untracked.isNegative()) {
+            untracked = Money.zero(untracked.getCurrency());
+        }
+        if (amount.compareTo(untracked) > 0) {
+            throw new ReservationNotFoundException(amount, untracked);
+        }
+        applyRelease(amount, null);
+    }
+
+    private void applyReserve(Money amount, String reference) {
+        requirePositive(amount);
         if (!canBorrowAmount(amount)) {
             throw new InsufficientCreditException(
                 String.format("Customer %s has insufficient credit. Requested: %s, Available: %s",
@@ -216,17 +370,35 @@ public class Customer extends AggregateRoot<CustomerId> {
         }
         this.creditProfile = this.creditProfile.reserveCredit(amount);
         this.updatedAt = LocalDateTime.now();
-        
-        addDomainEvent(new CustomerCreditReservedEvent(customerId, amount));
+
+        addDomainEvent(new CustomerCreditReservedEvent(customerId, amount, reference));
     }
-    
-    public void releaseCredit(Money amount) {
+
+    /** @param reference the reservation released from; null for untracked credit */
+    private void applyRelease(Money amount, String reference) {
         this.creditProfile = this.creditProfile.releaseCredit(amount);
         this.updatedAt = LocalDateTime.now();
-        
-        addDomainEvent(new CustomerCreditReleasedEvent(customerId, amount));
+
+        addDomainEvent(new CustomerCreditReleasedEvent(customerId, amount, reference));
+    }
+
+    private void requireOwn(CreditReservation reservation) {
+        Objects.requireNonNull(reservation, "Reservation cannot be null");
+        if (!reservation.customerId().equals(customerId)) {
+            throw new IllegalArgumentException("The reservation belongs to another customer");
+        }
     }
     
+    private void requirePositive(Money amount) {
+        Objects.requireNonNull(amount, "Credit amount cannot be null");
+        if (!amount.getCurrency().equals(creditProfile.getCreditLimit().getCurrency())) {
+            throw new CreditCurrencyMismatchException(creditProfile.getCreditLimit().getCurrency(), amount.getCurrency());
+        }
+        if (amount.isZero() || amount.isNegative()) {
+            throw new IllegalArgumentException("Credit amount must be positive");
+        }
+    }
+
     public void updateCreditScore(Integer newCreditScore) {
         this.creditScore = validateCreditScore(newCreditScore);
         this.creditProfile = CreditProfile.create(calculateCreditLimit(), this.creditProfile.getUsedCredit());
