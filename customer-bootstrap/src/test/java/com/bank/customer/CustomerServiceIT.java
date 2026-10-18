@@ -338,6 +338,47 @@ class CustomerServiceIT {
         assertThat(jdbc.queryForObject("select count(*) from sc_cus_profile_kyc.credit_movement", Integer.class)).isZero();
     }
 
+    /**
+     * SERVICE_CALLERS_CREDIT_STANDING (risk decisioning) opens the credit
+     * standing read and nothing else: no credit movement, no position read on
+     * the lending route, no profile. SERVICE_CALLERS (lending) does not open
+     * the standing, so lending never gets the score. A customer without a
+     * score has no creditScore field (no null on the wire).
+     */
+    @Test
+    void riskReadsTheCreditStandingAndNothingElse() throws Exception {
+        String customerId = create("risk@example.com", "4000.00");
+
+        String standing = mvc.perform(asService(get("/api/v1/customers/{id}/credit-standing", customerId), RISK))
+            .andExpect(status().isOk())
+            .andExpect(jsonPath("$.customerId").value(customerId))
+            .andExpect(jsonPath("$.availableCredit").value(4000.00))
+            .andReturn().getResponse().getContentAsString();
+        assertThat(json.readTree(standing).fieldNames()).toIterable()
+            .containsExactlyInAnyOrder("customerId", "creditLimit", "usedCredit", "availableCredit", "currency");
+        assertThat(standing).doesNotContain("Noor", "Rahman", "example.com", "+9715", "creditScore", "monthlyIncome");
+        mvc.perform(asBanker(get("/api/v1/customers/{id}/credit-standing", customerId)))
+            .andExpect(status().isOk());
+
+        mvc.perform(asService(get("/api/v1/customers/{id}/credit", customerId), RISK))
+            .andExpect(status().isForbidden());
+        mvc.perform(asService(post("/api/v1/customers/{id}/credit/reserve", customerId), RISK)
+                .header("x-idempotency-key", "risk-1").contentType(MediaType.APPLICATION_JSON)
+                .content("{\"amount\": 10.00, \"currency\": \"AED\"}"))
+            .andExpect(status().isForbidden());
+        mvc.perform(asService(post("/api/v1/customers/{id}/credit/release", customerId), RISK)
+                .header("x-idempotency-key", "risk-2").contentType(MediaType.APPLICATION_JSON)
+                .content("{\"amount\": 10.00, \"currency\": \"AED\"}"))
+            .andExpect(status().isForbidden());
+        mvc.perform(asService(get("/api/v1/customers/{id}", customerId), RISK))
+            .andExpect(status().isForbidden());
+        mvc.perform(asService(get("/api/v1/customers/{id}/credit-standing", customerId)))
+            .andExpect(status().isForbidden()); // lending
+        mvc.perform(asUnlistedService(get("/api/v1/customers/{id}/credit-standing", customerId)))
+            .andExpect(status().isForbidden());
+        assertThat(jdbc.queryForObject("select count(*) from sc_cus_profile_kyc.credit_movement", Integer.class)).isZero();
+    }
+
     @Test
     void servicesReadOnlyTheCreditPositionAndOnlyListedServicesMayUseIt() throws Exception {
         String customerId = create("self@example.com", "3000.00");
@@ -394,13 +435,19 @@ class CustomerServiceIT {
         }
     }
 
+    /**
+     * Risk decisioning (ADR-031 decision 2, the eligibility decider) reads the
+     * score with the position on GET .../credit-standing; lending reads the
+     * position only on GET .../credit and never the score (ADR-031). The score
+     * is not on the CreditScoreUpdated event.
+     */
     @Test
     void migratedMonolithCustomerLoadsAndCanReserveCredit() throws Exception {
         jdbc.update("""
             insert into sc_cus_profile_kyc.customer
-              (customer_id, first_name, last_name, currency, credit_limit, used_credit, legacy_customer_id, created_at, updated_at, version,
-               kyc_status, kyc_source, kyc_verified_at)
-            values ('42', 'Legacy', 'Customer', 'AED', 50000, 20000, 42, timestamp '2024-01-01 10:00', timestamp '2024-06-01 10:00', 3,
+              (customer_id, first_name, last_name, currency, credit_limit, used_credit, credit_score, legacy_customer_id,
+               created_at, updated_at, version, kyc_status, kyc_source, kyc_verified_at)
+            values ('42', 'Legacy', 'Customer', 'AED', 50000, 20000, 712, 42, timestamp '2024-01-01 10:00', timestamp '2024-06-01 10:00', 3,
                'VERIFIED', 'MIGRATED', timestamptz '2026-10-08 00:00:00+00')
             """);
 
@@ -410,7 +457,16 @@ class CustomerServiceIT {
             .andExpect(jsonPath("$.kycStatus").value("VERIFIED")); // the profile carries the KYC status (same enum as /kyc-status)
         mvc.perform(asService(get("/api/v1/customers/{id}/credit", "42")))
             .andExpect(status().isOk())
-            .andExpect(jsonPath("$.availableCredit").value(30000.00));
+            .andExpect(jsonPath("$.availableCredit").value(30000.00))
+            .andExpect(jsonPath("$.creditScore").doesNotExist()); // lending never gets the score
+        String standing = mvc.perform(asService(get("/api/v1/customers/{id}/credit-standing", "42"), RISK))
+            .andExpect(status().isOk())
+            .andExpect(jsonPath("$.creditScore").value(712))
+            .andExpect(jsonPath("$.availableCredit").value(30000.00))
+            .andExpect(jsonPath("$.currency").value("AED"))
+            .andReturn().getResponse().getContentAsString();
+        assertThat(json.readTree(standing).fieldNames()).toIterable()
+            .containsExactlyInAnyOrder("customerId", "creditScore", "creditLimit", "usedCredit", "availableCredit", "currency");
         reserve("42", "30000.00", "LOAN-42:reserve").andExpect(status().isOk());
 
         assertThat(jdbc.queryForMap("select used_credit, version from sc_cus_profile_kyc.customer where customer_id = '42'"))
@@ -580,10 +636,17 @@ class CustomerServiceIT {
                 .authorities(new SimpleGrantedAuthority("ROLE_SERVICE")));
     }
 
-    /** A client-credentials client that holds SERVICE but is not on SERVICE_CALLERS. */
+    /** A client-credentials client that holds SERVICE but is on none of the allow-lists. */
     private static MockHttpServletRequestBuilder asUnlistedService(MockHttpServletRequestBuilder request) {
+        return asService(request, "svc-unlisted-example");
+    }
+
+    /** A client-credentials client with the SERVICE role; azp says which allow-list, if any, it is on. */
+    private static MockHttpServletRequestBuilder asService(MockHttpServletRequestBuilder request, String azp) {
         return request.header("x-fapi-interaction-id", "it-interaction-4")
-            .with(jwt().jwt(j -> j.subject("service-account-risk").claim("azp", "svc-rsk-decisioning"))
+            .with(jwt().jwt(j -> j.subject("service-account-" + azp).claim("azp", azp))
                 .authorities(new SimpleGrantedAuthority("ROLE_SERVICE")));
     }
+
+    private static final String RISK = "svc-rsk-decisioning";
 }
