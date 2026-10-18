@@ -82,6 +82,7 @@ class CustomerServiceIT {
     @Autowired JdbcTemplate jdbc;
     @Autowired CustomerRepository customers;
     @Autowired MoveCreditUseCase moveCredit;
+    @Autowired com.bank.customer.application.CustomerManagementService customerService;
     @Autowired SpringDataOutboxRepository outbox;
     @Autowired PlatformTransactionManager transactionManager;
     @Autowired io.micrometer.core.instrument.MeterRegistry meterRegistry;
@@ -190,6 +191,40 @@ class CustomerServiceIT {
         assertThat(created.get("producer").asText()).isEqualTo("svc-cus-profile-kyc");
         assertThat(created.get("correlationId").asText()).isEqualTo("it-interaction-1");
         assertThat(payload).doesNotContain("Noor", "noor@example.com");
+    }
+
+    /**
+     * The score is restricted data: the outbox row of
+     * Customer.Customer.CreditScoreUpdated.v1 says only which customer and
+     * when (data: customerId, updatedAt), never the old or new value; the
+     * eligibility decider reads the value on GET .../credit-standing. No
+     * inbound adapter changes the score yet, so the use case is driven
+     * directly (its own transaction, as an adapter's would be).
+     */
+    @Test
+    void creditScoreUpdateEventCarriesNoScoreValue() throws Exception {
+        String customerId = create("score@example.com", "10000.00");
+
+        customerService.updateCreditScore(customerId, 760);
+
+        String payload = jdbc.queryForObject("""
+            select payload::text from sc_cus_profile_kyc.outbox_event
+             where aggregate_id = ? and event_type = 'Customer.Customer.CreditScoreUpdated.v1'
+            """, String.class, customerId);
+        JsonNode envelope = json.readTree(payload);
+        // jsonb returns keys in its own order: the set matters, not the order.
+        assertThat(envelope.get("data").fieldNames()).toIterable().containsExactlyInAnyOrder("customerId", "updatedAt");
+        assertThat(envelope.at("/data/customerId").asText()).isEqualTo(customerId);
+        assertThat(envelope.at("/data/updatedAt").asText()).isEqualTo(envelope.get("occurredAt").asText());
+        assertThat(payload).doesNotContain("newCreditScore", "oldCreditScore");
+        // The score as a JSON value, not the digits 760 inside a random eventId or a nanosecond timestamp.
+        assertThat(payload).doesNotContainPattern("[:\\[,]\\s*\"?760\"?\\s*[,}\\]]");
+        mvc.perform(asService(get("/api/v1/customers/{id}/credit-standing", customerId), RISK))
+            .andExpect(status().isOk())
+            .andExpect(jsonPath("$.creditScore").value(760));
+        mvc.perform(asService(get("/api/v1/customers/{id}/credit", customerId)))
+            .andExpect(status().isOk())
+            .andExpect(jsonPath("$.creditScore").doesNotExist()); // lending never gets the score
     }
 
     @Test
