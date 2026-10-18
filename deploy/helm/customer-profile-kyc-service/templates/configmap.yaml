@@ -10,9 +10,13 @@ data:
   # Common metric tags (management.metrics.tags): app is the service account, squad the owning squad.
   METRICS_APP: {{ .Values.serviceAccount.name | quote }}
   METRICS_SQUAD: {{ required "squad is required" .Values.squad | quote }}
-  {{- range $key, $value := .Values.config }}
-  {{- if and (has $key $.Values.requiredConfig) (empty $value) }}
+  {{- /* Every required key must be present and non-empty: a key dropped with --set config.X=null fails too,
+         so the pod never falls back to the image's application.yml defaults (the service allow-lists among them). */}}
+  {{- range $key := .Values.requiredConfig }}
+  {{- if or (not (hasKey $.Values.config $key)) (empty (index $.Values.config $key)) }}
   {{- fail (printf "config.%s is required" $key) }}
   {{- end }}
+  {{- end }}
+  {{- range $key, $value := .Values.config }}
   {{ $key | quote }}: {{ $value | quote }}
   {{- end }}
